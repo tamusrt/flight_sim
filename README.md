@@ -23,7 +23,7 @@ curl -LsSf https://astral.sh | sh
 powershell -c "irm https://astral.sh | iex"
 ```
 
-Restart your terminal after installation to ensure the `uv` command is available in your PATH.*
+*Note: Restart your terminal after installation to ensure the `uv` command is available in your PATH.*
 
 ### 3. Clone and Set Up the Project
 
@@ -46,9 +46,21 @@ You do not need to manually activate virtual environments. Prefix your commands 
 
 ### Run the Application
 
-To start the simulator using the built-in package entry point:
+To start the simulation:
 ```bash
-uv run python -m flight_sim
+uv run flight_sim [--inputs]
+```
+
+To run something in particular:
+
+```bash
+uv run python python_script.py
+```
+
+or
+
+```bash
+uv run python -m "from module import package; package()"
 ```
 
 ### Run Unit Tests
