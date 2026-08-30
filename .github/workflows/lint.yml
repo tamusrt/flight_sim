@@ -31,3 +31,7 @@ jobs:
       - name: Run Pylint
         run: |
           uv run pylint $(git ls-files '*.py')
+
+      - name: Run Type Checking
+        run: |
+          uvx mypy .
