@@ -3,7 +3,7 @@
 import argparse
 
 
-def main():
+def main() -> None:
     """Dummy code to test arg parsing"""
     parser = argparse.ArgumentParser(description="SRT FS")
 
