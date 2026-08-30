@@ -1,7 +1,10 @@
+"""Core FS runner"""
+
 import argparse
 
 
 def main():
+    """Dummy code to test arg parsing"""
     parser = argparse.ArgumentParser(description="SRT FS")
 
     # Define expected command line arguments
