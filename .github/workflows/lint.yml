@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -16,18 +20,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version-file: .python-version
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
-      - name: Run Ruff Check & Format
-        run: |
-          uvx ruff check .
-          uvx ruff format --check .
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Ruff Check
+        run: uv run --frozen ruff check .
+
+      - name: Run Ruff Format
+        if: ${{ !cancelled() }}
+        run: uv run --frozen ruff format --check .
 
       - name: Run Pylint
-        run: |
-          uv run pylint $(git ls-files '*.py')
+        if: ${{ !cancelled() }}
+        run: uv run --frozen pylint $(git ls-files '*.py')
+
+      - name: Run Type Checking
+        if: ${{ !cancelled() }}
+        run: uv run --frozen mypy .
