@@ -15,4 +15,4 @@ jobs:
       
       - name: Run Tests with Coverage
         run: |
-          uv run pytest --cov=. --cov-fail-under=75
+          uv run pytest --cov=flight_sim --cov-fail-under=75
