@@ -34,4 +34,4 @@ jobs:
 
       - name: Run Type Checking
         run: |
-          uvx mypy .
+          uvx mypy==1.17.1 .
