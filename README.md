@@ -70,6 +70,37 @@ We use `pytest` for testing. Run the entire test suite with:
 uv run pytest
 ```
 
+Coverage is enforced per settings in `pyproject.toml`, causing a fail if total coverage
+drops below the set threshold.
+
+### Contributing to the Codebase
+
+1. Create a new branch and make your commits.
+2. Make a PR and add a reviewer.
+3. At PR time, branches need to pass a few checks. All of them run in GitHub Actions against
+   every PR targeting `main`, and you can run the identical commands locally first:
+
+   ```bash
+   uv run ruff check .                   # a. Linting
+   uv run ruff format --check .          # b. Formatting
+   uv run pylint $(git ls-files '*.py')  # c. Pylint
+   uv run mypy .                         # d. Type checking
+   uv run pytest                         # e. Tests and coverage
+   ```
+
+   These work as written in both bash and PowerShell.
+
+   Ruff can fix most of what it reports:
+
+   ```bash
+   uv run ruff check --fix .
+   uv run ruff format .
+   ```
+
+4. Push the branch and open a PR against `main`. The **Lint** and **Tests** workflows start
+   automatically. The lint job runs all four of its checks even when an early one fails, so a
+   single run reports everything you need to fix.
+
 ### Managing Dependencies
 
 If you need to add new tools or libraries to the project during development:
@@ -81,3 +112,6 @@ uv add package-name
 # Add a development-only dependency (like a linter or formatter)
 uv add --dev package-name
 ```
+
+Make sure you update `uv.lock` and `pyproject.toml` updates after adding dependencies. It's
+needed for the CI actions.
