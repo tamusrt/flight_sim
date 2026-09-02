@@ -1,7 +1,9 @@
+"""Environment module containing atmospheric data structures"""
 from dataclasses import dataclass
 
 @dataclass
 class AtmosphereData:
+    """Dataclass representing atmospheric conditions at a specific altitude"""
     air_density: float = 0.0
     speed_of_sound: float = 0.0
     x_wind_vel: float = 0.0
