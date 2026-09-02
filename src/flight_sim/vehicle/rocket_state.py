@@ -4,6 +4,7 @@ from dataclasses import dataclass
 @dataclass
 class RocketState:
     """Dataclass representing conditions regarding current state of vehicle throughout flight"""
+    # pylint: disable=too-many-instance-attributes
     #Position Coordinates (meters)
     x_pos: float = 0.0
     y_pos: float = 0.0
