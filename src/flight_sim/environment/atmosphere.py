@@ -1,6 +1,12 @@
 """Environment module containing atmospheric data structures."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import numpy as np
+
+
+def zero_array():
+    return np.zeros(3)
 
 
 @dataclass
@@ -9,8 +15,6 @@ class AtmosphereData:
 
     air_density: float = 0.0
     speed_of_sound: float = 0.0
-    x_wind_vel: float = 0.0
-    y_wind_vel: float = 0.0
-    z_wind_vel: float = 0.0
     temperature: float = 0.0
     pressure: float = 0.0
+    wind_velocity: np.ndarray = field(default_factory=zero_array)
