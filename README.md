@@ -15,12 +15,12 @@ Install `uv` using the official installer for your operating system:
 
 **macOS / Linux:**
 ```bash
-curl -LsSf https://astral.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-powershell -c "irm https://astral.sh | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 *Note: Restart your terminal after installation to ensure the `uv` command is available in your PATH.*
