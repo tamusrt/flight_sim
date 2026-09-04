@@ -1,3 +1,5 @@
+"""Integration math for 6-DOF simulation"""
+
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -16,7 +18,7 @@ class IntegrationConfiguration:
     atmosphere_data: AtmosphereData = field(default_factory=AtmosphereData)
 
 
-def derivative_computation(state: RocketState, atmosphere: AtmosphereData):
+def derivative_computation(state: RocketState, atmosphere: AtmosphereData) -> RocketState:
     """Caculates change of rocket during time step"""
     return RocketState(
         position=np.zeros(3),
@@ -27,7 +29,7 @@ def derivative_computation(state: RocketState, atmosphere: AtmosphereData):
     )
 
 
-def step(state: RocketState, atmosphere: AtmosphereData, dt: float):
+def step(state: RocketState, atmosphere: AtmosphereData, dt: float) -> RocketState:
     """Advances the rocket state by one time step"""
     derivatives = derivative_computation(state, atmosphere)
 

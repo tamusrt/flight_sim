@@ -46,7 +46,7 @@ def test_main_rejects_unknown_argument(monkeypatch: pytest.MonkeyPatch) -> None:
     assert excinfo.value.code == 2
 
 
-def test_step_zero_force_keeps_velocity_constant():
+def test_step_zero_force_keeps_velocity_constant() -> None:
     """Tests that the step function keeps velocity constant"""
     state = RocketState()
     atmosphere = AtmosphereData()

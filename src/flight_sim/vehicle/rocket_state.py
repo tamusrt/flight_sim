@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
-def zero_array():
+def zero_array() -> np.ndarray:
     return np.zeros(3)
 
 
