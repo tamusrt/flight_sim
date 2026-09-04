@@ -6,6 +6,7 @@ import numpy as np
 
 
 def zero_array() -> np.ndarray:
+    """Return a zero-valued three-dimensional array."""
     return np.zeros(3)
 
 

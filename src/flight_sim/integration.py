@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from flight_sim.environment.atmosphere import AtmosphereData
+from flight_sim.environment.gravity import get_gravity
 from flight_sim.vehicle.rocket_state import RocketState
 
 
@@ -22,9 +23,14 @@ def derivative_computation(
     state: RocketState, atmosphere: AtmosphereData
 ) -> RocketState:
     """Caculates change of rocket during time step"""
+    # pylint: disable=unused-argument
+    magnitude_of_gravity = get_gravity(
+        latitude=0.0, longitude=0.0, altitude=state.position[2]
+    )
+    gravity_acceleration = np.array([0.0, 0.0, -magnitude_of_gravity])
     return RocketState(
-        position=np.zeros(3),
-        velocity=np.zeros(3),
+        position=state.velocity,
+        velocity=gravity_acceleration,
         angular_velocity=np.zeros(3),
         orientation=state.orientation,
         current_mass=state.current_mass,
