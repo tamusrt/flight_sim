@@ -1,8 +1,12 @@
 """Integration kernel tests."""
 
+import numpy as np
 import pytest
 
 from flight_sim.__main__ import main
+from flight_sim.environment.atmosphere import AtmosphereData
+from flight_sim.integration import step
+from flight_sim.vehicle.rocket_state import RocketState
 
 
 def test_placeholder() -> None:
@@ -40,3 +44,11 @@ def test_main_rejects_unknown_argument(monkeypatch: pytest.MonkeyPatch) -> None:
         main()
 
     assert excinfo.value.code == 2
+
+
+def test_step_zero_force_keeps_velocity_constant():
+    """Tests that the step function keeps velocity constant"""
+    state = RocketState()
+    atmosphere = AtmosphereData()
+    next_state = step(state, atmosphere, 0.01)
+    assert np.allclose(next_state.velocity, np.zeros(3))
