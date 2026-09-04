@@ -46,9 +46,24 @@ def test_main_rejects_unknown_argument(monkeypatch: pytest.MonkeyPatch) -> None:
     assert excinfo.value.code == 2
 
 
-def test_step_zero_force_keeps_velocity_constant() -> None:
+def test_step_zero_force_keeps_velocity_constant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tests that the step function keeps velocity constant"""
+
+    monkeypatch.setattr(
+        "flight_sim.integration.get_gravity",
+        lambda latitude, longitude, altitude: 0.0,
+    )
     state = RocketState()
     atmosphere = AtmosphereData()
     next_state = step(state, atmosphere, 0.01)
     assert np.allclose(next_state.velocity, np.zeros(3))
+
+
+def test_step_with_gravity_changes_velocity() -> None:
+    """Tests that gravity correctly accelerates rocket downwards"""
+    state = RocketState()
+    atmosphere = AtmosphereData()
+    next_state = step(state, atmosphere, 0.01)
+    assert next_state.velocity[2] < 0
