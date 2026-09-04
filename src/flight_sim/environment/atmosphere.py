@@ -2,20 +2,15 @@
 
 from dataclasses import dataclass, field
 
-import numpy as np
-
-
-def zero_array() -> np.ndarray:
-    """Return a zero-valued three-dimensional array."""
-    return np.zeros(3)
+from flight_sim.units import Scalar, UnitChecked, Vector, scalar, zero_vector
 
 
 @dataclass
-class AtmosphereData:
-    """Dataclass representing atmospheric conditions at a specific altitude."""
+class AtmosphereData(UnitChecked):
+    """Atmospheric conditions at a specific altitude."""
 
-    air_density: float = 0.0
-    speed_of_sound: float = 0.0
-    temperature: float = 0.0
-    pressure: float = 0.0
-    wind_velocity: np.ndarray = field(default_factory=zero_array)
+    air_density: Scalar = field(default_factory=lambda: scalar(0.0, "kg/m**3"))
+    speed_of_sound: Scalar = field(default_factory=lambda: scalar(0.0, "m/s"))
+    temperature: Scalar = field(default_factory=lambda: scalar(0.0, "K"))
+    pressure: Scalar = field(default_factory=lambda: scalar(0.0, "Pa"))
+    wind_velocity: Vector = field(default_factory=lambda: zero_vector("m/s"))

@@ -1,7 +1,18 @@
 """Environment module containing gravity data"""
 
+from flight_sim.units import Scalar, scalar
 
-# pylint: disable=unused-argument
-def get_gravity(latitude: float, longitude: float, altitude: float) -> float:
-    """Calculates acceleration of gravity based on latitude, longitude, and altitude"""
-    return 9.81  # Placeholder for now, will implement later
+
+def get_gravity(latitude: Scalar, longitude: Scalar, altitude: Scalar) -> Scalar:
+    """Calculate the acceleration of gravity at a point.
+
+    Args:
+        latitude (Scalar): Geodetic latitude of the vehicle.
+        longitude (Scalar): Geodetic longitude of the vehicle.
+        altitude (Scalar): Height of the vehicle above the reference surface.
+
+    Returns:
+        Scalar: Magnitude of the gravitational acceleration.
+    """
+    # pylint: disable=unused-argument
+    return scalar(9.81, "m/s**2")  # Placeholder for now, will implement later

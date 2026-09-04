@@ -2,18 +2,14 @@
 
 from dataclasses import dataclass, field
 
-import numpy as np
-
-
-def zero_array() -> np.ndarray:
-    """Return a zero-valued three-dimensional array."""
-    return np.zeros(3)
+from flight_sim.units import Scalar, UnitChecked, Vector, scalar, zero_vector
 
 
 @dataclass
 class Quaternion:
-    """Quaternion representaion to track orientation"""
+    """Quaternion representation tracking vehicle orientation."""
 
+    # Components are dimensionless by definition, so they stay plain floats.
     q_w: float = 1.0
     q_x: float = 0.0
     q_y: float = 0.0
@@ -21,20 +17,20 @@ class Quaternion:
 
 
 @dataclass
-class RocketState:
-    """Dataclass representing the current 6-DOF state of the vehicle."""
+class RocketState(UnitChecked):
+    """Current 6-DOF state of the vehicle."""
 
-    # Position Coordinates (meters)
-    position: np.ndarray = field(default_factory=zero_array)
+    # Position Coordinates
+    position: Vector = field(default_factory=lambda: zero_vector("m"))
 
-    # Velocity (m/s)
-    velocity: np.ndarray = field(default_factory=zero_array)
+    # Velocity
+    velocity: Vector = field(default_factory=lambda: zero_vector("m/s"))
 
-    # Angular Velocities (rad/sec)
-    angular_velocity: np.ndarray = field(default_factory=zero_array)
+    # Angular Velocities
+    angular_velocity: Vector = field(default_factory=lambda: zero_vector("rad/s"))
 
-    # Orientatiom
+    # Orientation
     orientation: Quaternion = field(default_factory=Quaternion)
 
-    # Mass Properties (kg)
-    current_mass: float = 0.0
+    # Mass Properties
+    current_mass: Scalar = field(default_factory=lambda: scalar(0.0, "kg"))
