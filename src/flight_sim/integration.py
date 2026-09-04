@@ -18,7 +18,9 @@ class IntegrationConfiguration:
     atmosphere_data: AtmosphereData = field(default_factory=AtmosphereData)
 
 
-def derivative_computation(state: RocketState, atmosphere: AtmosphereData) -> RocketState:
+def derivative_computation(
+    state: RocketState, atmosphere: AtmosphereData
+) -> RocketState:
     """Caculates change of rocket during time step"""
     return RocketState(
         position=np.zeros(3),
