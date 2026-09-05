@@ -113,6 +113,7 @@ def _expected_fields(cls: type[Any]) -> tuple[_QuantityField, ...]:
     return _EXPECTED[cls]
 
 
+# pylint: disable=too-few-public-methods
 class UnitChecked:
     """Base class for dataclasses whose fields hold physical quantities.
 
