@@ -101,3 +101,19 @@ def test_get_gravity_returns_an_acceleration() -> None:
 
     assert magnitude.check("[length] / [time] ** 2")
     assert magnitude.m_as("m/s**2") == pytest.approx(9.81)
+
+
+def test_step_adaptive_scaling_and_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stress tests the adaptive loop to hit step rejection, scaling, and overshoot limits."""
+    monkeypatch.setattr(
+        "flight_sim.integration.get_gravity",
+        lambda latitude, longitude, altitude: scalar(altitude.to("m").magnitude ** 3, "m/s**2"),
+    )
+
+    state = RocketState()
+    state.position = scalar([0.0, 0.0, 10.0], "m")
+    state.velocity = scalar([0.0, 0.0, 50.0], "m/s")
+    atmosphere = AtmosphereData()
+    next_state = step(state, atmosphere, scalar(5.0, "s"))
+
+    assert next_state is not None

@@ -1,7 +1,7 @@
 """Integration math for 6-DOF simulation"""
 
 from dataclasses import dataclass, field
-
+import numpy as np
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
@@ -79,7 +79,7 @@ def apply_derivative(
 # pylint: disable=too-many-locals
 def rkf45_step(
     state: RocketState, atmosphere: AtmosphereData, dt: Scalar
-) -> RocketState:
+) -> tuple[RocketState, RocketState]:
     """Advance the rocket state by one time step using RKF45 integration."""
     k1 = derivative_computation(state, atmosphere)
 
@@ -123,15 +123,22 @@ def rkf45_step(
     state_k6 = apply_derivative(state_k6_partial4, k5, dt_k6_5)
     k6 = derivative_computation(state_k6, atmosphere)
 
-    result = apply_derivative(state, k1, dt * (16 / 135))
-    result = apply_derivative(result, k3, dt * (6656 / 12825))
-    result = apply_derivative(result, k4, dt * (28561 / 56430))
-    result = apply_derivative(result, k5, dt * (-9 / 50))
-    return apply_derivative(result, k6, dt * (2 / 55))
+    state_5th = apply_derivative(state, k1, dt * (16 / 135))
+    state_5th = apply_derivative(state_5th, k3, dt * (6656 / 12825))
+    state_5th = apply_derivative(state_5th, k4, dt * (28561 / 56430))
+    state_5th = apply_derivative(state_5th, k5, dt * (-9 / 50))
+    state_5th = apply_derivative(state_5th, k6, dt * (2 / 55))
+
+    state_4th = apply_derivative(state, k1, dt * (25 / 216))
+    state_4th = apply_derivative(state_4th, k3, dt * (1408 / 2565))
+    state_4th = apply_derivative(state_4th, k4, dt * (2197 / 4104))
+    state_4th = apply_derivative(state_4th, k5, dt * (-1 / 5))
+
+    return state_5th, state_4th
 
 
 def step(state: RocketState, atmosphere: AtmosphereData, dt: Scalar) -> RocketState:
-    """Advance the rocket state by one time step using RKF45 integration.
+    """Advance the rocket state using adaptive RKF45 integration.
 
     Args:
         state (RocketState): Current state of the vehicle.
@@ -140,12 +147,49 @@ def step(state: RocketState, atmosphere: AtmosphereData, dt: Scalar) -> RocketSt
 
     Returns:
         RocketState: The state after advancing by one step.
-
-    Raises:
-        DimensionalityError: If dt is not a time.
     """
-    # Enforce Pint unit safety and normalize to seconds
-    time_step: Scalar = dt.to("s")
+    # Strip units for while-loop
+    target_time: float = dt.to("s").magnitude
+    time_simulated: float = 0.0
+
+    # Assume while step taken at once
+    current_dt: float = target_time
+    current_state = state
+
+    # Current tolerance set (Can be adjusted if needed)
+    tolerance = 1e-6
+
+    while time_simulated < target_time:
+        # Prevents the final step from overshooting the target time
+        if current_dt > (target_time - time_simulated):
+            current_dt = target_time - time_simulated
+
+        # Wraps the raw float back into Pint Scalar for the RKF45 step
+        dt_scalar = scalar(current_dt, "s")
+
+        # Look into future with 4th and 5th order RKF45 steps
+        state_5th, state_4th = rkf45_step(current_state, atmosphere, dt_scalar)
+
+        # Calculate difference between two position estimates in meters
+        position_difference = (
+            (state_5th.position - state_4th.position).to("m").magnitude
+        )
+        error = float(np.linalg.norm(position_difference))
+
+        # Check if the error is within the tolerance
+        if error <= tolerance:
+            current_state = state_5th
+            time_simulated += current_dt
+
+            if error > 0:
+                scale_factor = 0.9 * (tolerance / error) ** 0.2
+                current_dt *= min(scale_factor, 1.5)
+            else:
+                current_dt *= 1.5
+        else:
+            scale_factor = 0.9 * (tolerance / error) ** 0.2
+            current_dt *= max(scale_factor, 0.1)
+    return current_state
 
     # Route into your robust RKF45 mathematics
     return rkf45_step(state, atmosphere, time_step)
