@@ -8,7 +8,7 @@ from flight_sim.__main__ import main
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.integration import step
-from flight_sim.units import Scalar, scalar
+from flight_sim.units import Scalar, scalar, vector
 from flight_sim.vehicle.rocket_state import RocketState
 
 
@@ -104,15 +104,17 @@ def test_get_gravity_returns_an_acceleration() -> None:
 
 
 def test_step_adaptive_scaling_and_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stress tests the adaptive loop to hit step rejection, scaling, and overshoot limits."""
+    """Stress adaptive rejection, scaling, and overshoot limits."""
     monkeypatch.setattr(
         "flight_sim.integration.get_gravity",
-        lambda latitude, longitude, altitude: scalar(altitude.to("m").magnitude ** 3, "m/s**2"),
+        lambda latitude, longitude, altitude: scalar(
+            altitude.to("m").magnitude ** 3, "m/s**2"
+        ),
     )
 
     state = RocketState()
-    state.position = scalar([0.0, 0.0, 10.0], "m")
-    state.velocity = scalar([0.0, 0.0, 50.0], "m/s")
+    state.position = vector((0.0, 0.0, 10.0), "m")
+    state.velocity = vector((0.0, 0.0, 50.0), "m/s")
     atmosphere = AtmosphereData()
     next_state = step(state, atmosphere, scalar(5.0, "s"))
 

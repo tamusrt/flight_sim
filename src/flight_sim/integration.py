@@ -1,7 +1,9 @@
-"""Integration math for 6-DOF simulation"""
+"""Integration math for 6-DOF simulation."""
 
 from dataclasses import dataclass, field
+
 import numpy as np
+
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
@@ -161,8 +163,7 @@ def step(state: RocketState, atmosphere: AtmosphereData, dt: Scalar) -> RocketSt
 
     while time_simulated < target_time:
         # Prevents the final step from overshooting the target time
-        if current_dt > (target_time - time_simulated):
-            current_dt = target_time - time_simulated
+        current_dt = min(current_dt, target_time - time_simulated)
 
         # Wraps the raw float back into Pint Scalar for the RKF45 step
         dt_scalar = scalar(current_dt, "s")
@@ -190,6 +191,3 @@ def step(state: RocketState, atmosphere: AtmosphereData, dt: Scalar) -> RocketSt
             scale_factor = 0.9 * (tolerance / error) ** 0.2
             current_dt *= max(scale_factor, 0.1)
     return current_state
-
-    # Route into your robust RKF45 mathematics
-    return rkf45_step(state, atmosphere, time_step)
