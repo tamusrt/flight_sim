@@ -7,6 +7,7 @@ import numpy as np
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
+from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
 
@@ -37,7 +38,7 @@ class StateDerivative(UnitChecked):
 
 
 def derivative_computation(
-    state: RocketState, atmosphere: AtmosphereData
+    state: RocketState, atmosphere: AtmosphereData, properties: RocketProperties
 ) -> StateDerivative:
     """Compute the time derivative of the rocket state.
 
