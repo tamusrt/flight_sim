@@ -6,11 +6,10 @@ from flight_sim.utilities.data_loader import interpolator_from_csv
 @dataclass
 class RocketProperties:
     """Aerodynamic properties of the rocket"""
-
+    aero_file_path: str
+    
     reference_area: Scalar = scalar(0.0182414692, ".=m**2")
     reference_diameter: Scalar = scalar(0.1524, ".m")
-
-    aero_file_path: str
 
     cd_table: RegularGridInterpolator = field(init = False)
     cl_table: RegularGridInterpolator = field(init = False)

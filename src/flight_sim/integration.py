@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from scipy.spatial.transform import Rotation as R
+
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
@@ -45,6 +47,7 @@ def derivative_computation(
     Args:
         state (RocketState): Current state of the vehicle.
         atmosphere (AtmosphereData): Conditions at the vehicle's altitude.
+        properties (RocketProperties): Aerodynamic properties of rocket
 
     Returns:
         StateDerivative: Rates of change to integrate over the next step.
@@ -58,9 +61,39 @@ def derivative_computation(
     # Gravity acts along -Z. The unit vector is dimensionless, so the product
     # keeps whatever acceleration units get_gravity returned.
     down: Vector = vector((0.0, 0.0, -1.0), "dimensionless")
+
+    total_acceleration = magnitude_of_gravity * down
+
+    speed = scalar(np.linalg.norm(state.velocity.to("m/s").magnitude), "m/s") #Velocity vector magnitude "speed"
+
+    if speed.magnitude > 0 and state.current_mass.magnitude > 0:
+
+        velocity_raw = state.velocity.to("m/s").magnitude
+        speed_raw = speed.to("m/s").magnitude
+        flight_vector = velocity_raw / speed_raw #Divides 3D velocity by a scalar to get directional arrow pointing where the wind is hitting the rocket
+
+        rocket_rotation = R.from_quat(state.orientation) #Turns quaternion into something usable in 3D
+        pad_vector = np.array([0.0, 0.0, 1.0])
+        nose_vector = rocket_rotation.apply(pad_vector) #Apply rocket's current spin and tilt to pad_vector, resulting in vector pointing where rocket's physical tip is
+
+        dot_product = np.clip(np.dot(flight_vector, nose_vector), -1.0, 1.0) #Dot product between flight vector and direction of nose tip
+        current_alpha = float(np.degrees(np.arccos(dot_product)))
+
+        current_mach = (speed / atmosphere.speed_of_sound).magnitude
+        cd = float(properties.cd_table([current_mach, current_alpha])) #Interpolates grid from RocketProperties to find CD
+
+        q = 0.5 * atmosphere.air_density * (speed ** 2) #Dynamic Pressure
+        drag_force_magnitude = q * properties.reference_area * cd
+
+        velocity_dir = state.velocity / speed
+        drag_force_vector = -velocity_dir * drag_force_magnitude #Negative sign to make force push backwards
+
+        drag_accel = drag_force_vector / state.current_mass #F = ma --> a = F/m
+
+        total_acceleration += drag_accel
     return StateDerivative(
         velocity=state.velocity,
-        acceleration=magnitude_of_gravity * down,
+        acceleration=total_acceleration,
         angular_acceleration=zero_vector("rad/s**2"),
     )
 
