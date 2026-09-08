@@ -3,8 +3,7 @@
 from dataclasses import dataclass, field
 
 import numpy as np
-
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation  # type: ignore
 
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
@@ -39,6 +38,7 @@ class StateDerivative(UnitChecked):
     )
 
 
+# pylint: disable=too-many-locals
 def derivative_computation(
     state: RocketState, atmosphere: AtmosphereData, properties: RocketProperties
 ) -> StateDerivative:
@@ -64,31 +64,49 @@ def derivative_computation(
 
     total_acceleration = magnitude_of_gravity * down
 
-    speed = scalar(np.linalg.norm(state.velocity.to("m/s").magnitude), "m/s") #Velocity vector magnitude "speed"
+    speed = scalar(
+        float(np.linalg.norm(state.velocity.to("m/s").magnitude)), "m/s"
+    )  # Velocity vector magnitude "speed"
 
     if speed.magnitude > 0 and state.current_mass.magnitude > 0:
-
         velocity_raw = state.velocity.to("m/s").magnitude
         speed_raw = speed.to("m/s").magnitude
-        flight_vector = velocity_raw / speed_raw #Divides 3D velocity by a scalar to get directional arrow pointing where the wind is hitting the rocket
+        flight_vector = (
+            velocity_raw / speed_raw
+        )  # Divides 3D velocity by a scalar to get directional arrow
+        # pointing where the wind is hitting the rocket
 
-        rocket_rotation = R.from_quat(state.orientation) #Turns quaternion into something usable in 3D
+        rocket_rotation = Rotation.from_quat(
+            state.orientation.q_x,
+            state.orientation.q_y,
+            state.orientation.q_z,
+            state.orientation.q_w,
+        )  # Turns quaternion into something usable in 3D
         pad_vector = np.array([0.0, 0.0, 1.0])
-        nose_vector = rocket_rotation.apply(pad_vector) #Apply rocket's current spin and tilt to pad_vector, resulting in vector pointing where rocket's physical tip is
+        nose_vector = rocket_rotation.apply(
+            pad_vector
+        )  # Apply rocket's current spin and tilt to pad_vector,
+        # resulting in vector pointing where rocket's physical tip is
 
-        dot_product = np.clip(np.dot(flight_vector, nose_vector), -1.0, 1.0) #Dot product between flight vector and direction of nose tip
+        dot_product = np.clip(
+            np.dot(flight_vector, nose_vector), -1.0, 1.0
+        )  # Dot product between flight vector and direction of nose tip
         current_alpha = float(np.degrees(np.arccos(dot_product)))
 
-        current_mach = (speed / atmosphere.speed_of_sound).magnitude
-        cd = float(properties.cd_table([current_mach, current_alpha])) #Interpolates grid from RocketProperties to find CD
+        current_mach = float((speed / atmosphere.speed_of_sound).magnitude)
+        cd = float(
+            properties.cd_table([current_mach, current_alpha])
+        )  # Interpolates grid from RocketProperties to find CD
 
-        q = 0.5 * atmosphere.air_density * (speed ** 2) #Dynamic Pressure
+        q = 0.5 * atmosphere.air_density * (speed**2)  # Dynamic Pressure
         drag_force_magnitude = q * properties.reference_area * cd
 
         velocity_dir = state.velocity / speed
-        drag_force_vector = -velocity_dir * drag_force_magnitude #Negative sign to make force push backwards
+        drag_force_vector = (
+            -velocity_dir * drag_force_magnitude
+        )  # Negative sign to make force push backwards
 
-        drag_accel = drag_force_vector / state.current_mass #F = ma --> a = F/m
+        drag_accel = drag_force_vector / state.current_mass  # F = ma --> a = F/m
 
         total_acceleration += drag_accel
     return StateDerivative(
@@ -114,20 +132,23 @@ def apply_derivative(
 
 # pylint: disable=too-many-locals
 def rkf45_step(
-    state: RocketState, atmosphere: AtmosphereData, dt: Scalar
+    state: RocketState,
+    atmosphere: AtmosphereData,
+    properties: RocketProperties,
+    dt: Scalar,
 ) -> tuple[RocketState, RocketState]:
     """Advance the rocket state by one time step using RKF45 integration."""
-    k1 = derivative_computation(state, atmosphere)
+    k1 = derivative_computation(state, atmosphere, properties)
 
     dt_k2 = dt * 0.25
     state_k2 = apply_derivative(state, k1, dt_k2)
-    k2 = derivative_computation(state_k2, atmosphere)
+    k2 = derivative_computation(state_k2, atmosphere, properties)
 
     dt_k3_1 = dt * (3 / 32)
     dt_k3_2 = dt * (9 / 32)
     state_k3_partial = apply_derivative(state, k1, dt_k3_1)
     state_k3 = apply_derivative(state_k3_partial, k2, dt_k3_2)
-    k3 = derivative_computation(state_k3, atmosphere)
+    k3 = derivative_computation(state_k3, atmosphere, properties)
 
     dt_k4_1 = dt * (1932 / 2197)
     dt_k4_2 = dt * (-7200 / 2197)
@@ -135,7 +156,7 @@ def rkf45_step(
     state_k4_partial1 = apply_derivative(state, k1, dt_k4_1)
     state_k4_partial2 = apply_derivative(state_k4_partial1, k2, dt_k4_2)
     state_k4 = apply_derivative(state_k4_partial2, k3, dt_k4_3)
-    k4 = derivative_computation(state_k4, atmosphere)
+    k4 = derivative_computation(state_k4, atmosphere, properties)
 
     dt_k5_1 = dt * (439 / 216)
     dt_k5_2 = dt * (-8)
@@ -145,7 +166,7 @@ def rkf45_step(
     state_k5_partial2 = apply_derivative(state_k5_partial1, k2, dt_k5_2)
     state_k5_partial3 = apply_derivative(state_k5_partial2, k3, dt_k5_3)
     state_k5 = apply_derivative(state_k5_partial3, k4, dt_k5_4)
-    k5 = derivative_computation(state_k5, atmosphere)
+    k5 = derivative_computation(state_k5, atmosphere, properties)
 
     dt_k6_1 = dt * (-8 / 27)
     dt_k6_2 = dt * 2
@@ -157,7 +178,7 @@ def rkf45_step(
     state_k6_partial3 = apply_derivative(state_k6_partial2, k3, dt_k6_3)
     state_k6_partial4 = apply_derivative(state_k6_partial3, k4, dt_k6_4)
     state_k6 = apply_derivative(state_k6_partial4, k5, dt_k6_5)
-    k6 = derivative_computation(state_k6, atmosphere)
+    k6 = derivative_computation(state_k6, atmosphere, properties)
 
     state_5th = apply_derivative(state, k1, dt * (16 / 135))
     state_5th = apply_derivative(state_5th, k3, dt * (6656 / 12825))
@@ -173,7 +194,12 @@ def rkf45_step(
     return state_5th, state_4th
 
 
-def step(state: RocketState, atmosphere: AtmosphereData, dt: Scalar) -> RocketState:
+def step(
+    state: RocketState,
+    atmosphere: AtmosphereData,
+    properties: RocketProperties,
+    dt: Scalar,
+) -> RocketState:
     """Advance the rocket state using adaptive RKF45 integration.
 
     Args:
@@ -203,7 +229,9 @@ def step(state: RocketState, atmosphere: AtmosphereData, dt: Scalar) -> RocketSt
         dt_scalar = scalar(current_dt, "s")
 
         # Look into future with 4th and 5th order RKF45 steps
-        state_5th, state_4th = rkf45_step(current_state, atmosphere, dt_scalar)
+        state_5th, state_4th = rkf45_step(
+            current_state, atmosphere, properties, dt_scalar
+        )
 
         # Calculate difference between two position estimates in meters
         position_difference = (

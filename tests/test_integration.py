@@ -9,7 +9,15 @@ from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.integration import step
 from flight_sim.units import Scalar, scalar, vector
+from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
+
+
+# pylint: disable=redefined-outer-name
+@pytest.fixture
+def baseline_rocket_properties() -> RocketProperties:
+    """Provides a standardized rocket configuration for integration tests."""
+    return RocketProperties(aero_file_path="tests/test_data/standard_aero.csv")
 
 
 def test_main_defaults_to_none(
@@ -45,7 +53,7 @@ def test_main_rejects_unknown_argument(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_step_zero_force_keeps_velocity_constant(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
 ) -> None:
     """Tests that the step function keeps velocity constant"""
 
@@ -55,21 +63,27 @@ def test_step_zero_force_keeps_velocity_constant(
     )
     state = RocketState()
     atmosphere = AtmosphereData()
-    next_state = step(state, atmosphere, scalar(0.01, "s"))
+    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.01, "s"))
     assert np.allclose(next_state.velocity.m_as("m/s"), np.zeros(3))
 
 
-def test_step_with_gravity_changes_velocity() -> None:
+def test_step_with_gravity_changes_velocity(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
     """Tests that gravity correctly accelerates rocket downwards"""
     state = RocketState()
     atmosphere = AtmosphereData()
-    next_state = step(state, atmosphere, scalar(0.01, "s"))
+    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.01, "s"))
     assert next_state.velocity[2].m_as("m/s") < 0
 
 
-def test_step_result_keeps_expected_units() -> None:
+def test_step_result_keeps_expected_units(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
     """The integrated state stays in the units its fields declare."""
-    next_state = step(RocketState(), AtmosphereData(), scalar(0.01, "s"))
+    next_state = step(
+        RocketState(), AtmosphereData(), baseline_rocket_properties, scalar(0.01, "s")
+    )
 
     assert next_state.position.check("[length]")
     assert next_state.velocity.check("[length] / [time]")
@@ -77,18 +91,31 @@ def test_step_result_keeps_expected_units() -> None:
     assert next_state.current_mass.check("[mass]")
 
 
-def test_step_accepts_any_time_unit() -> None:
+def test_step_accepts_any_time_unit(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
     """A dt given in milliseconds integrates the same as the equivalent seconds."""
-    from_ms = step(RocketState(), AtmosphereData(), scalar(10.0, "ms"))
-    from_s = step(RocketState(), AtmosphereData(), scalar(0.01, "s"))
+    from_ms = step(
+        RocketState(), AtmosphereData(), baseline_rocket_properties, scalar(10.0, "ms")
+    )
+    from_s = step(
+        RocketState(), AtmosphereData(), baseline_rocket_properties, scalar(0.01, "s")
+    )
 
     assert np.allclose(from_ms.velocity.m_as("m/s"), from_s.velocity.m_as("m/s"))
 
 
-def test_step_rejects_dt_that_is_not_a_time() -> None:
+def test_step_rejects_dt_that_is_not_a_time(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
     """A dt in the wrong dimension is rejected rather than silently integrated."""
     with pytest.raises(DimensionalityError):
-        step(RocketState(), AtmosphereData(), scalar(0.01, "m"))
+        step(
+            RocketState(),
+            AtmosphereData(),
+            baseline_rocket_properties,
+            scalar(0.01, "m"),
+        )
 
 
 def test_get_gravity_returns_an_acceleration() -> None:
@@ -103,7 +130,9 @@ def test_get_gravity_returns_an_acceleration() -> None:
     assert magnitude.m_as("m/s**2") == pytest.approx(9.81)
 
 
-def test_step_adaptive_scaling_and_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_step_adaptive_scaling_and_rejection(
+    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+) -> None:
     """Stress adaptive rejection, scaling, and overshoot limits."""
     monkeypatch.setattr(
         "flight_sim.integration.get_gravity",
@@ -116,6 +145,19 @@ def test_step_adaptive_scaling_and_rejection(monkeypatch: pytest.MonkeyPatch) ->
     state.position = vector((0.0, 0.0, 10.0), "m")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
     atmosphere = AtmosphereData()
-    next_state = step(state, atmosphere, scalar(5.0, "s"))
+    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(5.0, "s"))
 
+    assert next_state is not None
+
+def test_step_triggers_aerodynamic_calculations(baseline_rocket_properties: RocketProperties) -> None:
+    """Ensures the integration engine runs the drag/lift physics block."""
+    state = RocketState()
+    
+    state.current_mass = scalar(25.0, "kg")
+    state.velocity = vector((0.0, 5.0, 150.0), "m/s") 
+    
+    atmosphere = AtmosphereData()
+    
+    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.1, "s"))
+    
     assert next_state is not None
