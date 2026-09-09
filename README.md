@@ -97,6 +97,9 @@ drops below the set threshold.
    uv run ruff format .
    ```
 
+   Every function needs a docstring, written either as a one-line summary or a full
+   Google-style block. See [the docstring skill](.github/skills/write-docstrings/SKILL.md).
+
 4. Push the branch and open a PR against `main`. The **Lint** and **Tests** workflows start
    automatically. The lint job runs all four of its checks even when an early one fails, so a
    single run reports everything you need to fix.
