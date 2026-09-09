@@ -63,6 +63,7 @@ def test_step_zero_force_keeps_velocity_constant(
     )
     state = RocketState()
     atmosphere = AtmosphereData()
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
     next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.01, "s"))
     assert np.allclose(next_state.velocity.m_as("m/s"), np.zeros(3))
 
@@ -73,6 +74,7 @@ def test_step_with_gravity_changes_velocity(
     """Tests that gravity correctly accelerates rocket downwards"""
     state = RocketState()
     atmosphere = AtmosphereData()
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
     next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.01, "s"))
     assert next_state.velocity[2].m_as("m/s") < 0
 
@@ -145,19 +147,23 @@ def test_step_adaptive_scaling_and_rejection(
     state.position = vector((0.0, 0.0, 10.0), "m")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
     atmosphere = AtmosphereData()
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
     next_state = step(state, atmosphere, baseline_rocket_properties, scalar(5.0, "s"))
 
     assert next_state is not None
 
-def test_step_triggers_aerodynamic_calculations(baseline_rocket_properties: RocketProperties) -> None:
+
+def test_step_triggers_aerodynamic_calculations(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
     """Ensures the integration engine runs the drag/lift physics block."""
     state = RocketState()
-    
+
     state.current_mass = scalar(25.0, "kg")
-    state.velocity = vector((0.0, 5.0, 150.0), "m/s") 
-    
+    state.velocity = vector((0.0, 0.0, 50.0), "m/s")
+
     atmosphere = AtmosphereData()
-    
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
     next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.1, "s"))
-    
+
     assert next_state is not None

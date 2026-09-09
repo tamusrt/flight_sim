@@ -1,7 +1,7 @@
 """Functions for loading aerodynamic CSV data."""
 
 import numpy as np
-import pandas as pd  # type: ignore
+import pandas as pd  # type: ignore # pylint: disable=import-error
 from scipy.interpolate import RegularGridInterpolator  # type: ignore
 
 

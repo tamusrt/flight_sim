@@ -77,10 +77,12 @@ def derivative_computation(
         # pointing where the wind is hitting the rocket
 
         rocket_rotation = Rotation.from_quat(
-            state.orientation.q_x,
-            state.orientation.q_y,
-            state.orientation.q_z,
-            state.orientation.q_w,
+            [
+                state.orientation.q_x,
+                state.orientation.q_y,
+                state.orientation.q_z,
+                state.orientation.q_w,
+            ]
         )  # Turns quaternion into something usable in 3D
         pad_vector = np.array([0.0, 0.0, 1.0])
         nose_vector = rocket_rotation.apply(
@@ -95,7 +97,7 @@ def derivative_computation(
 
         current_mach = float((speed / atmosphere.speed_of_sound).magnitude)
         cd = float(
-            properties.cd_table([current_mach, current_alpha])
+            float(properties.cd_table([current_mach, current_alpha]).item())
         )  # Interpolates grid from RocketProperties to find CD
 
         q = 0.5 * atmosphere.air_density * (speed**2)  # Dynamic Pressure
