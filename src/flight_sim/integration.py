@@ -110,7 +110,28 @@ def derivative_computation(
 
         drag_accel = drag_force_vector / state.current_mass  # F = ma --> a = F/m
 
-        total_acceleration += drag_accel
+        cl = float(float(properties.cl_table([current_mach, current_alpha]).item()))
+        lift_force_magnitude = q * properties.reference_area * cl
+
+        if current_alpha > 0.001:
+            pitch_axis = np.cross(flight_vector, nose_vector)
+            lift_raw_dir = np.cross(pitch_axis, flight_vector)
+
+            lift_dir_array = lift_raw_dir / np.linalg.norm(
+                lift_raw_dir
+            )  # Normalize to unit vector of 1
+
+            lift_force_vector = (
+                lift_dir_array * lift_force_magnitude
+            )  # Multiply direction array by Pint magnitude to retain units
+        else:
+            lift_force_vector = (
+                np.array([0.0, 0.0, 0.0]) * lift_force_magnitude
+            )  # If flying perfectly straight, lift force is zero
+
+        lift_accel = lift_force_vector / state.current_mass
+
+        total_acceleration += drag_accel + lift_accel
     return StateDerivative(
         velocity=state.velocity,
         acceleration=total_acceleration,
