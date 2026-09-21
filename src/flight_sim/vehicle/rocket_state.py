@@ -35,5 +35,5 @@ class RocketState(UnitChecked):
     # Mass Properties
     current_mass: Scalar = field(default_factory=lambda: scalar(0.0, "kg"))
 
-    # I_xx (roll), I_yy (pitch), I_zz (yaw) in kg*m^2
-    inertia: Vector = field(default_factory=lambda: vector((0.1, 2.5, 2.5), "kg*m**2"))
+    # I_xx (pitch), I_yy (yaw), I_zz (roll) in kg*m^2
+    inertia: Vector = field(default_factory=lambda: vector((2.5, 2.5, 0.1), "kg*m**2"))
