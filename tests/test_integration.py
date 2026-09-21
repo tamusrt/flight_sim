@@ -192,3 +192,25 @@ def test_step_triggers_aerodynamic_calculations(
     )
 
     assert next_state is not None
+
+
+def test_step_pitch_moment_induces_angular_velocity(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Test that a non-zero Angle of Attack creates a pitch restoring rotation."""
+    state = RocketState()
+    state.velocity = vector((50.0, 0.0, 200.0), "m/s")
+    state.current_mass = scalar(20.0, "kg")
+
+    atmosphere = AtmosphereData()
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
+    atmosphere.air_density = scalar(1.225, "kg/m**3")
+    next_state = step(
+        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
+    )
+
+    angular_vel = next_state.angular_velocity.m_as("rad/s")
+
+    assert angular_vel[0] == 0.0  # No roll induced
+    assert abs(angular_vel[1]) > 0.0  # Pitch rotation successfully applied!
+    assert angular_vel[2] == 0.0  # No yaw induced

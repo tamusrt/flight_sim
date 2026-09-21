@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from flight_sim.units import Scalar, UnitChecked, Vector, scalar, zero_vector
+from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
 
 
 @dataclass
@@ -34,3 +34,6 @@ class RocketState(UnitChecked):
 
     # Mass Properties
     current_mass: Scalar = field(default_factory=lambda: scalar(0.0, "kg"))
+
+    # I_xx (roll), I_yy (pitch), I_zz (yaw) in kg*m^2
+    inertia: Vector = field(default_factory=lambda: vector((0.1, 2.5, 2.5), "kg*m**2"))

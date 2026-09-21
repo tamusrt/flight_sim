@@ -16,7 +16,9 @@ def interpolator_from_csv(filepath: str, output_col: str) -> RegularGridInterpol
         values=output_col, index="Mach", columns="Alpha"
     ).to_numpy()
 
-    return RegularGridInterpolator((mach_axis, alpha_axis), grid_matrix)
+    return RegularGridInterpolator(
+        (mach_axis, alpha_axis), grid_matrix, bounds_error=False, fill_value=None
+    )
 
 
 def time_interpolator_from_csv(

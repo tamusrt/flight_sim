@@ -40,7 +40,7 @@ class StateDerivative(UnitChecked):
     mass_derivative: Scalar = field(default_factory=lambda: scalar(0.0, "kg/s"))
 
 
-# pylint: disable=too-many-locals
+# pylint: disable=unused-argument,too-many-locals,too-many-statements
 def derivative_computation(
     time: float,
     state: RocketState,
@@ -86,7 +86,10 @@ def derivative_computation(
     thrust_magnitude = float(properties.thrust_curve(time))
 
     if thrust_magnitude > 0 and state.current_mass.magnitude > 0:
-        thrust_vector = vector(nose_vector * thrust_magnitude, "N")
+        thrust_arr = nose_vector * thrust_magnitude
+        thrust_vector = vector(
+            (float(thrust_arr[0]), float(thrust_arr[1]), float(thrust_arr[2])), "N"
+        )
         thrust_accel = thrust_vector / state.current_mass
         total_acceleration += thrust_accel
 
@@ -109,25 +112,35 @@ def derivative_computation(
         dot_product = np.clip(
             np.dot(flight_vector, nose_vector), -1.0, 1.0
         )  # Dot product between flight vector and direction of nose tip
-        current_alpha = float(np.degrees(np.arccos(dot_product)))
 
+        current_alpha = float(np.degrees(np.arccos(dot_product)))
         current_mach = float((speed / atmosphere.speed_of_sound).magnitude)
+
         cd = float(
             float(properties.cd_table([current_mach, current_alpha]).item())
         )  # Interpolates grid from RocketProperties to find CD
+        cl = float(float(properties.cl_table([current_mach, current_alpha]).item()))
+        cm = float(float(properties.cm_table([current_mach, current_alpha]).item()))
 
         q = 0.5 * atmosphere.air_density * (speed**2)  # Dynamic Pressure
         drag_force_magnitude = q * properties.reference_area * cd
+        lift_force_magnitude = q * properties.reference_area * cl
+        pitch_torque_magnitude = (
+            q * properties.reference_area * properties.reference_diameter * cm
+        )  # Reference diameter acts as "lever arm" length
 
-        velocity_dir = state.velocity / speed
-        drag_force_vector = (
-            -velocity_dir * drag_force_magnitude
+        drag_mag_raw = float(drag_force_magnitude.m_as("N"))
+        lift_mag_raw = float(lift_force_magnitude.m_as("N"))
+        torque_mag_raw = float(pitch_torque_magnitude.m_as("N*m"))
+
+        velocity_dir_raw = velocity_raw / speed_raw
+
+        drag_arr = -velocity_dir_raw * drag_mag_raw
+        drag_force_vector = vector(
+            (float(drag_arr[0]), float(drag_arr[1]), float(drag_arr[2])), "N"
         )  # Negative sign to make force push backwards
 
         drag_accel = drag_force_vector / state.current_mass  # F = ma --> a = F/m
-
-        cl = float(float(properties.cl_table([current_mach, current_alpha]).item()))
-        lift_force_magnitude = q * properties.reference_area * cl
 
         if current_alpha > 0.001:
             pitch_axis = np.cross(flight_vector, nose_vector)
@@ -137,22 +150,36 @@ def derivative_computation(
                 lift_raw_dir
             )  # Normalize to unit vector of 1
 
-            lift_force_vector = (
-                lift_dir_array * lift_force_magnitude
+            lift_arr = lift_dir_array * lift_mag_raw
+
+            lift_force_vector = vector(
+                (float(lift_arr[0]), float(lift_arr[1]), float(lift_arr[2])), "N"
             )  # Multiply direction array by Pint magnitude to retain units
+
+            # Torque to angular acceleration (alpha = Torque / Inertia)
+            pitch_inertia_raw = float(state.inertia.m_as("kg*m**2")[1])
+            angular_arr = (pitch_axis * torque_mag_raw) / pitch_inertia_raw
+            angular_accel_vector = vector(
+                (float(angular_arr[0]), float(angular_arr[1]), float(angular_arr[2])),
+                "rad/s**2",
+            )
         else:
-            lift_force_vector = (
-                np.array([0.0, 0.0, 0.0]) * lift_force_magnitude
+            lift_force_vector = vector(
+                (0.0, 0.0, 0.0), "N"
             )  # If flying perfectly straight, lift force is zero
+            angular_accel_vector = vector((0.0, 0.0, 0.0), "rad/s**2")
 
         lift_accel = lift_force_vector / state.current_mass
-
         total_acceleration += drag_accel + lift_accel
+
+    else:
+        # If not moving, no aerodynamic forces or torques
+        angular_accel_vector = vector((0.0, 0.0, 0.0), "rad/s**2")
 
     return StateDerivative(
         velocity=state.velocity,
         acceleration=total_acceleration,
-        angular_acceleration=zero_vector("rad/s**2"),
+        angular_acceleration=angular_accel_vector,
         mass_derivative=mass_flow_rate,
     )
 
