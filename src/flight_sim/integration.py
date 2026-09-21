@@ -9,7 +9,7 @@ from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
-from flight_sim.vehicle.rocket_state import RocketState
+from flight_sim.vehicle.rocket_state import Quaternion, RocketState
 
 
 @dataclass
@@ -37,7 +37,50 @@ class StateDerivative(UnitChecked):
         default_factory=lambda: zero_vector("rad/s**2")
     )
 
+    # d(orientation)/dt
+    orientation_derivative: Quaternion = field(
+        default_factory=lambda: Quaternion(q_w=0.0)
+    )
+
     mass_derivative: Scalar = field(default_factory=lambda: scalar(0.0, "kg/s"))
+
+
+def quaternion_kinematics(
+    orientation: Quaternion, angular_velocity: Vector
+) -> Quaternion:
+    """Compute the quaternion rate from the body-frame angular velocity.
+
+    Evaluates the kinematic differential equation q_dot = 0.5 * Xi(q) * omega.
+
+    Args:
+        orientation (Quaternion): Current body-to-world orientation.
+        angular_velocity (Vector): Angular velocity expressed in the body frame.
+
+    Returns:
+        Quaternion: Rate of change of each orientation component, in 1/s.
+    """
+    q_0 = orientation.q_w
+    q_1 = orientation.q_x
+    q_2 = orientation.q_y
+    q_3 = orientation.q_z
+
+    xi_matrix = np.array(
+        [
+            [-q_1, -q_2, -q_3],
+            [q_0, -q_3, q_2],
+            [q_3, q_0, -q_1],
+            [-q_2, q_1, q_0],
+        ]
+    )
+    omega_raw = angular_velocity.m_as("rad/s")
+    q_dot = 0.5 * (xi_matrix @ omega_raw)
+
+    return Quaternion(
+        q_w=float(q_dot[0]),
+        q_x=float(q_dot[1]),
+        q_y=float(q_dot[2]),
+        q_z=float(q_dot[3]),
+    )
 
 
 # pylint: disable=unused-argument,too-many-locals,too-many-statements
@@ -157,8 +200,11 @@ def derivative_computation(
             )  # Multiply direction array by Pint magnitude to retain units
 
             # Torque to angular acceleration (alpha = Torque / Inertia)
+            # Angular velocity is tracked in the body frame, so the world-frame
+            # pitch axis is rotated into body axes first
             pitch_inertia_raw = float(state.inertia.m_as("kg*m**2")[1])
-            angular_arr = (pitch_axis * torque_mag_raw) / pitch_inertia_raw
+            body_pitch_axis = rocket_rotation.inv().apply(pitch_axis)
+            angular_arr = (body_pitch_axis * torque_mag_raw) / pitch_inertia_raw
             angular_accel_vector = vector(
                 (float(angular_arr[0]), float(angular_arr[1]), float(angular_arr[2])),
                 "rad/s**2",
@@ -180,6 +226,9 @@ def derivative_computation(
         velocity=state.velocity,
         acceleration=total_acceleration,
         angular_acceleration=angular_accel_vector,
+        orientation_derivative=quaternion_kinematics(
+            state.orientation, state.angular_velocity
+        ),
         mass_derivative=mass_flow_rate,
     )
 
@@ -188,12 +237,25 @@ def apply_derivative(
     state: RocketState, derivatives: StateDerivative, dt_scale: Scalar
 ) -> RocketState:
     """Helper to apply a scaled derivative to a state for RKF45 integration."""
+    # Quaternion components are plain floats, so the time scale is stripped too
+    dt_scale_raw = float(dt_scale.m_as("s"))
+    orientation = Quaternion(
+        q_w=state.orientation.q_w
+        + (derivatives.orientation_derivative.q_w * dt_scale_raw),
+        q_x=state.orientation.q_x
+        + (derivatives.orientation_derivative.q_x * dt_scale_raw),
+        q_y=state.orientation.q_y
+        + (derivatives.orientation_derivative.q_y * dt_scale_raw),
+        q_z=state.orientation.q_z
+        + (derivatives.orientation_derivative.q_z * dt_scale_raw),
+    )
+
     return RocketState(
         position=state.position + (derivatives.velocity * dt_scale),
         velocity=state.velocity + (derivatives.acceleration * dt_scale),
         angular_velocity=state.angular_velocity
         + (derivatives.angular_acceleration * dt_scale),
-        orientation=state.orientation,
+        orientation=orientation,
         current_mass=state.current_mass + (derivatives.mass_derivative * dt_scale),
     )
 
@@ -321,6 +383,8 @@ def step(
         # Check if the error is within the tolerance
         if error <= tolerance:
             current_state = state_5th
+            # Additive RKF45 stages drift the quaternion off unit length
+            current_state.orientation = state_5th.orientation.normalized()
             time_simulated += current_dt
 
             if error > 0:
