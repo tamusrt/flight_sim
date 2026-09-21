@@ -17,7 +17,11 @@ from flight_sim.vehicle.rocket_state import RocketState
 @pytest.fixture
 def baseline_rocket_properties() -> RocketProperties:
     """Provides a standardized rocket configuration for integration tests."""
-    return RocketProperties(aero_file_path="tests/test_data/standard_aero.csv")
+    return RocketProperties(
+        aero_file_path="tests/test_data/standard_aero.csv",
+        motor_file_path="tests/test_data/standard_motor.csv",
+        propellant_mass=2.5,
+    )
 
 
 def test_main_defaults_to_none(
@@ -64,7 +68,9 @@ def test_step_zero_force_keeps_velocity_constant(
     state = RocketState()
     atmosphere = AtmosphereData()
     atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.01, "s"))
+    next_state = step(
+        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.01, "s")
+    )
     assert np.allclose(next_state.velocity.m_as("m/s"), np.zeros(3))
 
 
@@ -75,7 +81,9 @@ def test_step_with_gravity_changes_velocity(
     state = RocketState()
     atmosphere = AtmosphereData()
     atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.01, "s"))
+    next_state = step(
+        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.01, "s")
+    )
     assert next_state.velocity[2].m_as("m/s") < 0
 
 
@@ -84,7 +92,11 @@ def test_step_result_keeps_expected_units(
 ) -> None:
     """The integrated state stays in the units its fields declare."""
     next_state = step(
-        RocketState(), AtmosphereData(), baseline_rocket_properties, scalar(0.01, "s")
+        0.0,
+        RocketState(),
+        AtmosphereData(),
+        baseline_rocket_properties,
+        scalar(0.01, "s"),
     )
 
     assert next_state.position.check("[length]")
@@ -98,10 +110,18 @@ def test_step_accepts_any_time_unit(
 ) -> None:
     """A dt given in milliseconds integrates the same as the equivalent seconds."""
     from_ms = step(
-        RocketState(), AtmosphereData(), baseline_rocket_properties, scalar(10.0, "ms")
+        0.0,
+        RocketState(),
+        AtmosphereData(),
+        baseline_rocket_properties,
+        scalar(10.0, "ms"),
     )
     from_s = step(
-        RocketState(), AtmosphereData(), baseline_rocket_properties, scalar(0.01, "s")
+        0.0,
+        RocketState(),
+        AtmosphereData(),
+        baseline_rocket_properties,
+        scalar(0.01, "s"),
     )
 
     assert np.allclose(from_ms.velocity.m_as("m/s"), from_s.velocity.m_as("m/s"))
@@ -113,6 +133,7 @@ def test_step_rejects_dt_that_is_not_a_time(
     """A dt in the wrong dimension is rejected rather than silently integrated."""
     with pytest.raises(DimensionalityError):
         step(
+            0.0,
             RocketState(),
             AtmosphereData(),
             baseline_rocket_properties,
@@ -148,7 +169,9 @@ def test_step_adaptive_scaling_and_rejection(
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
     atmosphere = AtmosphereData()
     atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(5.0, "s"))
+    next_state = step(
+        0.0, state, atmosphere, baseline_rocket_properties, scalar(5.0, "s")
+    )
 
     assert next_state is not None
 
@@ -164,6 +187,8 @@ def test_step_triggers_aerodynamic_calculations(
 
     atmosphere = AtmosphereData()
     atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(state, atmosphere, baseline_rocket_properties, scalar(0.1, "s"))
+    next_state = step(
+        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
+    )
 
     assert next_state is not None
