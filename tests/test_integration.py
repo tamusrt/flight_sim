@@ -7,10 +7,10 @@ from pint import DimensionalityError
 from flight_sim.__main__ import main
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
-from flight_sim.integration import step
+from flight_sim.integration import quaternion_kinematics, step
 from flight_sim.units import Scalar, scalar, vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
-from flight_sim.vehicle.rocket_state import RocketState
+from flight_sim.vehicle.rocket_state import Quaternion, RocketState
 
 
 # pylint: disable=redefined-outer-name
@@ -214,3 +214,79 @@ def test_step_pitch_moment_induces_angular_velocity(
     assert angular_vel[0] == 0.0  # No roll induced
     assert abs(angular_vel[1]) > 0.0  # Pitch rotation successfully applied!
     assert angular_vel[2] == 0.0  # No yaw induced
+
+
+def test_quaternion_normalized_returns_unit_length() -> None:
+    """Normalizing rescales every component by the quaternion's length."""
+    unit = Quaternion(q_w=2.0, q_x=0.0, q_y=-2.0, q_z=1.0).normalized()
+
+    assert unit.q_w == pytest.approx(2 / 3)
+    assert unit.q_x == pytest.approx(0.0)
+    assert unit.q_y == pytest.approx(-2 / 3)
+    assert unit.q_z == pytest.approx(1 / 3)
+
+
+def test_quaternion_kinematics_matches_xi_matrix() -> None:
+    """The quaternion rate equals 0.5 * Xi(q) * omega for a general orientation."""
+    orientation = Quaternion(q_w=0.5, q_x=-0.5, q_y=0.5, q_z=0.5)
+    angular_velocity = vector((1.0, 2.0, 3.0), "rad/s")
+
+    q_dot = quaternion_kinematics(orientation, angular_velocity)
+
+    assert q_dot.q_w == pytest.approx(-1.0)
+    assert q_dot.q_x == pytest.approx(0.5)
+    assert q_dot.q_y == pytest.approx(1.5)
+    assert q_dot.q_z == pytest.approx(0.0)
+
+
+def test_quaternion_kinematics_accepts_any_angular_rate_unit() -> None:
+    """An angular velocity in deg/s gives the same rate as the equivalent rad/s."""
+    from_deg = quaternion_kinematics(Quaternion(), vector((0.0, 0.0, 180.0), "deg/s"))
+
+    assert from_deg.q_z == pytest.approx(np.pi / 2)
+
+
+def test_step_angular_velocity_rotates_orientation(
+    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+) -> None:
+    """A constant body rate about Z turns the orientation by rate * time."""
+    monkeypatch.setattr(
+        "flight_sim.integration.get_gravity",
+        lambda latitude, longitude, altitude: scalar(0.0, "m/s**2"),
+    )
+    state = RocketState()
+    state.angular_velocity = vector((0.0, 0.0, np.pi / 2), "rad/s")
+
+    next_state = step(
+        0.0, state, AtmosphereData(), baseline_rocket_properties, scalar(0.1, "s")
+    )
+
+    half_angle = (np.pi / 2) * 0.1 / 2
+    assert next_state.orientation.q_w == pytest.approx(np.cos(half_angle), abs=1e-6)
+    assert next_state.orientation.q_x == pytest.approx(0.0, abs=1e-6)
+    assert next_state.orientation.q_y == pytest.approx(0.0, abs=1e-6)
+    assert next_state.orientation.q_z == pytest.approx(np.sin(half_angle), abs=1e-6)
+
+
+def test_step_keeps_orientation_normalized(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """The orientation stays a unit quaternion while the rocket is pitching."""
+    state = RocketState()
+    state.velocity = vector((50.0, 0.0, 200.0), "m/s")
+    state.angular_velocity = vector((0.3, -1.2, 0.8), "rad/s")
+    state.current_mass = scalar(20.0, "kg")
+
+    atmosphere = AtmosphereData()
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
+    atmosphere.air_density = scalar(1.225, "kg/m**3")
+    next_state = step(
+        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
+    )
+
+    orientation = next_state.orientation
+    norm = np.linalg.norm(
+        [orientation.q_w, orientation.q_x, orientation.q_y, orientation.q_z]
+    )
+    assert norm == pytest.approx(1.0)
+    assert orientation.q_w != 1.0  # Orientation actually moved off the pad attitude

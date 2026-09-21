@@ -1,5 +1,6 @@
 """Vehicle module containing the 6-DOF state structures of the rocket."""
 
+import math
 from dataclasses import dataclass, field
 
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
@@ -14,6 +15,20 @@ class Quaternion:
     q_x: float = 0.0
     q_y: float = 0.0
     q_z: float = 0.0
+
+    def normalized(self) -> "Quaternion":
+        """Rescale to unit length so the quaternion stays a valid rotation.
+
+        Returns:
+            Quaternion: A unit quaternion pointing the same way as this one.
+        """
+        norm = math.sqrt(self.q_w**2 + self.q_x**2 + self.q_y**2 + self.q_z**2)
+        return Quaternion(
+            q_w=self.q_w / norm,
+            q_x=self.q_x / norm,
+            q_y=self.q_y / norm,
+            q_z=self.q_z / norm,
+        )
 
 
 @dataclass
