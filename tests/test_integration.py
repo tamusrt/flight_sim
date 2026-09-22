@@ -1,5 +1,7 @@
 """Integration kernel tests."""
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 from pint import DimensionalityError
@@ -7,7 +9,7 @@ from pint import DimensionalityError
 from flight_sim.__main__ import main
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
-from flight_sim.integration import quaternion_kinematics, step
+from flight_sim.integration import derivative_computation, quaternion_kinematics, step
 from flight_sim.units import Scalar, scalar, vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import Quaternion, RocketState
@@ -321,3 +323,51 @@ def test_step_dynamic_cg_moment_transfer(
 
     assert angular_vel[0] == 0.0
     assert angular_vel[2] == 0.0
+
+
+def test_six_dof_aerodynamic_response(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Verify that Side Force, Roll, and Yaw generate correct accelerations."""
+
+    dummy_interp = MagicMock()
+    dummy_interp.item.return_value = 1.0
+
+    baseline_rocket_properties.cd_table = MagicMock(return_value=dummy_interp)
+    baseline_rocket_properties.cl_table = MagicMock(return_value=dummy_interp)
+    baseline_rocket_properties.cm_table = MagicMock(return_value=dummy_interp)
+    baseline_rocket_properties.cy_table = MagicMock(return_value=dummy_interp)
+    baseline_rocket_properties.c_roll_table = MagicMock(return_value=dummy_interp)
+    baseline_rocket_properties.cn_table = MagicMock(return_value=dummy_interp)
+
+    baseline_rocket_properties.thrust_curve = MagicMock(return_value=0.0)
+
+    state = RocketState(
+        position=vector((0.0, 0.0, 1000.0), "m"),
+        velocity=vector((50.0, 0.0, 100.0), "m/s"),
+        current_mass=scalar(25.0, "kg"),
+        inertia=vector((150.0, 150.0, 2.5), "kg*m**2"),
+        cg_location=vector((0.0, 0.0, -1.5), "m"),
+        angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
+        orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
+    )
+
+    atmosphere = MagicMock()
+    atmosphere.air_density = scalar(1.225, "kg/m**3")
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
+
+    derivative = derivative_computation(
+        time=0.0,
+        state=state,
+        atmosphere=atmosphere,
+        properties=baseline_rocket_properties,
+    )
+
+    angular_accel = derivative.angular_acceleration.m_as("rad/s**2")
+    linear_accel = derivative.acceleration.m_as("m/s**2")
+
+    assert abs(angular_accel[2]) > 0.0
+    assert abs(angular_accel[0]) > 0.0
+
+    lateral_accel_magnitude = abs(linear_accel[0]) + abs(linear_accel[1])
+    assert lateral_accel_magnitude > 0.0
