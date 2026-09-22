@@ -163,7 +163,11 @@ def derivative_computation(
             float(properties.cd_table([current_mach, current_alpha]).item())
         )  # Interpolates grid from RocketProperties to find CD
         cl = float(float(properties.cl_table([current_mach, current_alpha]).item()))
+        cy = float(properties.cy_table([current_mach, current_alpha]).item())
+
+        c_roll = float(properties.c_roll_table([current_mach, current_alpha]).item())
         cm = float(float(properties.cm_table([current_mach, current_alpha]).item()))
+        cn = float(properties.cn_table([current_mach, current_alpha]).item())
 
         q = 0.5 * atmosphere.air_density * (speed**2)  # Dynamic Pressure
         drag_force_magnitude = q * properties.reference_area * cd
@@ -224,11 +228,39 @@ def derivative_computation(
             )  # Convert world torque back to the rocket's body frame,
             # as the rocket's moment of inertia only exists in the Body Frame.
 
-            # Torque to angular acceleration (alpha = Torque / Inertia)
-            # Angular velocity is tracked in the body frame, so the world-frame
-            # pitch axis is rotated into body axes first
-            pitch_inertia_raw = float(state.inertia.m_as("kg*m**2")[1])
-            angular_arr = body_torque / pitch_inertia_raw
+            roll_torque_magnitude = (
+                q * properties.reference_area * properties.reference_diameter * c_roll
+            )
+            yaw_torque_magnitude = (
+                q * properties.reference_area * properties.reference_diameter * cn
+            )
+            side_force_magnitude = q * properties.reference_area * cy
+
+            # Apply the direct aerodynamic moments to the body frame
+            # (Assuming Z is Roll, Y is Pitch, X is Yaw)
+            body_torque[2] += float(roll_torque_magnitude.m_as("N*m"))
+            body_torque[0] += float(yaw_torque_magnitude.m_as("N*m"))
+
+            # To apply cy (Side Force), map it to
+            # the body X-axis and rotate it to the world frame
+            side_force_body = np.array(
+                [float(side_force_magnitude.m_as("N")), 0.0, 0.0]
+            )
+            side_force_world = rocket_rotation.apply(side_force_body)
+            side_force_vector = vector(
+                (
+                    float(side_force_world[0]),
+                    float(side_force_world[1]),
+                    float(side_force_world[2]),
+                ),
+                "N",
+            )
+            lift_force_vector = lift_force_vector + side_force_vector
+
+            # Torque to angular accelertaion (alpha = Torque / Inertia)
+            inertia_arr = state.inertia.m_as("kg*m**2")
+            angular_arr = body_torque / inertia_arr
+
             angular_accel_vector = vector(
                 (float(angular_arr[0]), float(angular_arr[1]), float(angular_arr[2])),
                 "rad/s**2",

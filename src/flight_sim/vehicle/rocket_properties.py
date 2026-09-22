@@ -31,9 +31,13 @@ class RocketProperties:
         default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
     )
 
-    cd_table: RegularGridInterpolator = field(init=False)
-    cl_table: RegularGridInterpolator = field(init=False)
-    cm_table: RegularGridInterpolator = field(init=False)
+    cd_table: RegularGridInterpolator = field(init=False)  # Drag
+    cl_table: RegularGridInterpolator = field(init=False)  # Lift (Normal)
+    cy_table: RegularGridInterpolator = field(init=False)  # Side Force
+
+    c_roll_table: RegularGridInterpolator = field(init=False)  # Roll
+    cm_table: RegularGridInterpolator = field(init=False)  # Pitch
+    cn_table: RegularGridInterpolator = field(init=False)  # Yaw
 
     thrust_curve: interp1d = field(init=False)
     mass_flow_multiplier: float = field(init=False)
@@ -42,6 +46,10 @@ class RocketProperties:
         self.cd_table = interpolator_from_csv(self.aero_file_path, "CD")
         self.cl_table = interpolator_from_csv(self.aero_file_path, "CL")
         self.cm_table = interpolator_from_csv(self.aero_file_path, "CM")
+
+        self.cy_table = interpolator_from_csv(self.aero_file_path, "CY")
+        self.c_roll_table = interpolator_from_csv(self.aero_file_path, "C_roll")
+        self.cn_table = interpolator_from_csv(self.aero_file_path, "CN")
 
         self.thrust_curve = time_interpolator_from_csv(
             self.motor_file_path, "Time", "Thrust"
