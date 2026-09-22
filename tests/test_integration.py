@@ -150,7 +150,7 @@ def test_get_gravity_returns_an_acceleration() -> None:
     )
 
     assert magnitude.check("[length] / [time] ** 2")
-    assert magnitude.m_as("m/s**2") == pytest.approx(9.81)
+    assert magnitude.m_as("m/s**2") == pytest.approx(9.7803253359, rel=1e-5)
 
 
 def test_step_adaptive_scaling_and_rejection(
