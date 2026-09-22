@@ -8,17 +8,14 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "ipython>=9.17.1",
     "numpy>=2.4.6",
     "pandas>=3.0.5",
     "pint>=0.25.3",
-    "pyshtools>=4.14.1",
     "scipy>=1.17.1",
 ]
 
 [project.scripts]
 flight_sim = "flight_sim.__main__:main"
-build-gravity-caches = "flight_sim.environment.build_gravity_caches:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

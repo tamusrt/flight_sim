@@ -70,20 +70,6 @@ We use `pytest` for testing. Run the entire test suite with:
 uv run pytest
 ```
 
-### Build Local Gravity Caches
-
-Precompute the stored EGM2008 corridors. This takes a few
-minutes but will store launch site data 
-
-```bash
-uv run build-gravity-caches --workers <num_workers>
-```
-
-Use the cache at startup with `load_gravity_cache` followed by
-`set_gravity_cache`. The simulation position is a local east-north-up vector;
-the configured cache origin converts it to latitude, longitude, and altitude
-before each gravity lookup.
-
 Coverage is enforced per settings in `pyproject.toml`, causing a fail if total coverage
 drops below the set threshold.
 
