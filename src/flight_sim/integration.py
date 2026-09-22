@@ -6,7 +6,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation  # type: ignore
 
 from flight_sim.environment.atmosphere import AtmosphereData
-from flight_sim.environment.gravity import get_gravity
+from flight_sim.environment.gravity import get_gravity, local_position_to_geodetic
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import Quaternion, RocketState
@@ -101,11 +101,8 @@ def derivative_computation(
         StateDerivative: Rates of change to integrate over the next step.
     """
     # pylint: disable=unused-argument
-    magnitude_of_gravity: Scalar = get_gravity(
-        latitude=scalar(0.0, "deg"),
-        longitude=scalar(0.0, "deg"),
-        altitude=state.position[2],
-    )
+    latitude, longitude, altitude = local_position_to_geodetic(state.position)
+    magnitude_of_gravity: Scalar = get_gravity(latitude, longitude, altitude)
     # Gravity acts along -Z. The unit vector is dimensionless, so the product
     # keeps whatever acceleration units get_gravity returned.
     down: Vector = vector((0.0, 0.0, -1.0), "dimensionless")

@@ -203,6 +203,9 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Generated EGM2008 local gravity caches
+data/gravity/
+
 # Ruff stuff:
 .ruff_cache/
 

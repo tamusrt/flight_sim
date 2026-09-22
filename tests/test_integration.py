@@ -142,7 +142,7 @@ def test_step_rejects_dt_that_is_not_a_time(
 
 
 def test_get_gravity_returns_an_acceleration() -> None:
-    """Gravity is returned as an acceleration quantity, not a bare float."""
+    """WGS84 gravity is returned as an acceleration quantity."""
     magnitude: Scalar = get_gravity(
         latitude=scalar(0.0, "deg"),
         longitude=scalar(0.0, "deg"),
@@ -150,7 +150,23 @@ def test_get_gravity_returns_an_acceleration() -> None:
     )
 
     assert magnitude.check("[length] / [time] ** 2")
-    assert magnitude.m_as("m/s**2") == pytest.approx(9.81)
+    assert magnitude.m_as("m/s**2") == pytest.approx(9.7803253359)
+
+
+def test_wgs84_gravity_varies_with_latitude_and_altitude() -> None:
+    """WGS84 gravity increases toward the pole and decreases with height."""
+    equatorial_surface = get_gravity(
+        scalar(0.0, "deg"), scalar(0.0, "deg"), scalar(0.0, "m")
+    )
+    polar_surface = get_gravity(
+        scalar(90.0, "deg"), scalar(0.0, "deg"), scalar(0.0, "m")
+    )
+    equatorial_1_km = get_gravity(
+        scalar(0.0, "deg"), scalar(0.0, "deg"), scalar(1000.0, "m")
+    )
+
+    assert polar_surface > equatorial_surface
+    assert equatorial_1_km < equatorial_surface
 
 
 def test_step_adaptive_scaling_and_rejection(
