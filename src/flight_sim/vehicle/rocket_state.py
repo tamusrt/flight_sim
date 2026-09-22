@@ -31,6 +31,7 @@ class Quaternion:
         )
 
 
+# pylint: disable=too-many-instance-attributes
 @dataclass
 class RocketState(UnitChecked):
     """Current 6-DOF state of the vehicle."""
@@ -52,3 +53,11 @@ class RocketState(UnitChecked):
 
     # I_xx (pitch), I_yy (yaw), I_zz (roll) in kg*m^2
     inertia: Vector = field(default_factory=lambda: vector((2.5, 2.5, 0.1), "kg*m**2"))
+
+    # Reference point used by standard_aero.csv
+    reference_point: Vector = field(
+        default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
+    )
+
+    # Center of gravoty relative to the nose tip
+    cg_location: Vector = field(default_factory=lambda: vector((0.0, 0.0, -2.5), "m"))

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator, interp1d  # type: ignore
 
-from flight_sim.units import Scalar, scalar
+from flight_sim.units import Scalar, Vector, scalar, vector
 from flight_sim.utilities.data_loader import (
     interpolator_from_csv,
     time_interpolator_from_csv,
@@ -26,6 +26,10 @@ class RocketProperties:
         default_factory=lambda: scalar(0.0182414692, ".=m**2")
     )
     reference_diameter: Scalar = field(default_factory=lambda: scalar(0.1524, ".m"))
+
+    reference_point: Vector = field(
+        default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
+    )
 
     cd_table: RegularGridInterpolator = field(init=False)
     cl_table: RegularGridInterpolator = field(init=False)

@@ -290,3 +290,34 @@ def test_step_keeps_orientation_normalized(
     )
     assert norm == pytest.approx(1.0)
     assert orientation.q_w != 1.0  # Orientation actually moved off the pad attitude
+
+
+def test_step_dynamic_cg_moment_transfer(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A shifted CG induces a pitch moment at a non-zero alpha."""
+    baseline_rocket_properties.reference_point = vector((0.0, 0.0, 0.0), "m")
+
+    state = RocketState()
+    state.cg_location = vector((0.0, 0.0, -2.7432), "m")
+
+    state.current_mass = scalar(20.0, "kg")
+    state.inertia = vector((0.1, 2.5, 2.5), "kg*m**2")
+
+    state.velocity = vector((20.0, 0.0, 150.0), "m/s")
+    state.angular_velocity = vector((0.0, 0.0, 0.0), "rad/s")
+
+    atmosphere = AtmosphereData()
+    atmosphere.speed_of_sound = scalar(343.0, "m/s")
+    atmosphere.air_density = scalar(1.225, "kg/m**3")
+
+    next_state = step(
+        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
+    )
+
+    angular_vel = next_state.angular_velocity.m_as("rad/s")
+
+    assert abs(angular_vel[1]) > 0.0
+
+    assert angular_vel[0] == 0.0
+    assert angular_vel[2] == 0.0
