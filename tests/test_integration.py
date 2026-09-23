@@ -27,7 +27,7 @@ def baseline_rocket_properties() -> RocketProperties:
 
 
 @patch("flight_sim.__main__.step")
-def test_main_echoes_test_input(mock_step):
+def test_main_echoes_test_input(mock_step: MagicMock) -> None:
     """Verify the executive simulation loop runs from launch to impact."""
 
     # Force the physics step to immediately return an underground state.
@@ -42,7 +42,7 @@ def test_main_echoes_test_input(mock_step):
 
 
 @patch("flight_sim.__main__.RocketProperties")
-def test_main_rejects_unknown_argument(mock_properties):
+def test_main_rejects_unknown_argument(mock_properties: MagicMock) -> None:
     """Verify the module behaves predictably if aerodynamic files are missing."""
     mock_properties.side_effect = FileNotFoundError("Missing standard_aero.csv")
     with pytest.raises(FileNotFoundError):

@@ -3,7 +3,7 @@
 import os
 
 import matplotlib.pyplot as plt
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 
 from flight_sim.environment.atmosphere import get_atmosphere
 from flight_sim.integration import step
