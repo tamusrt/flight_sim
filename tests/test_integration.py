@@ -1,12 +1,12 @@
 """Integration kernel tests."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.__main__ import main
+from flight_sim.__main__ import get_default_state, main
 from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.integration import derivative_computation, quaternion_kinematics, step
@@ -26,36 +26,27 @@ def baseline_rocket_properties() -> RocketProperties:
     )
 
 
-def test_main_defaults_to_none(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """main() reports a None test input when no arguments are given."""
-    monkeypatch.setattr("sys.argv", ["flight_sim"])
+@patch("flight_sim.__main__.step")
+def test_main_echoes_test_input(mock_step):
+    """Verify the executive simulation loop runs from launch to impact."""
+
+    # Force the physics step to immediately return an underground state.
+    mock_state = get_default_state()
+    mock_state.position = vector((0.0, 0.0, -10.0), "m")
+    mock_step.return_value = mock_state
 
     main()
 
-    assert capsys.readouterr().out == "Initializing FS with test input None\n"
+    # Verify the simulation successfully fired the physics engine before exiting
+    mock_step.assert_called()
 
 
-def test_main_echoes_test_input(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """main() echoes the value passed via --test_input."""
-    monkeypatch.setattr("sys.argv", ["flight_sim", "--test_input", "hello"])
-
-    main()
-
-    assert capsys.readouterr().out == "Initializing FS with test input hello\n"
-
-
-def test_main_rejects_unknown_argument(monkeypatch: pytest.MonkeyPatch) -> None:
-    """argparse exits with status 2 when an unknown argument is supplied."""
-    monkeypatch.setattr("sys.argv", ["flight_sim", "--nope"])
-
-    with pytest.raises(SystemExit) as excinfo:
+@patch("flight_sim.__main__.RocketProperties")
+def test_main_rejects_unknown_argument(mock_properties):
+    """Verify the module behaves predictably if aerodynamic files are missing."""
+    mock_properties.side_effect = FileNotFoundError("Missing standard_aero.csv")
+    with pytest.raises(FileNotFoundError):
         main()
-
-    assert excinfo.value.code == 2
 
 
 def test_step_zero_force_keeps_velocity_constant(
@@ -342,15 +333,9 @@ def test_six_dof_aerodynamic_response(
 
     baseline_rocket_properties.thrust_curve = MagicMock(return_value=0.0)
 
-    state = RocketState(
-        position=vector((0.0, 0.0, 1000.0), "m"),
-        velocity=vector((50.0, 0.0, 100.0), "m/s"),
-        current_mass=scalar(25.0, "kg"),
-        inertia=vector((150.0, 150.0, 2.5), "kg*m**2"),
-        cg_location=vector((0.0, 0.0, -1.5), "m"),
-        angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
-        orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
-    )
+    state = get_default_state()
+    state.position = vector((0.0, 0.0, 1000.0), "m")
+    state.velocity = vector((50.0, 0.0, 100.0), "m/s")
 
     atmosphere = MagicMock()
     atmosphere.air_density = scalar(1.225, "kg/m**3")

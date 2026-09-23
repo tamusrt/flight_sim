@@ -193,9 +193,11 @@ def derivative_computation(
             pitch_axis = np.cross(flight_vector, nose_vector)
             lift_raw_dir = np.cross(pitch_axis, flight_vector)
 
-            lift_dir_array = lift_raw_dir / np.linalg.norm(
-                lift_raw_dir
-            )  # Normalize to unit vector of 1
+            lift_norm = np.linalg.norm(lift_raw_dir)
+            if lift_norm > 1e-6:
+                lift_dir_array = lift_raw_dir / lift_norm
+            else:
+                lift_dir_array = np.array([0.0, 0.0, 0.0])
 
             lift_arr = lift_dir_array * lift_mag_raw
 
