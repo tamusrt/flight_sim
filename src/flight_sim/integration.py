@@ -5,12 +5,13 @@ from unit-checked quantities only at its public entry points.
 """
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import numpy as np
 
-from flight_sim.environment.atmosphere import AtmosphereData
+from flight_sim.environment.atmosphere import AtmosphereData, standard_conditions
 from flight_sim.environment.gravity import normal_gravity
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
@@ -25,6 +26,14 @@ _MASS = 13
 _STATE_SIZE = 14
 
 _LAUNCH_LATITUDE_RAD = 0.0
+
+# Largest position disagreement between the 4th and 5th order RKF45 estimates
+# that a step may have and still be accepted
+_TOLERANCE_M = 1e-7
+
+# Width of the time bracket, in seconds, within which locate_event finds an event
+_EVENT_TIME_TOLERANCE_S = 1e-9
+_EVENT_MAX_ITERATIONS = 100
 
 # Fehlberg RKF45 tableau: stage time fractions, stage weights, and the weights
 # of the 5th and 4th order solutions.
@@ -77,8 +86,6 @@ class StateDerivative(UnitChecked):
 class _StepInputs(NamedTuple):
     """Quantities held fixed across one step, as plain SI values."""
 
-    air_density: float  # kg/m**3
-    speed_of_sound: float  # m/s
     inertia: np.ndarray  # kg*m**2, body axes
     lever_arm_body: np.ndarray  # m, aero reference point relative to the CG
     reference_area: float  # m**2
@@ -86,13 +93,9 @@ class _StepInputs(NamedTuple):
     properties: RocketProperties
 
 
-def _step_inputs(
-    state: RocketState, atmosphere: AtmosphereData, properties: RocketProperties
-) -> _StepInputs:
+def _step_inputs(state: RocketState, properties: RocketProperties) -> _StepInputs:
     """Strip the units from everything the derivative reads besides the state."""
     return _StepInputs(
-        air_density=float(atmosphere.air_density.m_as("kg/m**3")),
-        speed_of_sound=float(atmosphere.speed_of_sound.m_as("m/s")),
         inertia=state.inertia.m_as("kg*m**2"),
         lever_arm_body=properties.reference_point.m_as("m")
         - state.cg_location.m_as("m"),
@@ -225,7 +228,7 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     Args:
         time (float): Time since ignition in seconds, for the thrust curve.
         values (np.ndarray): State in the layout ``_pack`` produces.
-        inputs (_StepInputs): Atmosphere, mass properties, and aero data.
+        inputs (_StepInputs): Mass properties and aero data.
 
     Returns:
         np.ndarray: Rate of change of each element of ``values``.
@@ -260,13 +263,15 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
         dot_product = min(max(float(flight_vector @ nose_vector), -1.0), 1.0)
 
         current_alpha = math.degrees(math.acos(dot_product))
-        current_mach = speed / inputs.speed_of_sound
+        # Atmosphere at this stage's own altitude
+        conditions = standard_conditions(float(values[2]))
+        current_mach = speed / conditions.speed_of_sound
         cd, cl, cy, c_roll, cm, cn = properties.aero_coefficients(
             current_mach, current_alpha
         )
 
         # Dynamic pressure times reference area gives force per unit coefficient
-        force_scale = 0.5 * inputs.air_density * speed**2 * inputs.reference_area
+        force_scale = 0.5 * conditions.air_density * speed**2 * inputs.reference_area
         # Reference diameter acts as "lever arm" length
         moment_scale = force_scale * inputs.reference_diameter
 
@@ -320,7 +325,6 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
 def derivative_computation(
     time: float,
     state: RocketState,
-    atmosphere: AtmosphereData,
     properties: RocketProperties,
 ) -> StateDerivative:
     """Compute the time derivative of the rocket state.
@@ -328,15 +332,12 @@ def derivative_computation(
     Args:
         time (float): Time since ignition in seconds, for the thrust curve.
         state (RocketState): Current state of the vehicle.
-        atmosphere (AtmosphereData): Conditions at the vehicle's altitude.
         properties (RocketProperties): Aerodynamic properties of rocket
 
     Returns:
         StateDerivative: Rates of change to integrate over the next step.
     """
-    rates = _state_rates(
-        time, _pack(state), _step_inputs(state, atmosphere, properties)
-    )
+    rates = _state_rates(time, _pack(state), _step_inputs(state, properties))
     q_dot = rates[_ORIENTATION].tolist()
     return StateDerivative(
         velocity=vector(rates[_POSITION], "m/s"),
@@ -376,21 +377,91 @@ def rkf45_step(
     )
 
 
-def step(
+def _accepted_step(
+    time: float, values: np.ndarray, dt: float, inputs: _StepInputs
+) -> tuple[np.ndarray, float, float]:
+    """Take one RKF45 step, shrinking it until its error is within tolerance.
+
+    Args:
+        time (float): Time at the start of the step, in seconds.
+        values (np.ndarray): State in the layout ``_pack`` produces.
+        dt (float): Step length to try first, in seconds.
+        inputs (_StepInputs): Quantities held fixed across the step.
+
+    Returns:
+        tuple[np.ndarray, float, float]: The new state, the length of the
+            step it took, and the step length to try next, in seconds.
+    """
+    while True:
+        # Look into future with 4th and 5th order RKF45 steps
+        values_5th, values_4th = rkf45_step(time, values, dt, inputs)
+
+        # Difference between the two position estimates, in metres
+        position_difference = values_5th[_POSITION] - values_4th[_POSITION]
+        error = math.sqrt(float(position_difference @ position_difference))
+
+        # Check if the error is within the tolerance
+        if error <= _TOLERANCE_M:
+            break
+        scale_factor = 0.9 * (_TOLERANCE_M / error) ** 0.2
+        dt *= max(scale_factor, 0.1)
+
+    # Additive RKF45 stages drift the quaternion off unit length
+    orientation = values_5th[_ORIENTATION]
+    values_5th[_ORIENTATION] = orientation / math.sqrt(float(orientation @ orientation))
+
+    if error > 0:
+        next_dt = dt * min(0.9 * (_TOLERANCE_M / error) ** 0.2, 1.5)
+    else:
+        next_dt = dt * 1.5
+    return values_5th, dt, next_dt
+
+
+def adaptive_step(
     time: float,
     state: RocketState,
-    atmosphere: AtmosphereData,
     properties: RocketProperties,
     dt: Scalar,
-) -> RocketState:
-    """Advance the rocket state using adaptive RKF45 integration.
+) -> tuple[RocketState, Scalar, Scalar]:
+    """Advance the rocket state by one step whose length the error sets.
 
-    Atmosphere, inertia, and CG location are held constant across the step.
+    The step is ``dt`` or shorter: RKF45 shrinks it until the position error
+    is within tolerance. Pass the returned next step length back in on the
+    following call so step lengths adapt to the flight. Inertia and CG
+    location are held constant across the step.
 
     Args:
         time (float): Time since ignition in seconds, for the thrust curve.
         state (RocketState): Current state of the vehicle.
-        atmosphere (AtmosphereData): Conditions at the vehicle's altitude.
+        properties (RocketProperties): Aerodynamic and motor properties.
+        dt (Scalar): Step length to try, in any unit of time.
+
+    Returns:
+        tuple[RocketState, Scalar, Scalar]: The new state, the length of the
+            step taken, and the step length to try next.
+    """
+    values, dt_taken, next_dt = _accepted_step(
+        time,
+        _pack(state),
+        float(dt.m_as("s")),
+        _step_inputs(state, properties),
+    )
+    return _unpack(values, state), scalar(dt_taken, "s"), scalar(next_dt, "s")
+
+
+def step(
+    time: float,
+    state: RocketState,
+    properties: RocketProperties,
+    dt: Scalar,
+) -> RocketState:
+    """Advance the rocket state by exactly ``dt`` using adaptive RKF45 steps.
+
+    Inertia and CG location are held constant across the step.
+
+    Args:
+        time (float): Time since ignition in seconds, for the thrust curve.
+        state (RocketState): Current state of the vehicle.
         properties (RocketProperties): Aerodynamic and motor properties.
         dt (Scalar): Length of the step, in any unit of time.
 
@@ -402,42 +473,78 @@ def step(
 
     # Assume whole step taken at once
     current_dt = target_time
-    inputs = _step_inputs(state, atmosphere, properties)
+    inputs = _step_inputs(state, properties)
     current_values = _pack(state)
-
-    # Current tolerance set (Can be adjusted if needed)
-    tolerance = 1e-6
 
     while time_simulated < target_time:
         # Prevents the final step from overshooting the target time
         current_dt = min(current_dt, target_time - time_simulated)
-
-        # Look into future with 4th and 5th order RKF45 steps
-        values_5th, values_4th = rkf45_step(
+        current_values, dt_taken, current_dt = _accepted_step(
             time + time_simulated, current_values, current_dt, inputs
         )
-
-        # Difference between the two position estimates, in metres
-        position_difference = values_5th[_POSITION] - values_4th[_POSITION]
-        error = math.sqrt(float(position_difference @ position_difference))
-
-        # Check if the error is within the tolerance
-        if error <= tolerance:
-            current_values = values_5th
-            # Additive RKF45 stages drift the quaternion off unit length
-            orientation = current_values[_ORIENTATION]
-            current_values[_ORIENTATION] = orientation / math.sqrt(
-                float(orientation @ orientation)
-            )
-            time_simulated += current_dt
-
-            if error > 0:
-                scale_factor = 0.9 * (tolerance / error) ** 0.2
-                current_dt *= min(scale_factor, 1.5)
-            else:
-                current_dt *= 1.5
-        else:
-            scale_factor = 0.9 * (tolerance / error) ** 0.2
-            current_dt *= max(scale_factor, 0.1)
+        time_simulated += dt_taken
 
     return _unpack(current_values, state)
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def locate_event(
+    time: float,
+    start: RocketState,
+    end: RocketState,
+    properties: RocketProperties,
+    dt: Scalar,
+    event: Callable[[float, RocketState], float],
+) -> tuple[RocketState, Scalar]:
+    """Integrate from the start of a step to where an event quantity reaches zero.
+
+    Finds the crossing with the Illinois variant of regula falsi, integrating
+    from ``start`` afresh for every trial time, so the returned state comes
+    from the integrator rather than from interpolation.
+
+    Args:
+        time (float): Time at the start of the step, in seconds.
+        start (RocketState): State at the start of the step, where ``event``
+            is positive.
+        end (RocketState): State at the end of the step, where ``event`` is
+            zero or negative.
+        properties (RocketProperties): Aerodynamic and motor properties.
+        dt (Scalar): Length of the step from ``start`` to ``end``.
+        event (Callable[[float, RocketState], float]): Quantity, given the
+            time in seconds and the state, whose crossing from positive to
+            zero or negative marks the event.
+
+    Returns:
+        tuple[RocketState, Scalar]: The state at the event, on or just past
+            the crossing, and the time from ``start`` to it.
+    """
+    low_time, high_time = 0.0, float(dt.m_as("s"))
+    low_value = event(time, start)
+    high_value = event(time + high_time, end)
+    high_state = end
+    last_moved = 0
+
+    for _ in range(_EVENT_MAX_ITERATIONS):
+        if high_time - low_time <= _EVENT_TIME_TOLERANCE_S:
+            break
+        trial_time = (low_time * high_value - high_time * low_value) / (
+            high_value - low_value
+        )
+        trial_state = step(time, start, properties, scalar(trial_time, "s"))
+        trial_value = event(time + trial_time, trial_state)
+
+        if trial_value == 0.0:
+            return trial_state, scalar(trial_time, "s")
+        if trial_value < 0.0:
+            high_time, high_value, high_state = trial_time, trial_value, trial_state
+            if last_moved == 1:
+                # Halving the stale end keeps both ends of the bracket moving
+                low_value /= 2.0
+            last_moved = 1
+        else:
+            low_time, low_value = trial_time, trial_value
+            if last_moved == -1:
+                high_value /= 2.0
+            last_moved = -1
+
+    return high_state, scalar(high_time, "s")

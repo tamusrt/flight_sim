@@ -7,9 +7,13 @@ import pytest
 from pint import DimensionalityError
 
 from flight_sim.__main__ import get_default_state, main
-from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
-from flight_sim.integration import derivative_computation, quaternion_kinematics, step
+from flight_sim.integration import (
+    derivative_computation,
+    locate_event,
+    quaternion_kinematics,
+    step,
+)
 from flight_sim.units import Scalar, scalar, vector
 from flight_sim.vehicle.rocket_properties import (
     AERO_COEFFICIENT_COLUMNS,
@@ -29,19 +33,23 @@ def baseline_rocket_properties() -> RocketProperties:
     )
 
 
-@patch("flight_sim.__main__.step")
-def test_main_echoes_test_input(mock_step: MagicMock) -> None:
+@patch("flight_sim.__main__.adaptive_step")
+def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
     """Verify the executive simulation loop runs from launch to impact."""
 
     # Force the physics step to immediately return an underground state.
     mock_state = get_default_state()
     mock_state.position = vector((0.0, 0.0, -10.0), "m")
-    mock_step.return_value = mock_state
+    mock_adaptive_step.return_value = (
+        mock_state,
+        scalar(0.2, "s"),
+        scalar(0.2, "s"),
+    )
 
     main()
 
     # Verify the simulation successfully fired the physics engine before exiting
-    mock_step.assert_called()
+    mock_adaptive_step.assert_called()
 
 
 @patch("flight_sim.__main__.RocketProperties")
@@ -62,11 +70,7 @@ def test_step_zero_force_keeps_velocity_constant(
         lambda latitude_rad, altitude_m: 0.0,
     )
     state = RocketState()
-    atmosphere = AtmosphereData()
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(
-        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.01, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.01, "s"))
     assert np.allclose(next_state.velocity.m_as("m/s"), np.zeros(3))
 
 
@@ -75,11 +79,7 @@ def test_step_with_gravity_changes_velocity(
 ) -> None:
     """Tests that gravity correctly accelerates rocket downwards"""
     state = RocketState()
-    atmosphere = AtmosphereData()
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(
-        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.01, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.01, "s"))
     assert next_state.velocity[2].m_as("m/s") < 0
 
 
@@ -90,7 +90,6 @@ def test_step_result_keeps_expected_units(
     next_state = step(
         0.0,
         RocketState(),
-        AtmosphereData(),
         baseline_rocket_properties,
         scalar(0.01, "s"),
     )
@@ -108,14 +107,12 @@ def test_step_accepts_any_time_unit(
     from_ms = step(
         0.0,
         RocketState(),
-        AtmosphereData(),
         baseline_rocket_properties,
         scalar(10.0, "ms"),
     )
     from_s = step(
         0.0,
         RocketState(),
-        AtmosphereData(),
         baseline_rocket_properties,
         scalar(0.01, "s"),
     )
@@ -131,7 +128,6 @@ def test_step_rejects_dt_that_is_not_a_time(
         step(
             0.0,
             RocketState(),
-            AtmosphereData(),
             baseline_rocket_properties,
             scalar(0.01, "m"),
         )
@@ -161,11 +157,7 @@ def test_step_adaptive_scaling_and_rejection(
     state = RocketState()
     state.position = vector((0.0, 0.0, 10.0), "m")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
-    atmosphere = AtmosphereData()
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(
-        0.0, state, atmosphere, baseline_rocket_properties, scalar(5.0, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(5.0, "s"))
 
     assert next_state is not None
 
@@ -179,11 +171,7 @@ def test_step_triggers_aerodynamic_calculations(
     state.current_mass = scalar(25.0, "kg")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
 
-    atmosphere = AtmosphereData()
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    next_state = step(
-        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
 
     assert next_state is not None
 
@@ -196,12 +184,7 @@ def test_step_pitch_moment_induces_angular_velocity(
     state.velocity = vector((50.0, 0.0, 200.0), "m/s")
     state.current_mass = scalar(20.0, "kg")
 
-    atmosphere = AtmosphereData()
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    atmosphere.air_density = scalar(1.225, "kg/m**3")
-    next_state = step(
-        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
 
     angular_vel = next_state.angular_velocity.m_as("rad/s")
 
@@ -251,9 +234,7 @@ def test_step_angular_velocity_rotates_orientation(
     state = RocketState()
     state.angular_velocity = vector((0.0, 0.0, np.pi / 2), "rad/s")
 
-    next_state = step(
-        0.0, state, AtmosphereData(), baseline_rocket_properties, scalar(0.1, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
 
     half_angle = (np.pi / 2) * 0.1 / 2
     assert next_state.orientation.q_w == pytest.approx(np.cos(half_angle), abs=1e-6)
@@ -271,12 +252,7 @@ def test_step_keeps_orientation_normalized(
     state.angular_velocity = vector((0.3, -1.2, 0.8), "rad/s")
     state.current_mass = scalar(20.0, "kg")
 
-    atmosphere = AtmosphereData()
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    atmosphere.air_density = scalar(1.225, "kg/m**3")
-    next_state = step(
-        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
 
     orientation = next_state.orientation
     norm = np.linalg.norm(
@@ -301,13 +277,7 @@ def test_step_dynamic_cg_moment_transfer(
     state.velocity = vector((20.0, 0.0, 150.0), "m/s")
     state.angular_velocity = vector((0.0, 0.0, 0.0), "rad/s")
 
-    atmosphere = AtmosphereData()
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-    atmosphere.air_density = scalar(1.225, "kg/m**3")
-
-    next_state = step(
-        0.0, state, atmosphere, baseline_rocket_properties, scalar(0.1, "s")
-    )
+    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
 
     angular_vel = next_state.angular_velocity.m_as("rad/s")
 
@@ -332,14 +302,9 @@ def test_six_dof_aerodynamic_response(
     state.position = vector((0.0, 0.0, 1000.0), "m")
     state.velocity = vector((50.0, 0.0, 100.0), "m/s")
 
-    atmosphere = MagicMock()
-    atmosphere.air_density = scalar(1.225, "kg/m**3")
-    atmosphere.speed_of_sound = scalar(343.0, "m/s")
-
     derivative = derivative_computation(
         time=0.0,
         state=state,
-        atmosphere=atmosphere,
         properties=baseline_rocket_properties,
     )
 
@@ -351,3 +316,30 @@ def test_six_dof_aerodynamic_response(
 
     lateral_accel_magnitude = abs(linear_accel[0]) + abs(linear_accel[1])
     assert lateral_accel_magnitude > 0.0
+
+
+def test_locate_event_finds_ballistic_apogee(
+    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+) -> None:
+    """A drag-free coast peaks at the time and height the closed form gives."""
+    monkeypatch.setattr(
+        "flight_sim.integration.normal_gravity",
+        lambda latitude_rad, altitude_m: 9.81,
+    )
+    start = RocketState()
+    start.velocity = vector((0.0, 0.0, 50.0), "m/s")
+    dt = scalar(10.0, "s")
+    end = step(0.0, start, baseline_rocket_properties, dt)
+
+    apogee, time_to_apogee = locate_event(
+        0.0,
+        start,
+        end,
+        baseline_rocket_properties,
+        dt,
+        lambda _time, state: float(state.velocity.m_as("m/s")[2]),
+    )
+
+    assert time_to_apogee.m_as("s") == pytest.approx(50.0 / 9.81, abs=1e-8)
+    assert apogee.position.m_as("m")[2] == pytest.approx(50.0**2 / (2 * 9.81))
+    assert apogee.velocity.m_as("m/s")[2] == pytest.approx(0.0, abs=1e-7)

@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, zero_vector
 
@@ -34,10 +35,26 @@ _PRESS_TROPOPAUSE = _SEA_LEVEL_PRESSURE_PA * (
 )
 
 
-def get_atmosphere(altitude: Scalar) -> AtmosphereData:
-    """Calculate atmospheric properties to first isothermal region (25 km)."""
+class StandardConditions(NamedTuple):
+    """Standard atmosphere conditions at one altitude, as plain SI values."""
 
-    alt_m = max(0.0, float(altitude.m_as("m")))
+    temperature: float  # K
+    pressure: float  # Pa
+    air_density: float  # kg/m**3
+    speed_of_sound: float  # m/s
+
+
+def standard_conditions(altitude_m: float) -> StandardConditions:
+    """Calculate atmospheric properties to first isothermal region (25 km).
+
+    Args:
+        altitude_m (float): Altitude in metres. Altitudes below sea level use
+            sea-level conditions.
+
+    Returns:
+        StandardConditions: Temperature, pressure, density, and speed of sound.
+    """
+    alt_m = max(0.0, altitude_m)
 
     if alt_m < _TROPOPAUSE_ALTITUDE_M:
         # Gradient region math (Troposphere)
@@ -52,10 +69,21 @@ def get_atmosphere(altitude: Scalar) -> AtmosphereData:
             -(_GRAVITY / (_GAS_CONSTANT * temp)) * (alt_m - _TROPOPAUSE_ALTITUDE_M)
         )
 
+    return StandardConditions(
+        temperature=temp,
+        pressure=pressure,
+        air_density=pressure / (_GAS_CONSTANT * temp),
+        speed_of_sound=(1.4 * _GAS_CONSTANT * temp) ** 0.5,
+    )
+
+
+def get_atmosphere(altitude: Scalar) -> AtmosphereData:
+    """Calculate atmospheric properties to first isothermal region (25 km)."""
+    conditions = standard_conditions(float(altitude.m_as("m")))
     return AtmosphereData(
-        air_density=scalar(pressure / (_GAS_CONSTANT * temp), "kg/m**3"),
-        speed_of_sound=scalar((1.4 * _GAS_CONSTANT * temp) ** 0.5, "m/s"),
-        temperature=scalar(temp, "K"),
-        pressure=scalar(pressure, "Pa"),
+        air_density=scalar(conditions.air_density, "kg/m**3"),
+        speed_of_sound=scalar(conditions.speed_of_sound, "m/s"),
+        temperature=scalar(conditions.temperature, "K"),
+        pressure=scalar(conditions.pressure, "Pa"),
         wind_velocity=zero_vector("m/s"),
     )
