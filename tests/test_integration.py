@@ -22,7 +22,18 @@ from flight_sim.vehicle.rocket_properties import (
 from flight_sim.vehicle.rocket_state import Quaternion, RocketState
 
 
-# pylint: disable=redefined-outer-name
+def _bare_state() -> RocketState:
+    """Return a massless state at rest at the origin.
+
+    Zero mass switches off thrust and aerodynamics, leaving only gravity.
+    """
+    return RocketState(
+        current_mass=scalar(0.0, "kg"),
+        inertia=vector((2.5, 2.5, 0.1), "kg*m**2"),
+        cg_location=vector((0.0, 0.0, -2.5), "m"),
+    )
+
+
 @pytest.fixture
 def baseline_rocket_properties() -> RocketProperties:
     """Provides a standardized rocket configuration for integration tests."""
@@ -30,6 +41,8 @@ def baseline_rocket_properties() -> RocketProperties:
         aero_file_path="tests/test_data/standard_aero.csv",
         motor_file_path="tests/test_data/standard_motor.csv",
         propellant_mass=2.5,
+        reference_area=scalar(0.0182414692, "m**2"),
+        reference_diameter=scalar(0.1524, "m"),
     )
 
 
@@ -69,7 +82,7 @@ def test_step_zero_force_keeps_velocity_constant(
         "flight_sim.integration.normal_gravity",
         lambda latitude_rad, altitude_m: 0.0,
     )
-    state = RocketState()
+    state = _bare_state()
     next_state = step(0.0, state, baseline_rocket_properties, scalar(0.01, "s"))
     assert np.allclose(next_state.velocity.m_as("m/s"), np.zeros(3))
 
@@ -78,7 +91,7 @@ def test_step_with_gravity_changes_velocity(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Tests that gravity correctly accelerates rocket downwards"""
-    state = RocketState()
+    state = _bare_state()
     next_state = step(0.0, state, baseline_rocket_properties, scalar(0.01, "s"))
     assert next_state.velocity[2].m_as("m/s") < 0
 
@@ -89,7 +102,7 @@ def test_step_result_keeps_expected_units(
     """The integrated state stays in the units its fields declare."""
     next_state = step(
         0.0,
-        RocketState(),
+        _bare_state(),
         baseline_rocket_properties,
         scalar(0.01, "s"),
     )
@@ -106,13 +119,13 @@ def test_step_accepts_any_time_unit(
     """A dt given in milliseconds integrates the same as the equivalent seconds."""
     from_ms = step(
         0.0,
-        RocketState(),
+        _bare_state(),
         baseline_rocket_properties,
         scalar(10.0, "ms"),
     )
     from_s = step(
         0.0,
-        RocketState(),
+        _bare_state(),
         baseline_rocket_properties,
         scalar(0.01, "s"),
     )
@@ -127,7 +140,7 @@ def test_step_rejects_dt_that_is_not_a_time(
     with pytest.raises(DimensionalityError):
         step(
             0.0,
-            RocketState(),
+            _bare_state(),
             baseline_rocket_properties,
             scalar(0.01, "m"),
         )
@@ -154,7 +167,7 @@ def test_step_adaptive_scaling_and_rejection(
         lambda latitude_rad, altitude_m: altitude_m**3,
     )
 
-    state = RocketState()
+    state = _bare_state()
     state.position = vector((0.0, 0.0, 10.0), "m")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
     next_state = step(0.0, state, baseline_rocket_properties, scalar(5.0, "s"))
@@ -166,7 +179,7 @@ def test_step_triggers_aerodynamic_calculations(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Ensures the integration engine runs the drag/lift physics block."""
-    state = RocketState()
+    state = _bare_state()
 
     state.current_mass = scalar(25.0, "kg")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
@@ -180,7 +193,7 @@ def test_step_pitch_moment_induces_angular_velocity(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Test that a non-zero Angle of Attack creates a pitch restoring rotation."""
-    state = RocketState()
+    state = _bare_state()
     state.velocity = vector((50.0, 0.0, 200.0), "m/s")
     state.current_mass = scalar(20.0, "kg")
 
@@ -231,7 +244,7 @@ def test_step_angular_velocity_rotates_orientation(
         "flight_sim.integration.normal_gravity",
         lambda latitude_rad, altitude_m: 0.0,
     )
-    state = RocketState()
+    state = _bare_state()
     state.angular_velocity = vector((0.0, 0.0, np.pi / 2), "rad/s")
 
     next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
@@ -247,7 +260,7 @@ def test_step_keeps_orientation_normalized(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """The orientation stays a unit quaternion while the rocket is pitching."""
-    state = RocketState()
+    state = _bare_state()
     state.velocity = vector((50.0, 0.0, 200.0), "m/s")
     state.angular_velocity = vector((0.3, -1.2, 0.8), "rad/s")
     state.current_mass = scalar(20.0, "kg")
@@ -268,7 +281,7 @@ def test_step_dynamic_cg_moment_transfer(
     """A shifted CG induces a pitch moment at a non-zero alpha."""
     baseline_rocket_properties.reference_point = vector((0.0, 0.0, 0.0), "m")
 
-    state = RocketState()
+    state = _bare_state()
     state.cg_location = vector((0.0, 0.0, -2.7432), "m")
 
     state.current_mass = scalar(20.0, "kg")
@@ -326,7 +339,7 @@ def test_locate_event_finds_ballistic_apogee(
         "flight_sim.integration.normal_gravity",
         lambda latitude_rad, altitude_m: 9.81,
     )
-    start = RocketState()
+    start = _bare_state()
     start.velocity = vector((0.0, 0.0, 50.0), "m/s")
     dt = scalar(10.0, "s")
     end = step(0.0, start, baseline_rocket_properties, dt)
