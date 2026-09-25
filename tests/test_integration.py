@@ -11,7 +11,10 @@ from flight_sim.environment.atmosphere import AtmosphereData
 from flight_sim.environment.gravity import get_gravity
 from flight_sim.integration import derivative_computation, quaternion_kinematics, step
 from flight_sim.units import Scalar, scalar, vector
-from flight_sim.vehicle.rocket_properties import RocketProperties
+from flight_sim.vehicle.rocket_properties import (
+    AERO_COEFFICIENT_COLUMNS,
+    RocketProperties,
+)
 from flight_sim.vehicle.rocket_state import Quaternion, RocketState
 
 
@@ -55,8 +58,8 @@ def test_step_zero_force_keeps_velocity_constant(
     """Tests that the step function keeps velocity constant"""
 
     monkeypatch.setattr(
-        "flight_sim.integration.get_gravity",
-        lambda latitude, longitude, altitude: scalar(0.0, "m/s**2"),
+        "flight_sim.integration.normal_gravity",
+        lambda latitude_rad, altitude_m: 0.0,
     )
     state = RocketState()
     atmosphere = AtmosphereData()
@@ -151,10 +154,8 @@ def test_step_adaptive_scaling_and_rejection(
 ) -> None:
     """Stress adaptive rejection, scaling, and overshoot limits."""
     monkeypatch.setattr(
-        "flight_sim.integration.get_gravity",
-        lambda latitude, longitude, altitude: scalar(
-            altitude.to("m").magnitude ** 3, "m/s**2"
-        ),
+        "flight_sim.integration.normal_gravity",
+        lambda latitude_rad, altitude_m: altitude_m**3,
     )
 
     state = RocketState()
@@ -244,8 +245,8 @@ def test_step_angular_velocity_rotates_orientation(
 ) -> None:
     """A constant body rate about Z turns the orientation by rate * time."""
     monkeypatch.setattr(
-        "flight_sim.integration.get_gravity",
-        lambda latitude, longitude, altitude: scalar(0.0, "m/s**2"),
+        "flight_sim.integration.normal_gravity",
+        lambda latitude_rad, altitude_m: 0.0,
     )
     state = RocketState()
     state.angular_velocity = vector((0.0, 0.0, np.pi / 2), "rad/s")
@@ -321,15 +322,9 @@ def test_six_dof_aerodynamic_response(
 ) -> None:
     """Verify that Side Force, Roll, and Yaw generate correct accelerations."""
 
-    dummy_interp = MagicMock()
-    dummy_interp.item.return_value = 1.0
-
-    baseline_rocket_properties.cd_table = MagicMock(return_value=dummy_interp)
-    baseline_rocket_properties.cl_table = MagicMock(return_value=dummy_interp)
-    baseline_rocket_properties.cm_table = MagicMock(return_value=dummy_interp)
-    baseline_rocket_properties.cy_table = MagicMock(return_value=dummy_interp)
-    baseline_rocket_properties.c_roll_table = MagicMock(return_value=dummy_interp)
-    baseline_rocket_properties.cn_table = MagicMock(return_value=dummy_interp)
+    baseline_rocket_properties.aero_coefficients = MagicMock(
+        return_value=[1.0] * len(AERO_COEFFICIENT_COLUMNS)
+    )
 
     baseline_rocket_properties.thrust_curve = MagicMock(return_value=0.0)
 
