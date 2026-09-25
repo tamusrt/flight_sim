@@ -1,8 +1,7 @@
 """Environment module containing atmospheric data structures."""
 
+import math
 from dataclasses import dataclass, field
-
-import numpy as np
 
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, zero_vector
 
@@ -18,31 +17,44 @@ class AtmosphereData(UnitChecked):
     wind_velocity: Vector = field(default_factory=lambda: zero_vector("m/s"))
 
 
+_SEA_LEVEL_TEMPERATURE_K = 288.15
+_SEA_LEVEL_PRESSURE_PA = 101325.0
+_LAPSE_RATE_K_PER_M = -0.0065
+_GAS_CONSTANT = 287.0
+_GRAVITY = 9.81
+_TROPOPAUSE_ALTITUDE_M = 11000.0
+_PRESSURE_EXPONENT = -_GRAVITY / (_LAPSE_RATE_K_PER_M * _GAS_CONSTANT)
+
+# Conditions at the 11km boundary, from the gradient equations
+_TEMP_TROPOPAUSE = (
+    _SEA_LEVEL_TEMPERATURE_K + _LAPSE_RATE_K_PER_M * _TROPOPAUSE_ALTITUDE_M
+)
+_PRESS_TROPOPAUSE = _SEA_LEVEL_PRESSURE_PA * (
+    (_TEMP_TROPOPAUSE / _SEA_LEVEL_TEMPERATURE_K) ** _PRESSURE_EXPONENT
+)
+
+
 def get_atmosphere(altitude: Scalar) -> AtmosphereData:
     """Calculate atmospheric properties to first isothermal region (25 km)."""
 
     alt_m = max(0.0, float(altitude.m_as("m")))
 
-    # Calculate conditions at the 11km boundary using gradient equations
-    temp_tropopause = 288.15 + (-0.0065 * 11000.0)
-    press_tropopause = 101325.0 * (
-        (temp_tropopause / 288.15) ** (-9.81 / (-0.0065 * 287.0))
-    )
-
-    if alt_m < 11000.0:
+    if alt_m < _TROPOPAUSE_ALTITUDE_M:
         # Gradient region math (Troposphere)
-        temp = 288.15 + (-0.0065 * alt_m)
-        pressure = 101325.0 * ((temp / 288.15) ** (-9.81 / (-0.0065 * 287.0)))
+        temp = _SEA_LEVEL_TEMPERATURE_K + _LAPSE_RATE_K_PER_M * alt_m
+        pressure = _SEA_LEVEL_PRESSURE_PA * (
+            (temp / _SEA_LEVEL_TEMPERATURE_K) ** _PRESSURE_EXPONENT
+        )
     else:
         # Isothermal region math (Lower Stratosphere and above fallback)
-        temp = temp_tropopause
-        pressure = press_tropopause * np.exp(
-            -(9.81 / (287.0 * temp)) * (alt_m - 11000.0)
+        temp = _TEMP_TROPOPAUSE
+        pressure = _PRESS_TROPOPAUSE * math.exp(
+            -(_GRAVITY / (_GAS_CONSTANT * temp)) * (alt_m - _TROPOPAUSE_ALTITUDE_M)
         )
 
     return AtmosphereData(
-        air_density=scalar(pressure / (287.0 * temp), "kg/m**3"),
-        speed_of_sound=scalar((1.4 * 287.0 * temp) ** 0.5, "m/s"),
+        air_density=scalar(pressure / (_GAS_CONSTANT * temp), "kg/m**3"),
+        speed_of_sound=scalar((1.4 * _GAS_CONSTANT * temp) ** 0.5, "m/s"),
         temperature=scalar(temp, "K"),
         pressure=scalar(pressure, "Pa"),
         wind_velocity=zero_vector("m/s"),

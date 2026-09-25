@@ -1,15 +1,19 @@
 """Data structures defining physical vehicle properties"""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator, interp1d  # type: ignore
 
 from flight_sim.units import Scalar, Vector, scalar, vector
 from flight_sim.utilities.data_loader import (
-    interpolator_from_csv,
+    AeroTable,
+    aero_table_from_csv,
     time_interpolator_from_csv,
 )
+
+# Column order of the values returned by RocketProperties.aero_coefficients
+AERO_COEFFICIENT_COLUMNS = ("CD", "CL", "CY", "C_roll", "CM", "CN")
 
 
 @dataclass
@@ -31,25 +35,17 @@ class RocketProperties:
         default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
     )
 
-    cd_table: RegularGridInterpolator = field(init=False)  # Drag
-    cl_table: RegularGridInterpolator = field(init=False)  # Lift (Normal)
-    cy_table: RegularGridInterpolator = field(init=False)  # Side Force
+    # Drag, lift (normal), side force, roll, pitch and yaw coefficients
+    aero_coefficients: AeroTable = field(init=False)
 
-    c_roll_table: RegularGridInterpolator = field(init=False)  # Roll
-    cm_table: RegularGridInterpolator = field(init=False)  # Pitch
-    cn_table: RegularGridInterpolator = field(init=False)  # Yaw
-
-    thrust_curve: interp1d = field(init=False)
+    thrust_curve: Callable[[float], float] = field(init=False)
+    mass_curve: Callable[[float], float] = field(init=False)
     mass_flow_multiplier: float = field(init=False)
 
     def __post_init__(self) -> None:
-        self.cd_table = interpolator_from_csv(self.aero_file_path, "CD")
-        self.cl_table = interpolator_from_csv(self.aero_file_path, "CL")
-        self.cm_table = interpolator_from_csv(self.aero_file_path, "CM")
-
-        self.cy_table = interpolator_from_csv(self.aero_file_path, "CY")
-        self.c_roll_table = interpolator_from_csv(self.aero_file_path, "C_roll")
-        self.cn_table = interpolator_from_csv(self.aero_file_path, "CN")
+        self.aero_coefficients = aero_table_from_csv(
+            self.aero_file_path, AERO_COEFFICIENT_COLUMNS
+        )
 
         self.thrust_curve = time_interpolator_from_csv(
             self.motor_file_path, "Time", "Thrust"

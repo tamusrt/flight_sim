@@ -11,6 +11,7 @@ type-check under strict mypy.
 """
 
 from dataclasses import MISSING, fields
+from functools import cache
 from typing import Any, NamedTuple, TypeAlias
 
 import numpy as np
@@ -27,6 +28,23 @@ Scalar: TypeAlias = Quantity[float]
 Vector: TypeAlias = Quantity[np.ndarray]
 
 
+@cache
+def parse_units(units: str) -> PlainUnit:
+    """Parse a unit expression once and reuse the result on later calls.
+
+    Parsing a unit string is far slower than building a quantity from an
+    already-parsed unit, and the simulation uses a small, fixed set of units.
+
+    Args:
+        units (str): Pint unit expression, such as "kg" or "m/s**2".
+
+    Returns:
+        PlainUnit: The parsed unit, shared by every caller passing the same string.
+    """
+    result: PlainUnit = ureg.Unit(units)
+    return result
+
+
 def scalar(magnitude: float, units: str) -> Scalar:
     """Build a scalar quantity from a magnitude and a unit string.
 
@@ -37,21 +55,25 @@ def scalar(magnitude: float, units: str) -> Scalar:
     Returns:
         Scalar: The magnitude tagged with the given units.
     """
-    result: Scalar = ureg.Quantity(magnitude, units)
+    result: Scalar = ureg.Quantity(magnitude, parse_units(units))
     return result
 
 
-def vector(components: tuple[float, float, float], units: str) -> Vector:
+def vector(components: tuple[float, float, float] | np.ndarray, units: str) -> Vector:
     """Build a three-dimensional vector quantity.
 
     Args:
-        components (tuple[float, float, float]): The x, y and z components.
+        components (tuple[float, float, float] | np.ndarray): The x, y and z
+            components. An array is copied, so later changes to it do not
+            reach the vector.
         units (str): Pint unit expression applied to every component.
 
     Returns:
         Vector: The components tagged with the given units.
     """
-    result: Vector = ureg.Quantity(np.array(components, dtype=float), units)
+    result: Vector = ureg.Quantity(
+        np.array(components, dtype=float), parse_units(units)
+    )
     return result
 
 
