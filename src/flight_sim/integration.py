@@ -6,14 +6,14 @@ from unit-checked quantities only at its public entry points.
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import NamedTuple
+from dataclasses import dataclass
+from typing import Annotated, NamedTuple
 
 import numpy as np
 
-from flight_sim.environment.atmosphere import AtmosphereData, standard_conditions
+from flight_sim.environment.atmosphere import standard_conditions
 from flight_sim.environment.gravity import normal_gravity
-from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
+from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import Quaternion, RocketState
 
@@ -51,36 +51,22 @@ _RKF_4TH_ORDER = np.array([25 / 216, 0.0, 1408 / 2565, 2197 / 4104, -1 / 5, 0.0]
 
 
 @dataclass
-class IntegrationConfiguration(UnitChecked):
-    """Setting for the integration of the rocket's state over time."""
-
-    time_step: Scalar = field(default_factory=lambda: scalar(0.01, "s"))
-    max_time: Scalar = field(default_factory=lambda: scalar(100.0, "s"))
-    initial_state: RocketState = field(default_factory=RocketState)
-    atmosphere_data: AtmosphereData = field(default_factory=AtmosphereData)
-
-
-@dataclass
 class StateDerivative(UnitChecked):
     """Rate of change of a RocketState with respect to time."""
 
     # d(position)/dt
-    velocity: Vector = field(default_factory=lambda: zero_vector("m/s"))
+    velocity: Annotated[Vector, "m/s"]
 
     # d(velocity)/dt
-    acceleration: Vector = field(default_factory=lambda: zero_vector("m/s**2"))
+    acceleration: Annotated[Vector, "m/s**2"]
 
     # d(angular_velocity)/dt
-    angular_acceleration: Vector = field(
-        default_factory=lambda: zero_vector("rad/s**2")
-    )
+    angular_acceleration: Annotated[Vector, "rad/s**2"]
 
     # d(orientation)/dt
-    orientation_derivative: Quaternion = field(
-        default_factory=lambda: Quaternion(q_w=0.0)
-    )
+    orientation_derivative: Quaternion
 
-    mass_derivative: Scalar = field(default_factory=lambda: scalar(0.0, "kg/s"))
+    mass_derivative: Annotated[Scalar, "kg/s"]
 
 
 class _StepInputs(NamedTuple):
@@ -221,7 +207,6 @@ def quaternion_kinematics(
     return Quaternion(q_w=q_dot[0], q_x=q_dot[1], q_y=q_dot[2], q_z=q_dot[3])
 
 
-# pylint: disable=too-many-locals
 def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.ndarray:
     """Compute the time derivative of a flat SI state array.
 
@@ -487,7 +472,6 @@ def step(
     return _unpack(current_values, state)
 
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
 def locate_event(
     time: float,
     start: RocketState,

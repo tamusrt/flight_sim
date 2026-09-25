@@ -3,10 +3,9 @@
 from collections.abc import Callable, Sequence
 
 import numpy as np
-import pandas as pd  # type: ignore # pylint: disable=import-error
+import pandas as pd  # type: ignore
 
 
-# pylint: disable=too-few-public-methods
 class AeroTable:
     """Bilinear lookup of several coefficients over a shared Mach/alpha grid.
 

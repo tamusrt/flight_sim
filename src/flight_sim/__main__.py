@@ -71,6 +71,8 @@ def main() -> None:
         aero_file_path="tests/test_data/standard_aero.csv",
         motor_file_path="tests/test_data/standard_motor.csv",
         propellant_mass=5.0,
+        reference_area=scalar(0.0182414692, "m**2"),
+        reference_diameter=scalar(0.1524, "m"),
     )
     state = get_default_state()
 
@@ -141,12 +143,11 @@ def main() -> None:
     plt.xlabel("Time (s)")
     plt.ylabel("Roll Rate (rad/s)")
     plt.grid(True)
-    
+
     plt.figure()
     plt.plot(dt_arr, linewidth=2)
-    plt.xlabel('Step (-)')
-    plt.ylabel('dt taken (delta sec)')
-    
+    plt.xlabel("Step (-)")
+    plt.ylabel("dt taken (delta sec)")
 
     plt.tight_layout()
     if "PYTEST_CURRENT_TEST" not in os.environ:

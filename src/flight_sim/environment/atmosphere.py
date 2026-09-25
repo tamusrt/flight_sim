@@ -2,7 +2,7 @@
 
 import math
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import Annotated, NamedTuple
 
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, zero_vector
 
@@ -11,11 +11,13 @@ from flight_sim.units import Scalar, UnitChecked, Vector, scalar, zero_vector
 class AtmosphereData(UnitChecked):
     """Atmospheric conditions at a specific altitude."""
 
-    air_density: Scalar = field(default_factory=lambda: scalar(0.0, "kg/m**3"))
-    speed_of_sound: Scalar = field(default_factory=lambda: scalar(0.0, "m/s"))
-    temperature: Scalar = field(default_factory=lambda: scalar(0.0, "K"))
-    pressure: Scalar = field(default_factory=lambda: scalar(0.0, "Pa"))
-    wind_velocity: Vector = field(default_factory=lambda: zero_vector("m/s"))
+    air_density: Annotated[Scalar, "kg/m**3"]
+    speed_of_sound: Annotated[Scalar, "m/s"]
+    temperature: Annotated[Scalar, "K"]
+    pressure: Annotated[Scalar, "Pa"]
+    wind_velocity: Annotated[Vector, "m/s"] = field(
+        default_factory=lambda: zero_vector("m/s")
+    )
 
 
 _SEA_LEVEL_TEMPERATURE_K = 288.15

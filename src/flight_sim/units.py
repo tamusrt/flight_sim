@@ -10,9 +10,17 @@ are pinned to a concrete type, which is what lets the rest of the codebase
 type-check under strict mypy.
 """
 
-from dataclasses import MISSING, fields
+from dataclasses import fields
 from functools import cache
-from typing import Any, NamedTuple, TypeAlias
+from typing import (
+    Annotated,
+    Any,
+    NamedTuple,
+    TypeAlias,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import numpy as np
 from pint import DimensionalityError, Quantity, UnitRegistry
@@ -90,20 +98,20 @@ def zero_vector(units: str) -> Vector:
 
 
 class _QuantityField(NamedTuple):
-    """A quantity-valued dataclass field and the units its default declares."""
+    """A quantity-valued dataclass field and the units its annotation declares."""
 
     name: str
     units: PlainUnit
     dimensionality: UnitsContainer
 
 
-# Cached per class: defaults cannot change at runtime, and the lookup runs on
-# every state construction inside the integration loop.
+# Cached per class: annotations cannot change at runtime, and the lookup runs
+# on every state construction inside the integration loop.
 _EXPECTED: dict[type[Any], tuple[_QuantityField, ...]] = {}
 
 
 def _expected_fields(cls: type[Any]) -> tuple[_QuantityField, ...]:
-    """Read the units each quantity field declares through its default factory.
+    """Read the units each field declares through an ``Annotated`` unit string.
 
     Results are cached per class, since the lookup runs on every construction
     inside the integration loop.
@@ -112,52 +120,53 @@ def _expected_fields(cls: type[Any]) -> tuple[_QuantityField, ...]:
         cls (type[Any]): Dataclass to inspect.
 
     Returns:
-        tuple[_QuantityField, ...]: One entry per field whose default factory
-            produces a quantity.
+        tuple[_QuantityField, ...]: One entry per field annotated with a unit
+            string.
     """
     cached = _EXPECTED.get(cls)
     if cached is not None:
         return cached
 
+    hints = get_type_hints(cls, include_extras=True)
     expected = []
     for quantity_field in fields(cls):
-        if quantity_field.default_factory is MISSING:
+        hint = hints[quantity_field.name]
+        if get_origin(hint) is not Annotated:
             continue
-        default = quantity_field.default_factory()
-        if isinstance(default, Quantity):
+        unit_strings = [meta for meta in get_args(hint)[1:] if isinstance(meta, str)]
+        if unit_strings:
+            units = parse_units(unit_strings[0])
             expected.append(
-                _QuantityField(
-                    quantity_field.name, default.units, default.dimensionality
-                )
+                _QuantityField(quantity_field.name, units, units.dimensionality)
             )
 
     _EXPECTED[cls] = tuple(expected)
     return _EXPECTED[cls]
 
 
-# pylint: disable=too-few-public-methods
 class UnitChecked:
     """Base class for dataclasses whose fields hold physical quantities.
 
-    A field's default declares the dimensionality that field accepts::
+    A field declares the units it accepts with a unit string in its
+    annotation::
 
-        position: Vector = field(default_factory=lambda: zero_vector("m"))
+        position: Annotated[Vector, "m"]
 
     That field then takes a position in any unit of length and rejects anything
-    else. Subclasses need no ``__post_init__`` of their own.
+    else. Any Pint unit expression works, such as "kg*m**2" or "rad/s**2".
+    Subclasses need no ``__post_init__`` of their own.
 
-    A field is checked only when its ``default_factory`` produces a quantity,
-    so orientations, nested dataclasses, and fields without defaults are left
-    alone. A subclass that defines ``__post_init__`` must call
-    ``super().__post_init__()`` to keep the checking.
+    Fields without a unit annotation, such as orientations and nested
+    dataclasses, are left alone. A subclass that defines ``__post_init__``
+    must call ``super().__post_init__()`` to keep the checking.
     """
 
     def __post_init__(self) -> None:
-        """Check every quantity field against the units its default declares.
+        """Check every quantity field against the units its annotation declares.
 
         Raises:
             DimensionalityError: If a field holds a quantity whose dimensionality
-                differs from that of the field's default.
+                differs from that of the field's declared units.
         """
         cls: type[Any] = type(self)
         for expected in _expected_fields(cls):

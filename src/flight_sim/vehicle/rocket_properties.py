@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from flight_sim.units import Scalar, Vector, scalar, vector
+from flight_sim.units import Scalar, Vector, vector
 from flight_sim.utilities.data_loader import (
     AeroTable,
     aero_table_from_csv,
@@ -20,16 +20,12 @@ AERO_COEFFICIENT_COLUMNS = ("CD", "CL", "CY", "C_roll", "CM", "CN")
 class RocketProperties:
     """Aerodynamic properties of the rocket"""
 
-    # pylint: disable=too-many-instance-attributes
-
     aero_file_path: str
     motor_file_path: str
     propellant_mass: float  # Total weight of solid fuel in kg
 
-    reference_area: Scalar = field(
-        default_factory=lambda: scalar(0.0182414692, ".=m**2")
-    )
-    reference_diameter: Scalar = field(default_factory=lambda: scalar(0.1524, ".m"))
+    reference_area: Scalar
+    reference_diameter: Scalar
 
     reference_point: Vector = field(
         default_factory=lambda: vector((0.0, 0.0, 0.0), "m")

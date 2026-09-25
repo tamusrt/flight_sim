@@ -2,8 +2,9 @@
 
 import math
 from dataclasses import dataclass, field
+from typing import Annotated
 
-from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector, zero_vector
+from flight_sim.units import Scalar, UnitChecked, Vector, vector, zero_vector
 
 
 @dataclass
@@ -31,33 +32,36 @@ class Quaternion:
         )
 
 
-# pylint: disable=too-many-instance-attributes
 @dataclass
 class RocketState(UnitChecked):
     """Current 6-DOF state of the vehicle."""
 
+    # Mass Properties
+    current_mass: Annotated[Scalar, "kg"]
+
+    # I_xx (pitch), I_yy (yaw), I_zz (roll) in kg*m^2
+    inertia: Annotated[Vector, "kg*m**2"]
+
+    # Center of gravoty relative to the nose tip
+    cg_location: Annotated[Vector, "m"]
+
     # Position Coordinates
-    position: Vector = field(default_factory=lambda: zero_vector("m"))
+    position: Annotated[Vector, "m"] = field(default_factory=lambda: zero_vector("m"))
 
     # Velocity
-    velocity: Vector = field(default_factory=lambda: zero_vector("m/s"))
+    velocity: Annotated[Vector, "m/s"] = field(
+        default_factory=lambda: zero_vector("m/s")
+    )
 
     # Angular Velocities
-    angular_velocity: Vector = field(default_factory=lambda: zero_vector("rad/s"))
+    angular_velocity: Annotated[Vector, "rad/s"] = field(
+        default_factory=lambda: zero_vector("rad/s")
+    )
 
     # Orientation
     orientation: Quaternion = field(default_factory=Quaternion)
 
-    # Mass Properties
-    current_mass: Scalar = field(default_factory=lambda: scalar(0.0, "kg"))
-
-    # I_xx (pitch), I_yy (yaw), I_zz (roll) in kg*m^2
-    inertia: Vector = field(default_factory=lambda: vector((2.5, 2.5, 0.1), "kg*m**2"))
-
     # Reference point used by standard_aero.csv
-    reference_point: Vector = field(
+    reference_point: Annotated[Vector, "m"] = field(
         default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
     )
-
-    # Center of gravoty relative to the nose tip
-    cg_location: Vector = field(default_factory=lambda: vector((0.0, 0.0, -2.5), "m"))
