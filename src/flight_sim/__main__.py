@@ -1,10 +1,9 @@
 """Core FS runner"""
 
 import os
-from functools import partial
+from collections.abc import Callable
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from flight_sim.integration import (
@@ -32,48 +31,6 @@ def get_default_state() -> RocketState:
     )
 
 
-def _telemetry_row(time: float, state: RocketState) -> dict[str, float]:
-    """Return the telemetry recorded for one sample of the flight."""
-    return {
-        "Time (s)": time,
-        "Altitude (m)": _altitude(state),
-        "Vertical Velocity (m/s)": _vertical_velocity(state),
-        "Roll Rate (rad/s)": float(state.angular_velocity.m_as("rad/s")[2]),
-        "Mass (kg)": float(state.current_mass.m_as("kg")),
-    }
-
-
-def _altitude(state: RocketState) -> float:
-    """Return the altitude in metres."""
-    return float(state.position.m_as("m")[2])
-
-
-def _vertical_velocity(state: RocketState) -> float:
-    """Return the vertical velocity in m/s."""
-    return float(state.velocity.m_as("m/s")[2])
-
-
-def _vertical_acceleration(
-    properties: RocketProperties,
-    config: IntegrationConfiguration,
-    time: float,
-    state: RocketState,
-) -> float:
-    """Return the vertical acceleration in m/s**2, which is zero at max velocity."""
-    derivative = derivative_computation(time, state, properties, config)
-    return float(derivative.acceleration.m_as("m/s**2")[2])
-
-
-def _apogee_event(_time: float, state: RocketState) -> float:
-    """Return the vertical velocity, which falls through zero at apogee."""
-    return _vertical_velocity(state)
-
-
-def _impact_event(_time: float, state: RocketState) -> float:
-    """Return the altitude, which falls through zero at impact."""
-    return _altitude(state)
-
-
 def main() -> None:
     """Main function to run entire flight"""
     properties = RocketProperties(
@@ -86,26 +43,46 @@ def main() -> None:
     state = get_default_state()
     config = IntegrationConfiguration()
 
-    # First step length to try
-    dt = scalar(0.01, "s")
-    current_time = 0.0
-    telemetry = [_telemetry_row(current_time, state)]
-
-    # Peak vertical velocity, then apogee, in the order the flight meets them
-    flight_events = (
-        partial(_vertical_acceleration, properties, config),
-        _apogee_event,
+    # Quantities whose fall through zero ends a step exactly on the event, in
+    # the order the flight meets them: peak vertical velocity, apogee, impact
+    events: tuple[Callable[[float, RocketState], float], ...] = (
+        lambda t, s: float(
+            derivative_computation(t, s, properties, config).acceleration.m_as(
+                "m/s**2"
+            )[2]
+        ),
+        lambda _t, s: float(s.velocity.m_as("m/s")[2]),
+        lambda _t, s: float(s.position.m_as("m")[2]),
     )
 
-    dt_arr = np.array([])
+    dt = scalar(0.01, "s")  # First step length to try
+    current_time = 0.0
+    telemetry = []
+    step_lengths = []
 
     while True:
+        pos_z = float(state.position.m_as("m")[2])
+        vel_z = float(state.velocity.m_as("m/s")[2])
+        roll_rate = float(state.angular_velocity.m_as("rad/s")[2])
+
+        telemetry.append(
+            {
+                "Time (s)": current_time,
+                "Altitude (m)": pos_z,
+                "Vertical Velocity (m/s)": vel_z,
+                "Roll Rate (rad/s)": roll_rate,
+                "Mass (kg)": float(state.current_mass.m_as("kg")),
+            }
+        )
+
+        if current_time > 0.1 and pos_z <= 0.0:
+            print(f"Rocket has experienced impact at {current_time:.2f} seconds.")
+            break
+
         next_state, dt_taken, dt = adaptive_step(
             current_time, state, properties, config, dt
         )
-        dt_arr = np.append(dt_arr, dt_taken)
-        # End the step at the first flight event it crosses
-        for event in flight_events:
+        for event in events:
             end_time = current_time + float(dt_taken.m_as("s"))
             if event(current_time, state) > 0.0 >= event(end_time, next_state):
                 next_state, dt_taken = locate_event(
@@ -113,28 +90,9 @@ def main() -> None:
                 )
                 break
 
-        step_length = float(dt_taken.m_as("s"))
-        landed = current_time + step_length > 0.1 and _altitude(next_state) <= 0.0
-        if landed:
-            # End the step at impact
-            next_state, dt_taken = locate_event(
-                current_time,
-                state,
-                next_state,
-                properties,
-                config,
-                dt_taken,
-                _impact_event,
-            )
-            step_length = float(dt_taken.m_as("s"))
-
         state = next_state
-        current_time += step_length
-        telemetry.append(_telemetry_row(current_time, state))
-
-        if landed:
-            print(f"Rocket has experienced impact at {current_time:.2f} seconds.")
-            break
+        current_time += float(dt_taken.m_as("s"))
+        step_lengths.append(float(dt_taken.m_as("s")))
 
     df = pd.DataFrame(telemetry)
     apogee = df["Altitude (m)"].max()
@@ -164,12 +122,13 @@ def main() -> None:
     plt.ylabel("Roll Rate (rad/s)")
     plt.grid(True)
 
-    plt.figure()
-    plt.plot(dt_arr, linewidth=2)
-    plt.xlabel("Step (-)")
-    plt.ylabel("dt taken (delta sec)")
-
     plt.tight_layout()
+
+    plt.figure()
+    plt.plot(step_lengths, linewidth=2)
+    plt.xlabel("Step (-)")
+    plt.ylabel("dt taken (s)")
+
     if "PYTEST_CURRENT_TEST" not in os.environ:
         plt.show()
 
