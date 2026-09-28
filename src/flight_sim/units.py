@@ -38,10 +38,7 @@ Vector: TypeAlias = Quantity[np.ndarray]
 
 @cache
 def parse_units(units: str) -> PlainUnit:
-    """Parse a unit expression once and reuse the result on later calls.
-
-    Parsing a unit string is far slower than building a quantity from an
-    already-parsed unit, and the simulation uses a small, fixed set of units.
+    """Parse a unit expression, caching the result.
 
     Args:
         units (str): Pint unit expression, such as "kg" or "m/s**2".
@@ -72,8 +69,7 @@ def vector(components: tuple[float, float, float] | np.ndarray, units: str) -> V
 
     Args:
         components (tuple[float, float, float] | np.ndarray): The x, y and z
-            components. An array is copied, so later changes to it do not
-            reach the vector.
+            components, which are copied.
         units (str): Pint unit expression applied to every component.
 
     Returns:
@@ -105,16 +101,12 @@ class _QuantityField(NamedTuple):
     dimensionality: UnitsContainer
 
 
-# Cached per class: annotations cannot change at runtime, and the lookup runs
-# on every state construction inside the integration loop.
+# Cached per class
 _EXPECTED: dict[type[Any], tuple[_QuantityField, ...]] = {}
 
 
 def _expected_fields(cls: type[Any]) -> tuple[_QuantityField, ...]:
     """Read the units each field declares through an ``Annotated`` unit string.
-
-    Results are cached per class, since the lookup runs on every construction
-    inside the integration loop.
 
     Args:
         cls (type[Any]): Dataclass to inspect.

@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.environment.atmosphere import AtmosphereData
-from flight_sim.integration import StateDerivative
+from flight_sim.integration import IntegrationConfiguration, StateDerivative
 from flight_sim.units import Scalar, UnitChecked, scalar, vector, zero_vector
-from flight_sim.vehicle.rocket_state import Quaternion, RocketState
+from flight_sim.utilities.quaternion import Quaternion
+from flight_sim.vehicle.rocket_state import RocketState
 
 
 def _rocket_state(**overrides: Any) -> RocketState:
@@ -53,13 +53,8 @@ def test_quantities_convert_between_units() -> None:
             "RocketState.inertia",
         ),
         (
-            lambda: AtmosphereData(
-                air_density=scalar(1.0, "Pa"),
-                speed_of_sound=scalar(340.0, "m/s"),
-                temperature=scalar(288.0, "K"),
-                pressure=scalar(101325.0, "Pa"),
-            ),
-            "AtmosphereData.air_density",
+            lambda: IntegrationConfiguration(position_tolerance=scalar(1.0, "s")),
+            "IntegrationConfiguration.position_tolerance",
         ),
         (
             lambda: StateDerivative(
