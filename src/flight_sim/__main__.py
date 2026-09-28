@@ -7,10 +7,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
-from flight_sim.integration import adaptive_step, derivative_computation, locate_event
+from flight_sim.integration import (
+    IntegrationConfiguration,
+    adaptive_step,
+    derivative_computation,
+    locate_event,
+)
 from flight_sim.units import scalar, vector
+from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
-from flight_sim.vehicle.rocket_state import Quaternion, RocketState
+from flight_sim.vehicle.rocket_state import RocketState
 
 
 def get_default_state() -> RocketState:
@@ -48,10 +54,13 @@ def _vertical_velocity(state: RocketState) -> float:
 
 
 def _vertical_acceleration(
-    properties: RocketProperties, time: float, state: RocketState
+    properties: RocketProperties,
+    config: IntegrationConfiguration,
+    time: float,
+    state: RocketState,
 ) -> float:
     """Return the vertical acceleration in m/s**2, which is zero at max velocity."""
-    derivative = derivative_computation(time, state, properties)
+    derivative = derivative_computation(time, state, properties, config)
     return float(derivative.acceleration.m_as("m/s**2")[2])
 
 
@@ -75,36 +84,47 @@ def main() -> None:
         reference_diameter=scalar(0.1524, "m"),
     )
     state = get_default_state()
+    config = IntegrationConfiguration()
 
-    # Length of the first step to try; the integrator adapts it from there
+    # First step length to try
     dt = scalar(0.01, "s")
     current_time = 0.0
     telemetry = [_telemetry_row(current_time, state)]
 
     # Peak vertical velocity, then apogee, in the order the flight meets them
-    flight_events = (partial(_vertical_acceleration, properties), _apogee_event)
+    flight_events = (
+        partial(_vertical_acceleration, properties, config),
+        _apogee_event,
+    )
 
     dt_arr = np.array([])
 
     while True:
-        next_state, dt_taken, dt = adaptive_step(current_time, state, properties, dt)
+        next_state, dt_taken, dt = adaptive_step(
+            current_time, state, properties, config, dt
+        )
         dt_arr = np.append(dt_arr, dt_taken)
-        # End this step exactly at the first flight event it crosses, so the
-        # telemetry holds the integrated state at that event
+        # End the step at the first flight event it crosses
         for event in flight_events:
             end_time = current_time + float(dt_taken.m_as("s"))
             if event(current_time, state) > 0.0 >= event(end_time, next_state):
                 next_state, dt_taken = locate_event(
-                    current_time, state, next_state, properties, dt_taken, event
+                    current_time, state, next_state, properties, config, dt_taken, event
                 )
                 break
 
         step_length = float(dt_taken.m_as("s"))
         landed = current_time + step_length > 0.1 and _altitude(next_state) <= 0.0
         if landed:
-            # End this step exactly at impact
+            # End the step at impact
             next_state, dt_taken = locate_event(
-                current_time, state, next_state, properties, dt_taken, _impact_event
+                current_time,
+                state,
+                next_state,
+                properties,
+                config,
+                dt_taken,
+                _impact_event,
             )
             step_length = float(dt_taken.m_as("s"))
 

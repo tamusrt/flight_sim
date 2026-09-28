@@ -1,13 +1,42 @@
 """Functions for loading aerodynamic CSV data."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
+from dataclasses import dataclass, field, fields
 
 import numpy as np
 import pandas as pd  # type: ignore
 
 
+@dataclass(frozen=True)
+class AeroCoefficients:
+    """Aerodynamic coefficients at one flight condition.
+
+    Each field's ``column`` metadata names the CSV column it is read from.
+    """
+
+    # Drag, along the flight path
+    cd: float = field(metadata={"column": "CD"})
+
+    # Lift (normal force), perpendicular to the flight path in the pitch plane
+    cl: float = field(metadata={"column": "CL"})
+
+    # Side force, along the body X axis
+    cy: float = field(metadata={"column": "CY"})
+
+    # Roll, pitch and yaw moments
+    c_roll: float = field(metadata={"column": "C_roll"})
+    cm: float = field(metadata={"column": "CM"})
+    cn: float = field(metadata={"column": "CN"})
+
+
+# CSV columns in AeroCoefficients field order
+_AERO_COLUMNS: tuple[str, ...] = tuple(
+    coefficient.metadata["column"] for coefficient in fields(AeroCoefficients)
+)
+
+
 class AeroTable:
-    """Bilinear lookup of several coefficients over a shared Mach/alpha grid.
+    """Bilinear lookup of the aerodynamic coefficients over a Mach/alpha grid.
 
     Outside the grid, each coefficient is extrapolated linearly from the
     nearest edge cell.
@@ -23,13 +52,14 @@ class AeroTable:
             alpha_axis (np.ndarray): Strictly increasing angles of attack in
                 degrees, at least two.
             values (np.ndarray): Coefficients with shape
-                (len(mach_axis), len(alpha_axis), n_coefficients).
+                (len(mach_axis), len(alpha_axis), n_coefficients), the last
+                axis in ``AeroCoefficients`` field order.
         """
         self.mach_axis = mach_axis
         self.alpha_axis = alpha_axis
         self.values = values
 
-    def __call__(self, mach: float, alpha: float) -> list[float]:
+    def __call__(self, mach: float, alpha: float) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.
 
         Args:
@@ -37,7 +67,7 @@ class AeroTable:
             alpha (float): Angle of attack in degrees.
 
         Returns:
-            list[float]: One value per coefficient, in the table's column order.
+            AeroCoefficients: The interpolated coefficients.
         """
         i = _cell_index(self.mach_axis, mach)
         j = _cell_index(self.alpha_axis, alpha)
@@ -50,8 +80,7 @@ class AeroTable:
         cell = self.values[i : i + 2, j : j + 2]
         low_mach = cell[0, 0] + t_alpha * (cell[0, 1] - cell[0, 0])
         high_mach = cell[1, 0] + t_alpha * (cell[1, 1] - cell[1, 0])
-        result: list[float] = (low_mach + t_mach * (high_mach - low_mach)).tolist()
-        return result
+        return AeroCoefficients(*(low_mach + t_mach * (high_mach - low_mach)).tolist())
 
 
 def _cell_index(axis: np.ndarray, point: float) -> int:
@@ -63,14 +92,13 @@ def _cell_index(axis: np.ndarray, point: float) -> int:
     return min(max(index, 0), len(axis) - 2)
 
 
-def aero_table_from_csv(filepath: str, output_cols: Sequence[str]) -> AeroTable:
-    """Read a flight sim CSV and build one lookup covering several coefficients.
+def aero_table_from_csv(filepath: str) -> AeroTable:
+    """Read a flight sim CSV and build one lookup covering every coefficient.
 
     Args:
         filepath (str): CSV with "Mach" and "Alpha" columns plus one column per
-            coefficient.
-        output_cols (Sequence[str]): Coefficient columns to include, in the
-            order the lookup returns them.
+            ``AeroCoefficients`` field, named by the field's ``column``
+            metadata.
 
     Returns:
         AeroTable: Lookup over the CSV's Mach/alpha grid.
@@ -85,7 +113,7 @@ def aero_table_from_csv(filepath: str, output_cols: Sequence[str]) -> AeroTable:
             data_frame.pivot_table(
                 values=column, index="Mach", columns="Alpha"
             ).to_numpy()
-            for column in output_cols
+            for column in _AERO_COLUMNS
         ],
         axis=-1,
     )

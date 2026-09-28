@@ -7,19 +7,20 @@ import pytest
 from pint import DimensionalityError
 
 from flight_sim.__main__ import get_default_state, main
-from flight_sim.environment.gravity import get_gravity
+from flight_sim.environment.atmosphere import StandardAtmosphere1976, VacuumAtmosphere
+from flight_sim.environment.gravity import ConstantGravity, GravityModel, WGS84Gravity
 from flight_sim.integration import (
+    IntegrationConfiguration,
     derivative_computation,
     locate_event,
-    quaternion_kinematics,
     step,
 )
-from flight_sim.units import Scalar, scalar, vector
-from flight_sim.vehicle.rocket_properties import (
-    AERO_COEFFICIENT_COLUMNS,
-    RocketProperties,
-)
-from flight_sim.vehicle.rocket_state import Quaternion, RocketState
+from flight_sim.units import scalar, vector
+from flight_sim.utilities.data_loader import AeroCoefficients
+from flight_sim.vehicle.rocket_properties import RocketProperties
+from flight_sim.vehicle.rocket_state import RocketState
+
+_CONFIG = IntegrationConfiguration()
 
 
 def _bare_state() -> RocketState:
@@ -34,9 +35,8 @@ def _bare_state() -> RocketState:
     )
 
 
-@pytest.fixture
-def baseline_rocket_properties() -> RocketProperties:
-    """Provides a standardized rocket configuration for integration tests."""
+def _rocket_properties() -> RocketProperties:
+    """Return the standard rocket configuration for integration tests."""
     return RocketProperties(
         aero_file_path="tests/test_data/standard_aero.csv",
         motor_file_path="tests/test_data/standard_motor.csv",
@@ -44,6 +44,12 @@ def baseline_rocket_properties() -> RocketProperties:
         reference_area=scalar(0.0182414692, "m**2"),
         reference_diameter=scalar(0.1524, "m"),
     )
+
+
+@pytest.fixture
+def baseline_rocket_properties() -> RocketProperties:
+    """Provides a standardized rocket configuration for integration tests."""
+    return _rocket_properties()
 
 
 @patch("flight_sim.__main__.adaptive_step")
@@ -74,16 +80,12 @@ def test_main_rejects_unknown_argument(mock_properties: MagicMock) -> None:
 
 
 def test_step_zero_force_keeps_velocity_constant(
-    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+    baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Tests that the step function keeps velocity constant"""
-
-    monkeypatch.setattr(
-        "flight_sim.integration.normal_gravity",
-        lambda latitude_rad, altitude_m: 0.0,
-    )
+    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
     state = _bare_state()
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.01, "s"))
+    next_state = step(0.0, state, baseline_rocket_properties, config, scalar(0.01, "s"))
     assert np.allclose(next_state.velocity.m_as("m/s"), np.zeros(3))
 
 
@@ -92,7 +94,9 @@ def test_step_with_gravity_changes_velocity(
 ) -> None:
     """Tests that gravity correctly accelerates rocket downwards"""
     state = _bare_state()
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.01, "s"))
+    next_state = step(
+        0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.01, "s")
+    )
     assert next_state.velocity[2].m_as("m/s") < 0
 
 
@@ -104,6 +108,7 @@ def test_step_result_keeps_expected_units(
         0.0,
         _bare_state(),
         baseline_rocket_properties,
+        _CONFIG,
         scalar(0.01, "s"),
     )
 
@@ -121,12 +126,14 @@ def test_step_accepts_any_time_unit(
         0.0,
         _bare_state(),
         baseline_rocket_properties,
+        _CONFIG,
         scalar(10.0, "ms"),
     )
     from_s = step(
         0.0,
         _bare_state(),
         baseline_rocket_properties,
+        _CONFIG,
         scalar(0.01, "s"),
     )
 
@@ -142,35 +149,28 @@ def test_step_rejects_dt_that_is_not_a_time(
             0.0,
             _bare_state(),
             baseline_rocket_properties,
+            _CONFIG,
             scalar(0.01, "m"),
         )
 
 
-def test_get_gravity_returns_an_acceleration() -> None:
-    """Gravity is returned as an acceleration quantity, not a bare float."""
-    magnitude: Scalar = get_gravity(
-        latitude=scalar(0.0, "deg"),
-        longitude=scalar(0.0, "deg"),
-        altitude=scalar(0.0, "m"),
-    )
-
-    assert magnitude.check("[length] / [time] ** 2")
-    assert magnitude.m_as("m/s**2") == pytest.approx(9.7803253359, rel=1e-5)
-
-
 def test_step_adaptive_scaling_and_rejection(
-    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+    baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Stress adaptive rejection, scaling, and overshoot limits."""
-    monkeypatch.setattr(
-        "flight_sim.integration.normal_gravity",
-        lambda latitude_rad, altitude_m: altitude_m**3,
-    )
+
+    class _CubicGravity(GravityModel):
+        """Gravity growing with the cube of the altitude."""
+
+        def magnitude(self, latitude_rad: float, altitude_m: float) -> float:
+            return altitude_m**3
+
+    config = IntegrationConfiguration(gravity=_CubicGravity())
 
     state = _bare_state()
     state.position = vector((0.0, 0.0, 10.0), "m")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(5.0, "s"))
+    next_state = step(0.0, state, baseline_rocket_properties, config, scalar(5.0, "s"))
 
     assert next_state is not None
 
@@ -184,7 +184,7 @@ def test_step_triggers_aerodynamic_calculations(
     state.current_mass = scalar(25.0, "kg")
     state.velocity = vector((0.0, 0.0, 50.0), "m/s")
 
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
+    next_state = step(0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.1, "s"))
 
     assert next_state is not None
 
@@ -197,7 +197,7 @@ def test_step_pitch_moment_induces_angular_velocity(
     state.velocity = vector((50.0, 0.0, 200.0), "m/s")
     state.current_mass = scalar(20.0, "kg")
 
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
+    next_state = step(0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.1, "s"))
 
     angular_vel = next_state.angular_velocity.m_as("rad/s")
 
@@ -206,48 +206,15 @@ def test_step_pitch_moment_induces_angular_velocity(
     assert angular_vel[2] == 0.0  # No yaw induced
 
 
-def test_quaternion_normalized_returns_unit_length() -> None:
-    """Normalizing rescales every component by the quaternion's length."""
-    unit = Quaternion(q_w=2.0, q_x=0.0, q_y=-2.0, q_z=1.0).normalized()
-
-    assert unit.q_w == pytest.approx(2 / 3)
-    assert unit.q_x == pytest.approx(0.0)
-    assert unit.q_y == pytest.approx(-2 / 3)
-    assert unit.q_z == pytest.approx(1 / 3)
-
-
-def test_quaternion_kinematics_matches_xi_matrix() -> None:
-    """The quaternion rate equals 0.5 * Xi(q) * omega for a general orientation."""
-    orientation = Quaternion(q_w=0.5, q_x=-0.5, q_y=0.5, q_z=0.5)
-    angular_velocity = vector((1.0, 2.0, 3.0), "rad/s")
-
-    q_dot = quaternion_kinematics(orientation, angular_velocity)
-
-    assert q_dot.q_w == pytest.approx(-1.0)
-    assert q_dot.q_x == pytest.approx(0.5)
-    assert q_dot.q_y == pytest.approx(1.5)
-    assert q_dot.q_z == pytest.approx(0.0)
-
-
-def test_quaternion_kinematics_accepts_any_angular_rate_unit() -> None:
-    """An angular velocity in deg/s gives the same rate as the equivalent rad/s."""
-    from_deg = quaternion_kinematics(Quaternion(), vector((0.0, 0.0, 180.0), "deg/s"))
-
-    assert from_deg.q_z == pytest.approx(np.pi / 2)
-
-
 def test_step_angular_velocity_rotates_orientation(
-    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+    baseline_rocket_properties: RocketProperties,
 ) -> None:
     """A constant body rate about Z turns the orientation by rate * time."""
-    monkeypatch.setattr(
-        "flight_sim.integration.normal_gravity",
-        lambda latitude_rad, altitude_m: 0.0,
-    )
+    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
     state = _bare_state()
     state.angular_velocity = vector((0.0, 0.0, np.pi / 2), "rad/s")
 
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
+    next_state = step(0.0, state, baseline_rocket_properties, config, scalar(0.1, "s"))
 
     half_angle = (np.pi / 2) * 0.1 / 2
     assert next_state.orientation.q_w == pytest.approx(np.cos(half_angle), abs=1e-6)
@@ -265,7 +232,7 @@ def test_step_keeps_orientation_normalized(
     state.angular_velocity = vector((0.3, -1.2, 0.8), "rad/s")
     state.current_mass = scalar(20.0, "kg")
 
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
+    next_state = step(0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.1, "s"))
 
     orientation = next_state.orientation
     norm = np.linalg.norm(
@@ -290,7 +257,7 @@ def test_step_dynamic_cg_moment_transfer(
     state.velocity = vector((20.0, 0.0, 150.0), "m/s")
     state.angular_velocity = vector((0.0, 0.0, 0.0), "rad/s")
 
-    next_state = step(0.0, state, baseline_rocket_properties, scalar(0.1, "s"))
+    next_state = step(0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.1, "s"))
 
     angular_vel = next_state.angular_velocity.m_as("rad/s")
 
@@ -306,10 +273,15 @@ def test_six_dof_aerodynamic_response(
     """Verify that Side Force, Roll, and Yaw generate correct accelerations."""
 
     baseline_rocket_properties.aero_coefficients = MagicMock(
-        return_value=[1.0] * len(AERO_COEFFICIENT_COLUMNS)
+        return_value=AeroCoefficients(
+            cd=1.0, cl=1.0, cy=1.0, c_roll=1.0, cm=1.0, cn=1.0
+        )
     )
 
-    baseline_rocket_properties.thrust_curve = MagicMock(return_value=0.0)
+    baseline_rocket_properties.engine = MagicMock(
+        get_thrust=MagicMock(return_value=0.0),
+        get_mass_flow=MagicMock(return_value=0.0),
+    )
 
     state = get_default_state()
     state.position = vector((0.0, 0.0, 1000.0), "m")
@@ -319,6 +291,7 @@ def test_six_dof_aerodynamic_response(
         time=0.0,
         state=state,
         properties=baseline_rocket_properties,
+        config=_CONFIG,
     )
 
     angular_accel = derivative.angular_acceleration.m_as("rad/s**2")
@@ -332,23 +305,21 @@ def test_six_dof_aerodynamic_response(
 
 
 def test_locate_event_finds_ballistic_apogee(
-    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+    baseline_rocket_properties: RocketProperties,
 ) -> None:
     """A drag-free coast peaks at the time and height the closed form gives."""
-    monkeypatch.setattr(
-        "flight_sim.integration.normal_gravity",
-        lambda latitude_rad, altitude_m: 9.81,
-    )
+    config = IntegrationConfiguration(gravity=ConstantGravity(9.81))
     start = _bare_state()
     start.velocity = vector((0.0, 0.0, 50.0), "m/s")
     dt = scalar(10.0, "s")
-    end = step(0.0, start, baseline_rocket_properties, dt)
+    end = step(0.0, start, baseline_rocket_properties, config, dt)
 
     apogee, time_to_apogee = locate_event(
         0.0,
         start,
         end,
         baseline_rocket_properties,
+        config,
         dt,
         lambda _time, state: float(state.velocity.m_as("m/s")[2]),
     )
@@ -356,3 +327,107 @@ def test_locate_event_finds_ballistic_apogee(
     assert time_to_apogee.m_as("s") == pytest.approx(50.0 / 9.81, abs=1e-8)
     assert apogee.position.m_as("m")[2] == pytest.approx(50.0**2 / (2 * 9.81))
     assert apogee.velocity.m_as("m/s")[2] == pytest.approx(0.0, abs=1e-7)
+
+
+def test_step_warns_at_minimum_step_length(
+    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+) -> None:
+    """A step whose error never meets tolerance is accepted at the minimum length."""
+    config = IntegrationConfiguration(
+        position_tolerance=scalar(1e-7, "m"), min_time_step=scalar(1.0, "ns")
+    )
+
+    def over_tolerance(
+        _time: float, values: np.ndarray, _dt: float, _inputs: object
+    ) -> tuple[np.ndarray, np.ndarray]:
+        values_4th = values.copy()
+        values_4th[0] += 1e-6
+        return values.copy(), values_4th
+
+    monkeypatch.setattr("flight_sim.integration.rkf45_step", over_tolerance)
+
+    with pytest.warns(RuntimeWarning, match="minimum step length") as record:
+        next_state = step(
+            1.0, _bare_state(), baseline_rocket_properties, config, scalar(3.0, "ns")
+        )
+
+    assert len(record) == 3  # One warning per minimum-length step
+    assert next_state.position.m_as("m") == pytest.approx([0.0, 0.0, 0.0])
+
+
+def test_step_raises_on_nan_error(
+    monkeypatch: pytest.MonkeyPatch, baseline_rocket_properties: RocketProperties
+) -> None:
+    """A NaN error estimate stops the integration instead of looping."""
+
+    def nan_step(
+        _time: float, values: np.ndarray, _dt: float, _inputs: object
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return values.copy(), np.full_like(values, np.nan)
+
+    monkeypatch.setattr("flight_sim.integration.rkf45_step", nan_step)
+
+    with pytest.raises(FloatingPointError, match="nan"):
+        step(0.0, _bare_state(), baseline_rocket_properties, _CONFIG, scalar(0.01, "s"))
+
+
+def test_configured_atmosphere_is_used(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """In a vacuum atmosphere a coasting rocket feels no aerodynamic force."""
+    config = IntegrationConfiguration(
+        atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(0.0)
+    )
+    state = _bare_state()
+    state.current_mass = scalar(20.0, "kg")
+    state.velocity = vector((50.0, 0.0, 200.0), "m/s")
+
+    next_state = step(
+        100.0, state, baseline_rocket_properties, config, scalar(1.0, "s")
+    )
+
+    assert next_state.velocity.m_as("m/s") == pytest.approx([50.0, 0.0, 200.0])
+
+
+def test_configured_launch_latitude_sets_gravity(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Gravity follows the configured latitude through the default WGS84 model."""
+    config = IntegrationConfiguration(launch_latitude=scalar(90.0, "deg"))
+
+    next_state = step(
+        0.0, _bare_state(), baseline_rocket_properties, config, scalar(1.0, "s")
+    )
+
+    polar_gravity = WGS84Gravity().magnitude(np.pi / 2, 0.0)
+    assert polar_gravity > WGS84Gravity().magnitude(0.0, 0.0)
+    assert next_state.velocity.m_as("m/s")[2] == pytest.approx(-polar_gravity, rel=1e-5)
+
+
+def test_uniform_wind_loads_a_rocket_at_rest() -> None:
+    """A rocket at rest feels no drag in still air and is pushed along a wind."""
+    properties = _rocket_properties()
+    state = get_default_state()
+    state.position = vector((0.0, 0.0, 1000.0), "m")
+    coasting = 100.0
+
+    still_air = IntegrationConfiguration(
+        atmosphere=StandardAtmosphere1976(), gravity=ConstantGravity(0.0)
+    )
+    in_still_air = derivative_computation(coasting, state, properties, still_air)
+    assert in_still_air.acceleration.m_as("m/s**2") == pytest.approx(np.zeros(3))
+
+    windy = IntegrationConfiguration(
+        atmosphere=StandardAtmosphere1976(wind_m_s=np.array([20.0, 0.0, 0.0])),
+        gravity=ConstantGravity(0.0),
+    )
+    in_wind = derivative_computation(coasting, state, properties, windy)
+    acceleration = in_wind.acceleration.m_as("m/s**2")
+    assert acceleration[0] > 0.0  # Blown downwind
+    assert acceleration[1] == pytest.approx(0.0)
+
+
+def test_configuration_rejects_wrong_units() -> None:
+    """A tolerance that is not a length is rejected on construction."""
+    with pytest.raises(DimensionalityError, match="position_tolerance"):
+        IntegrationConfiguration(position_tolerance=scalar(1.0, "s"))

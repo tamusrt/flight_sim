@@ -1,8 +1,8 @@
-"""Environment module containing gravity data"""
+"""Gravity models giving the gravitational acceleration at a location."""
 
 import math
-
-from flight_sim.units import Scalar, scalar
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 _EARTH_ROTATION_RATE = 7.292115e-5
 _WGS84_SEMI_MAJOR_AXIS_M = 6378137.0
@@ -20,53 +20,66 @@ _ROTATION_PARAMETER = (
 )
 
 
-def normal_gravity(latitude_rad: float, altitude_m: float) -> float:
-    """Return WGS84 normal gravity in m/s**2 from plain SI values.
+class GravityModel(ABC):
+    """Gravity the integrator samples at each location it visits."""
 
-    Args:
-        latitude_rad (float): Geodetic latitude in radians.
-        altitude_m (float): Height above the reference ellipsoid in metres.
+    @abstractmethod
+    def magnitude(self, latitude_rad: float, altitude_m: float) -> float:
+        """Return the gravity magnitude in m/s**2.
 
-    Returns:
-        float: Gravity magnitude in m/s**2.
-    """
-    sin_latitude_squared = math.sin(latitude_rad) ** 2
-    surface_gravity = (
-        _WGS84_EQUATORIAL_GRAVITY
-        * (1.0 + _WGS84_SOMIGLIANA_CONSTANT * sin_latitude_squared)
-        / math.sqrt(1.0 - _WGS84_ECCENTRICITY_SQUARED * sin_latitude_squared)
-    )
-    height_factor = (
-        1.0
-        - (
-            2.0
-            / _WGS84_SEMI_MAJOR_AXIS_M
-            * (
-                1.0
-                + _WGS84_FLATTENING
-                + _ROTATION_PARAMETER
-                - 2.0 * _WGS84_FLATTENING * sin_latitude_squared
-            )
-            * altitude_m
+        Args:
+            latitude_rad (float): Geodetic latitude in radians.
+            altitude_m (float): Height above the reference ellipsoid in metres.
+
+        Returns:
+            float: Gravity magnitude in m/s**2.
+        """
+
+
+@dataclass
+class WGS84Gravity(GravityModel):
+    """WGS84 normal gravity, varying with latitude and altitude."""
+
+    def magnitude(self, latitude_rad: float, altitude_m: float) -> float:
+        """Return the WGS84 normal gravity magnitude in m/s**2.
+
+        Args:
+            latitude_rad (float): Geodetic latitude in radians.
+            altitude_m (float): Height above the reference ellipsoid in metres.
+
+        Returns:
+            float: Gravity magnitude in m/s**2.
+        """
+        sin_latitude_squared = math.sin(latitude_rad) ** 2
+        surface_gravity = (
+            _WGS84_EQUATORIAL_GRAVITY
+            * (1.0 + _WGS84_SOMIGLIANA_CONSTANT * sin_latitude_squared)
+            / math.sqrt(1.0 - _WGS84_ECCENTRICITY_SQUARED * sin_latitude_squared)
         )
-        + 3.0 * altitude_m**2 / _WGS84_SEMI_MAJOR_AXIS_M**2
-    )
-    return surface_gravity * height_factor
+        height_factor = (
+            1.0
+            - (
+                2.0
+                / _WGS84_SEMI_MAJOR_AXIS_M
+                * (
+                    1.0
+                    + _WGS84_FLATTENING
+                    + _ROTATION_PARAMETER
+                    - 2.0 * _WGS84_FLATTENING * sin_latitude_squared
+                )
+                * altitude_m
+            )
+            + 3.0 * altitude_m**2 / _WGS84_SEMI_MAJOR_AXIS_M**2
+        )
+        return surface_gravity * height_factor
 
 
-def get_gravity(latitude: Scalar, longitude: Scalar, altitude: Scalar) -> Scalar:
-    """Return gravity for the integrator.
+@dataclass
+class ConstantGravity(GravityModel):
+    """Gravity of one magnitude everywhere."""
 
-    Args:
-        latitude (Scalar): Geodetic latitude.
-        longitude (Scalar): Geodetic longitude.
-        altitude (Scalar): Height above the reference ellipsoid.
+    magnitude_m_s2: float
 
-    Returns:
-        Scalar: WGS84 normal gravity magnitude.
-    """
-    _ = longitude
-    return scalar(
-        normal_gravity(float(latitude.m_as("rad")), float(altitude.m_as("m"))),
-        "m/s**2",
-    )
+    def magnitude(self, latitude_rad: float, altitude_m: float) -> float:
+        """Return the configured gravity magnitude in m/s**2."""
+        return self.magnitude_m_s2
