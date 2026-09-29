@@ -1,17 +1,12 @@
 """Core FS runner"""
 
 import os
-from collections.abc import Callable
 
 import matplotlib.pyplot as plt
 import pandas as pd  # type: ignore[import-untyped]
 
-from flight_sim.integration import (
-    IntegrationConfiguration,
-    adaptive_step,
-    derivative_computation,
-    locate_event,
-)
+from flight_sim.events import APOGEE, IMPACT, FlightEvent, peak_vertical_velocity
+from flight_sim.integration import IntegrationConfiguration, adaptive_step
 from flight_sim.units import scalar, vector
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
@@ -42,23 +37,13 @@ def main() -> None:
     )
     state = get_default_state()
     config = IntegrationConfiguration()
-
-    # Quantities whose fall through zero ends a step exactly on the event, in
-    # the order the flight meets them: peak vertical velocity, apogee, impact
-    events: tuple[Callable[[float, RocketState], float], ...] = (
-        lambda t, s: float(
-            derivative_computation(t, s, properties, config).acceleration.m_as(
-                "m/s**2"
-            )[2]
-        ),
-        lambda _t, s: float(s.velocity.m_as("m/s")[2]),
-        lambda _t, s: float(s.position.m_as("m")[2]),
-    )
+    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
 
     dt = scalar(0.01, "s")  # First step length to try
     current_time = 0.0
     telemetry = []
     step_lengths = []
+    hit: FlightEvent | None = None
 
     while True:
         pos_z = float(state.position.m_as("m")[2])
@@ -75,22 +60,14 @@ def main() -> None:
             }
         )
 
-        if current_time > 0.1 and pos_z <= 0.0:
-            print(f"Rocket has experienced impact at {current_time:.2f} seconds.")
+        if hit is not None:
+            print(f"{hit.name} at {current_time:.2f} seconds")
+        if hit is IMPACT:
             break
 
-        next_state, dt_taken, dt = adaptive_step(
-            current_time, state, properties, config, dt
+        state, dt_taken, dt, hit = adaptive_step(
+            current_time, state, properties, config, dt, events=events
         )
-        for event in events:
-            end_time = current_time + float(dt_taken.m_as("s"))
-            if event(current_time, state) > 0.0 >= event(end_time, next_state):
-                next_state, dt_taken = locate_event(
-                    current_time, state, next_state, properties, config, dt_taken, event
-                )
-                break
-
-        state = next_state
         current_time += float(dt_taken.m_as("s"))
         step_lengths.append(float(dt_taken.m_as("s")))
 

@@ -9,6 +9,7 @@ from pint import DimensionalityError
 from flight_sim.__main__ import get_default_state, main
 from flight_sim.environment.atmosphere import StandardAtmosphere1976, VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity, GravityModel, WGS84Gravity
+from flight_sim.events import IMPACT
 from flight_sim.integration import (
     IntegrationConfiguration,
     derivative_computation,
@@ -35,23 +36,6 @@ def _bare_state() -> RocketState:
     )
 
 
-def _rocket_properties() -> RocketProperties:
-    """Return the standard rocket configuration for integration tests."""
-    return RocketProperties(
-        aero_file_path="tests/test_data/standard_aero.csv",
-        motor_file_path="tests/test_data/standard_motor.csv",
-        propellant_mass=2.5,
-        reference_area=scalar(0.0182414692, "m**2"),
-        reference_diameter=scalar(0.1524, "m"),
-    )
-
-
-@pytest.fixture
-def baseline_rocket_properties() -> RocketProperties:
-    """Provides a standardized rocket configuration for integration tests."""
-    return _rocket_properties()
-
-
 @patch("flight_sim.__main__.adaptive_step")
 def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
     """Verify the executive simulation loop runs from launch to impact."""
@@ -63,6 +47,7 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
         mock_state,
         scalar(0.2, "s"),
         scalar(0.2, "s"),
+        IMPACT,
     )
 
     main()
@@ -404,9 +389,11 @@ def test_configured_launch_latitude_sets_gravity(
     assert next_state.velocity.m_as("m/s")[2] == pytest.approx(-polar_gravity, rel=1e-5)
 
 
-def test_uniform_wind_loads_a_rocket_at_rest() -> None:
+def test_uniform_wind_loads_a_rocket_at_rest(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
     """A rocket at rest feels no drag in still air and is pushed along a wind."""
-    properties = _rocket_properties()
+    properties = baseline_rocket_properties
     state = get_default_state()
     state.position = vector((0.0, 0.0, 1000.0), "m")
     coasting = 100.0

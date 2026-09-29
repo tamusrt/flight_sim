@@ -6,9 +6,9 @@ return arrays in SI units.
 
 import math
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, NamedTuple
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 import numpy as np
 
@@ -29,6 +29,9 @@ from flight_sim.utilities.quaternion import (
 from flight_sim.vehicle.engine import Engine
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
+
+if TYPE_CHECKING:
+    from flight_sim.events import FlightEvent
 
 # Layout of the state array: metres, m/s, rad/s, quaternion, kilograms
 _POSITION = slice(0, 3)
@@ -478,13 +481,16 @@ def adaptive_step(
     properties: RocketProperties,
     config: IntegrationConfiguration,
     dt: Scalar,
-) -> tuple[RocketState, Scalar, Scalar]:
+    *,
+    events: Sequence["FlightEvent"] = (),
+) -> tuple[RocketState, Scalar, Scalar, "FlightEvent | None"]:
     """Advance the rocket state by one step whose length the error sets.
 
     The step is ``dt`` or shorter: RKF45 shrinks it until the position error
-    is within tolerance. Pass the returned next step length back in on the
-    following call so step lengths adapt to the flight. Inertia and CG
-    location are held constant across the step.
+    is within tolerance, and the step ends exactly at the first of ``events``
+    it crosses. Pass the returned next step length back in on the following
+    call so step lengths adapt to the flight. Inertia and CG location are
+    held constant across the step.
 
     Args:
         time (float): Time since ignition in seconds, for the thrust curve.
@@ -492,10 +498,12 @@ def adaptive_step(
         properties (RocketProperties): Aerodynamic and motor properties.
         config (IntegrationConfiguration): Environment models and tolerances.
         dt (Scalar): Step length to try, in any unit of time.
+        events (Sequence[FlightEvent]): Events to land on, checked in order.
 
     Returns:
-        tuple[RocketState, Scalar, Scalar]: The new state, the length of the
-            step taken, and the step length to try next.
+        tuple[RocketState, Scalar, Scalar, FlightEvent | None]: The new state,
+            the length of the step taken, the step length to try next, and
+            the event the step ended on, if any.
     """
     values, dt_taken, next_dt = _adaptive_step(
         time,
@@ -503,7 +511,20 @@ def adaptive_step(
         float(dt.m_as("s")),
         _step_inputs(state, properties, config),
     )
-    return _unpack(values, state), scalar(dt_taken, "s"), scalar(next_dt, "s")
+    next_state = _unpack(values, state)
+    for event in events:
+        if event.crossed(time, state, time + dt_taken, next_state):
+            next_state, dt_to_event = locate_event(
+                time,
+                state,
+                next_state,
+                properties,
+                config,
+                scalar(dt_taken, "s"),
+                event.value,
+            )
+            return next_state, dt_to_event, scalar(next_dt, "s"), event
+    return next_state, scalar(dt_taken, "s"), scalar(next_dt, "s"), None
 
 
 def step(
