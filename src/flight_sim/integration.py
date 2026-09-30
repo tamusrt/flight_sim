@@ -448,8 +448,8 @@ def adaptive_step(
                 next_state,
                 properties,
                 config,
-                scalar(dt_taken, "s"),
-                event.value,
+                dt=scalar(dt_taken, "s"),
+                event=event.value,
             )
             return next_state, dt_to_event, scalar(next_dt, "s"), event
     return next_state, scalar(dt_taken, "s"), scalar(next_dt, "s"), None
@@ -501,6 +501,7 @@ def locate_event(
     end: RocketState,
     properties: RocketProperties,
     config: IntegrationConfiguration,
+    *,
     dt: Scalar,
     event: Callable[[float, RocketState], float],
 ) -> tuple[RocketState, Scalar]:

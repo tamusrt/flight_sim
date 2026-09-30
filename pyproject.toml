@@ -39,11 +39,17 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 
 [tool.pylint.design]
-# Single-method model interfaces such as GravityModel are complete classes
-min-public-methods = 1
 # The integrator's public functions take the time, state, vehicle,
 # configuration and step
 max-args = 7
+# State and property dataclasses hold one field per physical quantity
+max-attributes = 12
+# Numerical routines carry many intermediate quantities
+max-locals = 20
+
+[tool.pylint."messages control"]
+# Base classes such as UnitChecked work through dataclass hooks alone
+disable = ["too-few-public-methods"]
 
 [tool.mypy]
 python_version = "3.11"

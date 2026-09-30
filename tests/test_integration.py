@@ -329,8 +329,8 @@ def test_locate_event_finds_ballistic_apogee(
         end,
         baseline_rocket_properties,
         config,
-        dt,
-        lambda _time, state: float(state.velocity.m_as("m/s")[0]),
+        dt=dt,
+        event=lambda _time, state: float(state.velocity.m_as("m/s")[0]),
     )
 
     assert time_to_apogee.m_as("s") == pytest.approx(50.0 / 9.81, abs=1e-8)
