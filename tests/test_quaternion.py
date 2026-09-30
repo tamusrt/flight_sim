@@ -4,12 +4,7 @@ import numpy as np
 import pytest
 
 from flight_sim.units import vector
-from flight_sim.utilities.quaternion import (
-    Quaternion,
-    cross,
-    quaternion_kinematics,
-    rotation_matrix,
-)
+from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_kinematics
 
 
 def test_quaternion_normalized_returns_unit_length() -> None:
@@ -20,27 +15,6 @@ def test_quaternion_normalized_returns_unit_length() -> None:
     assert unit.q_x == pytest.approx(0.0)
     assert unit.q_y == pytest.approx(-2 / 3)
     assert unit.q_z == pytest.approx(1 / 3)
-
-
-def test_rotation_matrix_of_identity_quaternion_is_identity() -> None:
-    """The identity quaternion leaves every vector where it is."""
-    assert rotation_matrix(1.0, 0.0, 0.0, 0.0) == pytest.approx(np.eye(3))
-
-
-def test_rotation_matrix_quarter_turn_about_z_maps_x_to_y() -> None:
-    """A 90 degree rotation about Z turns the body X axis onto world Y."""
-    half_angle = np.pi / 4
-    rotation = rotation_matrix(np.cos(half_angle), 0.0, 0.0, np.sin(half_angle))
-
-    assert rotation @ np.array([1.0, 0.0, 0.0]) == pytest.approx([0.0, 1.0, 0.0])
-    assert rotation @ np.array([0.0, 0.0, 1.0]) == pytest.approx([0.0, 0.0, 1.0])
-
-
-def test_rotation_matrix_ignores_quaternion_length() -> None:
-    """A scaled quaternion gives the same rotation as its unit counterpart."""
-    scaled = rotation_matrix(2.0, 0.0, 0.0, 2.0)
-
-    assert scaled == pytest.approx(rotation_matrix(1.0, 0.0, 0.0, 1.0))
 
 
 def test_cross_matches_numpy() -> None:

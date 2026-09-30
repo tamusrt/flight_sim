@@ -46,11 +46,11 @@ class FlightEvent:
 
 # Vertical velocity falls through zero
 APOGEE = FlightEvent(
-    "apogee", lambda _time, state: float(state.velocity.m_as("m/s")[2])
+    "apogee", lambda _time, state: float(state.velocity.m_as("m/s")[0])
 )
 
 # Altitude falls through zero
-IMPACT = FlightEvent("impact", lambda _time, state: float(state.position.m_as("m")[2]))
+IMPACT = FlightEvent("impact", lambda _time, state: float(state.position.m_as("m")[0]))
 
 
 def peak_vertical_velocity(
@@ -69,6 +69,6 @@ def peak_vertical_velocity(
     def vertical_acceleration(time: float, state: RocketState) -> float:
         """Return the vertical acceleration in m/s**2."""
         derivative = derivative_computation(time, state, properties, config)
-        return float(derivative.acceleration.m_as("m/s**2")[2])
+        return float(derivative.acceleration.m_as("m/s**2")[0])
 
     return FlightEvent("peak vertical velocity", vertical_acceleration)

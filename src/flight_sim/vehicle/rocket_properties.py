@@ -22,7 +22,6 @@ class RocketProperties:
         default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
     )
 
-    # Drag, lift (normal), side force, roll, pitch and yaw coefficients
     aero_coefficients: AeroTable = field(init=False)
 
     engine: Engine = field(init=False)
