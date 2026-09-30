@@ -15,9 +15,9 @@ def _coasting_state(vertical_velocity: float) -> RocketState:
     """Return a massless state rising at the given vertical velocity."""
     return RocketState(
         current_mass=scalar(0.0, "kg"),
-        inertia=vector((2.5, 2.5, 0.1), "kg*m**2"),
-        cg_location=vector((0.0, 0.0, -2.5), "m"),
-        velocity=vector((0.0, 0.0, vertical_velocity), "m/s"),
+        inertia=vector((0.1, 2.5, 2.5), "kg*m**2"),
+        cg_location=vector((-2.5, 0.0, 0.0), "m"),
+        velocity=vector((vertical_velocity, 0.0, 0.0), "m/s"),
     )
 
 
@@ -55,7 +55,7 @@ def test_adaptive_step_ends_on_apogee(
 
     assert hit is APOGEE
     assert dt_taken.m_as("s") == pytest.approx(50.0 / 9.81, abs=1e-8)
-    assert state.velocity.m_as("m/s")[2] == pytest.approx(0.0, abs=1e-7)
+    assert state.velocity.m_as("m/s")[0] == pytest.approx(0.0, abs=1e-7)
 
 
 def test_adaptive_step_reports_no_event_when_none_is_crossed(

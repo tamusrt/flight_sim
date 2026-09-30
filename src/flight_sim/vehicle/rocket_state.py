@@ -9,15 +9,20 @@ from flight_sim.utilities.quaternion import Quaternion
 
 @dataclass
 class RocketState(UnitChecked):
-    """Current 6-DOF state of the vehicle."""
+    """Current 6-DOF state of the vehicle.
+
+    Frames are defined in ``flight_sim.utilities.dcm``. ``orientation`` is a
+    scalar-first quaternion rotating body axes into world axes;
+    ``angular_velocity`` and ``inertia`` are in body axes.
+    """
 
     # Mass Properties
     current_mass: Annotated[Scalar, "kg"]
 
-    # I_xx (pitch), I_yy (yaw), I_zz (roll) in kg*m^2
+    # Diagonal inertia (I_xx, I_yy, I_zz) in body axes
     inertia: Annotated[Vector, "kg*m**2"]
 
-    # Center of gravoty relative to the nose tip
+    # Center of gravity from the nose tip, body axes
     cg_location: Annotated[Vector, "m"]
 
     # Position Coordinates
@@ -36,7 +41,7 @@ class RocketState(UnitChecked):
     # Orientation
     orientation: Quaternion = field(default_factory=Quaternion)
 
-    # Reference point used by standard_aero.csv
+    # Moment reference point of the aerodynamic table, from the nose tip
     reference_point: Annotated[Vector, "m"] = field(
         default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
     )

@@ -447,6 +447,7 @@ dependencies = [
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas" },
     { name = "pint" },
+    { name = "r3f" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
@@ -466,6 +467,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "pandas", specifier = ">=3.0.5" },
     { name = "pint", specifier = ">=0.25.3" },
+    { name = "r3f", specifier = ">=2.2.1" },
     { name = "scipy", specifier = ">=1.17.1" },
 ]
 
@@ -1427,6 +1429,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
+]
+
+[[package]]
+name = "r3f"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a1/24/0b52b17f5cbb4b83e582568ecd5fd2e4ba2737cb7cba9fb4ace42272224b/r3f-2.2.1.tar.gz", hash = "sha256:6e9c7929070988e32a1534683a288e679244e6a7ea825d1df807e52ba626b9dc", size = 34806, upload-time = "2026-04-08T00:46:37.152Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/84/c94465f6339b4fe8093438a1ac2d05143ed22f9ae1c3dc881383d7a59199/r3f-2.2.1-py3-none-any.whl", hash = "sha256:ef7bccc4d42da12512f1d8fb3eed0fe7585bb045a061f8e8fec906b9df18062e", size = 31776, upload-time = "2026-04-08T00:46:36.098Z" },
 ]
 
 [[package]]

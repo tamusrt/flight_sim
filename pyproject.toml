@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=2.4.6",
     "pandas>=3.0.5",
     "pint>=0.25.3",
+    "r3f>=2.2.1",
     "scipy>=1.17.1",
 ]
 
@@ -48,6 +49,11 @@ max-args = 7
 python_version = "3.11"
 strict = true
 warn_unreachable = true
+
+# r3f ships no type stubs or py.typed marker
+[[tool.mypy.overrides]]
+module = "r3f"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

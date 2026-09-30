@@ -19,13 +19,8 @@ from flight_sim.environment.atmosphere import (
 )
 from flight_sim.environment.gravity import GravityModel, WGS84Gravity
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
-from flight_sim.utilities.data_loader import AeroCoefficients
-from flight_sim.utilities.quaternion import (
-    Quaternion,
-    cross,
-    quaternion_rates,
-    rotation_matrix,
-)
+from flight_sim.utilities.dcm import aero_angles, body_to_world
+from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_rates
 from flight_sim.vehicle.engine import Engine
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
@@ -213,108 +208,41 @@ def _thrust_acceleration(
     return np.zeros(3), 0.0
 
 
-def _lift_and_torque(
-    flight_vector: np.ndarray,
-    rotation: np.ndarray,
-    force_scale: float,
-    coefficients: AeroCoefficients,
-    inputs: _StepInputs,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute the lift force and the aerodynamic torque about the CG.
-
-    Args:
-        flight_vector (np.ndarray): Unit vector along the airspeed, world frame.
-        rotation (np.ndarray): Body-to-world rotation matrix.
-        force_scale (float): Dynamic pressure times reference area, in N.
-        coefficients (AeroCoefficients): Coefficients at this flight condition.
-        inputs (_StepInputs): Constants of the step.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray]: Lift force in the world frame in N and
-            torque in the body frame in N*m.
-    """
-    # Direction the nose points in the world frame: the body Z axis
-    nose_vector = rotation[:, 2]
-    pitch_axis = cross(flight_vector, nose_vector)
-    lift_raw_dir = cross(pitch_axis, flight_vector)
-
-    lift_norm = math.sqrt(float(lift_raw_dir @ lift_raw_dir))
-    if lift_norm > 1e-6:
-        lift_force = lift_raw_dir * (force_scale * coefficients.cl / lift_norm)
-    else:
-        lift_force = np.zeros(3)
-
-    # Reference diameter acts as "lever arm" length
-    moment_scale = force_scale * inputs.reference_diameter
-
-    # Pitch moment about the reference point, transferred to the CG
-    # by the lift acting through the lever arm (world frame)
-    lever_arm_world = rotation @ inputs.lever_arm_body
-    m_cg_world = pitch_axis * (moment_scale * coefficients.cm) + cross(
-        lever_arm_world, lift_force
-    )
-
-    # Inertia is expressed in body axes, so the torque must be too
-    body_torque = rotation.T @ m_cg_world
-
-    # Apply the direct aerodynamic moments to the body frame
-    # (Assuming Z is Roll, Y is Pitch, X is Yaw)
-    body_torque[2] += moment_scale * coefficients.c_roll
-    body_torque[0] += moment_scale * coefficients.cn
-    return lift_force, body_torque
-
-
 def _aero_loads(
-    velocity: np.ndarray, altitude: float, rotation: np.ndarray, inputs: _StepInputs
+    velocity: np.ndarray, altitude: float, to_body: np.ndarray, inputs: _StepInputs
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute the aerodynamic force and torque on the vehicle.
+    """Compute the aerodynamic force and the torque about the CG, in body axes.
 
-    The loads follow the airspeed: the velocity relative to the wind.
+    The torque is the table's moment about the reference point plus the
+    moment of the force through the lever arm from the CG.
 
     Args:
         velocity (np.ndarray): Velocity in the world frame in m/s.
-        altitude (float): Altitude in metres, for the atmosphere.
-        rotation (np.ndarray): Body-to-world rotation matrix.
+        altitude (float): Altitude in metres.
+        to_body (np.ndarray): World-to-body rotation matrix.
         inputs (_StepInputs): Constants of the step.
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: Force in the world frame in N and
-            torque about the CG in the body frame in N*m.
+        tuple[np.ndarray, np.ndarray]: Force in N and torque in N*m.
     """
-    # Atmosphere at this stage's own altitude
     conditions = inputs.atmosphere(altitude)
-    airspeed = velocity - conditions.wind
-    speed = math.sqrt(float(airspeed @ airspeed))
-    if speed <= 0:
-        return np.zeros(3), np.zeros(3)
-
-    # Unit vector pointing where the rocket is travelling through the air
-    flight_vector = airspeed / speed
-    current_alpha = _angle_of_attack(flight_vector, rotation[:, 2])
+    airspeed_body = to_body @ (velocity - conditions.wind)
+    speed = math.sqrt(float(airspeed_body @ airspeed_body))
+    alpha, phi = aero_angles(airspeed_body)
     coefficients = inputs.properties.aero_coefficients(
-        speed / conditions.speed_of_sound, current_alpha
+        speed / conditions.speed_of_sound, math.degrees(alpha), math.degrees(phi)
     )
 
     # Dynamic pressure times reference area gives force per unit coefficient
     force_scale = 0.5 * conditions.air_density * speed**2 * inputs.reference_area
-
-    # Drag pushes straight back along the airspeed
-    aero_force = flight_vector * (-force_scale * coefficients.cd)
-    if current_alpha <= 0.001:
-        return aero_force, np.zeros(3)
-
-    lift_force, body_torque = _lift_and_torque(
-        flight_vector, rotation, force_scale, coefficients, inputs
+    force_body = force_scale * np.array(
+        [coefficients.cx, coefficients.cy, coefficients.cz]
     )
-    # Side force acts along the body X axis
-    side_force = rotation[:, 0] * (force_scale * coefficients.cy)
-    return aero_force + lift_force + side_force, body_torque
-
-
-def _angle_of_attack(flight_vector: np.ndarray, nose_vector: np.ndarray) -> float:
-    """Return the angle in degrees between two unit vectors."""
-    dot_product = min(max(float(flight_vector @ nose_vector), -1.0), 1.0)
-    return math.degrees(math.acos(dot_product))
+    # Reference diameter acts as "lever arm" length
+    torque_body = (force_scale * inputs.reference_diameter) * np.array(
+        [coefficients.cmx, coefficients.cmy, coefficients.cmz]
+    ) + cross(inputs.lever_arm_body, force_body)
+    return force_body, torque_body
 
 
 def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.ndarray:
@@ -328,25 +256,25 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     Returns:
         np.ndarray: Rate of change of each element of ``values``.
     """
-    altitude = float(values[_POSITION][2])
+    altitude = float(values[_POSITION][0])
     velocity = values[_VELOCITY]
     mass = float(values[_MASS])
     orientation: tuple[float, float, float, float] = tuple(
         values[_ORIENTATION].tolist()
     )
-    rotation = rotation_matrix(*orientation)
+    to_world = body_to_world(Quaternion(*orientation))
 
-    # Gravity acts along -Z
-    acceleration = np.array([0.0, 0.0, -inputs.gravity(inputs.latitude_rad, altitude)])
+    # Gravity along -X, thrust along the nose
+    acceleration = np.array([-inputs.gravity(inputs.latitude_rad, altitude), 0.0, 0.0])
     thrust_acceleration, mass_flow_rate = _thrust_acceleration(
-        time, mass, rotation[:, 2], inputs.properties.engine
+        time, mass, to_world[:, 0], inputs.properties.engine
     )
     acceleration += thrust_acceleration
 
     angular_acceleration = np.zeros(3)
     if mass > 0:
-        aero_force, body_torque = _aero_loads(velocity, altitude, rotation, inputs)
-        acceleration += aero_force / mass
+        force_body, body_torque = _aero_loads(velocity, altitude, to_world.T, inputs)
+        acceleration += (to_world @ force_body) / mass
         angular_acceleration = body_torque / inputs.inertia
 
     rates = np.empty(_STATE_SIZE)

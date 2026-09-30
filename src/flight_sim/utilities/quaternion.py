@@ -1,8 +1,8 @@
 """Quaternion orientation and the vector math built on it.
 
-Quaternion components and rotation matrices are dimensionless, so the
-functions here work on floats and SI arrays. ``quaternion_kinematics`` is the
-quantity-taking entry point.
+Quaternion components are dimensionless, so the functions here work on
+floats and SI arrays. ``quaternion_kinematics`` is the quantity-taking entry
+point.
 """
 
 import math
@@ -36,41 +36,6 @@ class Quaternion:
             q_y=self.q_y / norm,
             q_z=self.q_z / norm,
         )
-
-
-def rotation_matrix(q_w: float, q_x: float, q_y: float, q_z: float) -> np.ndarray:
-    """Return the body-to-world rotation matrix of a quaternion of any length.
-
-    Args:
-        q_w (float): Scalar component.
-        q_x (float): Vector component along the body X axis.
-        q_y (float): Vector component along the body Y axis.
-        q_z (float): Vector component along the body Z axis.
-
-    Returns:
-        np.ndarray: 3x3 matrix whose columns are the body axes in the world
-            frame.
-    """
-    s = 2.0 / (q_w * q_w + q_x * q_x + q_y * q_y + q_z * q_z)
-    return np.array(
-        [
-            [
-                1.0 - s * (q_y * q_y + q_z * q_z),
-                s * (q_x * q_y - q_z * q_w),
-                s * (q_x * q_z + q_y * q_w),
-            ],
-            [
-                s * (q_x * q_y + q_z * q_w),
-                1.0 - s * (q_x * q_x + q_z * q_z),
-                s * (q_y * q_z - q_x * q_w),
-            ],
-            [
-                s * (q_x * q_z - q_y * q_w),
-                s * (q_y * q_z + q_x * q_w),
-                1.0 - s * (q_x * q_x + q_y * q_y),
-            ],
-        ]
-    )
 
 
 def cross(a: np.ndarray, b: np.ndarray) -> np.ndarray:

@@ -19,8 +19,8 @@ def get_default_state() -> RocketState:
         position=vector((0.0, 0.0, 0.0), "m"),
         velocity=vector((0.0, 0.0, 0.0), "m/s"),
         current_mass=scalar(25.0, "kg"),
-        inertia=vector((150.0, 150.0, 2.5), "kg*m**2"),
-        cg_location=vector((0.0, 0.0, -1.5), "m"),
+        inertia=vector((2.5, 150.0, 150.0), "kg*m**2"),
+        cg_location=vector((-1.5, 0.0, 0.0), "m"),
         angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
         orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
     )
@@ -46,9 +46,9 @@ def main() -> None:
     hit: FlightEvent | None = None
 
     while True:
-        pos_z = float(state.position.m_as("m")[2])
-        vel_z = float(state.velocity.m_as("m/s")[2])
-        roll_rate = float(state.angular_velocity.m_as("rad/s")[2])
+        pos_z = float(state.position.m_as("m")[0])
+        vel_z = float(state.velocity.m_as("m/s")[0])
+        roll_rate = float(state.angular_velocity.m_as("rad/s")[0])
 
         telemetry.append(
             {
