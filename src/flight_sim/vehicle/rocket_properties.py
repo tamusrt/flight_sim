@@ -16,7 +16,7 @@ class RocketProperties:
     propellant_mass: float  # Total weight of solid fuel in kg
 
     reference_area: Scalar
-    reference_diameter: Scalar
+    reference_length: Scalar
 
     reference_point: Vector = field(
         default_factory=lambda: vector((0.0, 0.0, 0.0), "m")

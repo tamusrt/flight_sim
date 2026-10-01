@@ -110,7 +110,7 @@ class _StepInputs(NamedTuple):
     inertia: np.ndarray  # kg*m**2, body axes
     lever_arm_body: np.ndarray  # m, aero reference point relative to the CG
     reference_area: float  # m**2
-    reference_diameter: float  # m
+    reference_length: float  # m
     properties: RocketProperties
     atmosphere: Callable[[float], AtmosphereConditions]  # From the altitude in m
     gravity: Callable[[float, float], float]  # From the latitude in rad, altitude in m
@@ -130,7 +130,7 @@ def _step_inputs(
         lever_arm_body=properties.reference_point.m_as("m")
         - state.cg_location.m_as("m"),
         reference_area=float(properties.reference_area.m_as("m**2")),
-        reference_diameter=float(properties.reference_diameter.m_as("m")),
+        reference_length=float(properties.reference_length.m_as("m")),
         properties=properties,
         atmosphere=config.atmosphere.conditions,
         gravity=config.gravity.magnitude,
@@ -238,8 +238,8 @@ def _aero_loads(
     force_body = force_scale * np.array(
         [coefficients.cx, coefficients.cy, coefficients.cz]
     )
-    # Reference diameter acts as "lever arm" length
-    torque_body = (force_scale * inputs.reference_diameter) * np.array(
+    # Reference length acts as "lever arm" length
+    torque_body = (force_scale * inputs.reference_length) * np.array(
         [coefficients.cmx, coefficients.cmy, coefficients.cmz]
     ) + cross(inputs.lever_arm_body, force_body)
     return force_body, torque_body

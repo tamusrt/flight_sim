@@ -33,7 +33,7 @@ def main() -> None:
         motor_file_path="tests/test_data/standard_motor.csv",
         propellant_mass=5.0,
         reference_area=scalar(0.0182414692, "m**2"),
-        reference_diameter=scalar(0.1524, "m"),
+        reference_length=scalar(0.1524, "m"),
     )
     state = get_default_state()
     config = IntegrationConfiguration()
