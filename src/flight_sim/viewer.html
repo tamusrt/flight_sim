@@ -720,16 +720,17 @@ function evt(k){ for(var i=0;i<events.length;i++) if(events[i].k===k) return eve
 
 function drawPad(sc,pos,cg){
   /* tower on the rocket's axis as it stands on the pad, square faces aligned with the fins */
-  var d=RAIL.dir, L=RAIL.length*sc;
+  /* the tower keeps its true height and only its width scales, so the rail ends where it really does */
+  var d=RAIL.dir, L=RAIL.length;
   if(towerLen!==RAIL.length) buildTower(RAIL.length);
-  basis.makeBasis(d,RAIL.y0,RAIL.z0); basis.setPosition(w1.set(0.02*sc,0,0));
-  tower.matrix.copy(basis).multiply(mS.makeScale(sc,sc,sc)); tower.matrixWorldNeedsUpdate=true;
+  basis.makeBasis(d,RAIL.y0,RAIL.z0); basis.setPosition(w1.set(0.02,0,0));
+  tower.matrix.copy(basis).multiply(mS.makeScale(1,sc,sc)); tower.matrixWorldNeedsUpdate=true;
   /* three-legged stand meeting the tower at a third of its length */
-  var top=w3.set(0.02*sc,0,0).addScaledVector(d,L*0.33), spread=L*0.16;
-  for(var i=0;i<3;i++){ var a=i*TAU/3+0.5, g=new V3(0.02*sc,spread*Math.cos(a),spread*Math.sin(a)), dir=new V3().subVectors(top,g), len=dir.length(); dir.normalize();
+  var top=w3.set(0.02,0,0).addScaledVector(d,L*0.33), spread=L*0.16*sc;
+  for(var i=0;i<3;i++){ var a=i*TAU/3+0.5, g=new V3(0.02,spread*Math.cos(a),spread*Math.sin(a)), dir=new V3().subVectors(top,g), len=dir.length(); dir.normalize();
     orient(legs[i],dir,len,sc,g.clone().addScaledVector(dir,len/2)); }
-  deflector.position.set(0.012*sc,0,0); deflector.scale.setScalar(sc);
-  railLb.position.set(0.02*sc,0,0).addScaledVector(d,L*1.04);
+  deflector.position.set(0.012,0,0); deflector.scale.set(1,sc,sc);
+  railLb.position.set(0.02,0,0).addScaledVector(d,L*1.04);
 }
 
 function drawRecovery(sc,pos,cg,te,tq,land){
@@ -886,16 +887,17 @@ function draw(dtReal){
   var alpha=Math.atan2(hh,bx), phiS=hh>1e-9?Math.atan2(-by,bz):0, phi=(phiS+TAU)%TAU;
   var spA=F.air.length(), spG=F.vel.length(), alt=F.pos.x;
   var Ld=ROCKET_LEN*sc; curLd=Ld; PADL=Ld*17;
-  if(noteMult!==sc){ noteMult=sc; $('scaleNote').textContent='rocket '+fmt(Ld,1)+' m ('+fmt(VEH.length,2)+' m × '+sc+') · rail '+fmt(RAIL.length*sc,0)+' m · recovery and tower to the same scale, shock cords drawn at '+Math.round(CORD_VIS*100)+'% length'; }
+  if(noteMult!==sc){ noteMult=sc; $('scaleNote').textContent='rocket '+fmt(Ld,1)+' m ('+fmt(VEH.length,2)+' m × '+sc+') · rail '+fmt(RAIL.length,0)+' m, true height, width to scale · recovery to the same scale, shock cords drawn at '+Math.round(CORD_VIS*100)+'% length'; }
   var cg=isFinite(F.cg)?F.cg:RAIL.cg0, dep=REC.dep, sepEv=REC.charge||dep, sep=!!(sepEv&&RECO&&tq>=sepEv.t), te=sep?tq-sepEv.t:0;
   var landed=REC.land!==null&&tNow>REC.land, land=null;
 
-  /* drawn position: on the scaled rail the rocket rides the rail scaled too, easing back onto the true path after it leaves */
+  /* drawn position: the rail keeps its true height, so the scaled rocket stands on it with its tail at the true spot and rides the true travel,
+     easing back onto the true path after it leaves */
   /* ...fading out over the first 1.5 km of travel so the drawn rocket never slows or drops */
   /* the fade follows the farthest the rocket has been: on the way down it must not fade the pad scaling back in */
   var sAlong=F.pos.dot(RAIL.dir), apE=evt('apogee'); if(apE&&tq>=apE.t) sAlong=Math.max(sAlong,apE.alt);
   var wr=1-smooth((sAlong-RAIL.length)/1500);
-  off.copy(RAIL.dir).multiplyScalar(((VEH.length-RAIL.cg0)+0.15)*sc+clamp(sAlong,0,RAIL.length)*(sc-1)).multiplyScalar(wr);
+  off.copy(RAIL.dir).multiplyScalar((VEH.length-RAIL.cg0)*sc+0.15).multiplyScalar(wr);
   Pv.copy(F.pos).add(off); var pos=Pv;
   if(down){
     /* it falls toward its drift over the ground (the wind), or downwind when it has none */
