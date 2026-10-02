@@ -25,7 +25,7 @@ from flight_sim.integration import (
 from flight_sim.units import scalar, vector
 from flight_sim.utilities.dcm import body_to_world
 from flight_sim.utilities.quaternion import Quaternion
-from flight_sim.vehicle.rocket_properties import RocketProperties
+from flight_sim.vehicle.rocket_properties import RocketProperties, TrapezoidFinSet
 from flight_sim.vehicle.rocket_state import RocketState
 
 _CONFIG = IntegrationConfiguration()
@@ -666,3 +666,88 @@ def test_configuration_rejects_wrong_units() -> None:
     """A tolerance that is not a length is rejected on construction."""
     with pytest.raises(DimensionalityError, match="position_tolerance"):
         SimConfiguration(position_tolerance=scalar(1.0, "s"))
+
+
+def test_gyroscopic_coupling_turns_roll_and_pitch_into_yaw(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Torque-free spin about X and Y accelerates Z by (Ix - Iy) / Iz * wx * wy."""
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(
+            atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(0.0)
+        )
+    )
+    state = _bare_state()
+    state.current_mass = scalar(20.0, "kg")
+    state.inertia = vector((1.0, 2.0, 3.0), "kg*m**2")
+    state.angular_velocity = vector((1.0, 1.0, 0.0), "rad/s")
+
+    next_state = step(
+        1000.0, state, baseline_rocket_properties, config, scalar(1e-3, "s")
+    )
+
+    rates = next_state.angular_velocity.m_as("rad/s")
+    assert rates[2] == pytest.approx(-1e-3 / 3.0, rel=1e-3)
+
+
+def test_fin_misalignment_spins_up_roll_and_damping_limits_it(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A fin defect rolls the rocket; with none, or at the balance rate, it does not."""
+    fins = TrapezoidFinSet(
+        fin_count=4,
+        root_chord_m=0.3,
+        tip_chord_m=0.1,
+        span_m=0.15,
+        sweep_length_m=0.2,
+        body_radius_m=0.08,
+    )
+    state = _bare_state()
+    state.velocity = vector((200.0, 0.0, 0.0), "m/s")
+    state.current_mass = scalar(20.0, "kg")
+
+    def roll_rate(misalignment_rad: float, initial_rate: float = 0.0) -> float:
+        baseline_rocket_properties.fins = replace(
+            fins, misalignment_rad=misalignment_rad
+        )
+        state.angular_velocity = vector((initial_rate, 0.0, 0.0), "rad/s")
+        step_state = step(
+            0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.01, "s")
+        )
+        return float(step_state.angular_velocity.m_as("rad/s")[0])
+
+    assert roll_rate(0.0) == pytest.approx(0.0, abs=1e-12)
+    assert roll_rate(1e-3) > 0.0
+    assert roll_rate(-1e-3) == pytest.approx(-roll_rate(1e-3))
+    # Forcing and damping balance at p = V * misalignment * F / K
+    balance = 200.0 * 1e-3 * fins.roll_forcing_integral / fins.roll_damping_integral
+    assert roll_rate(1e-3, balance) == pytest.approx(balance, rel=1e-3)
+    # Without misalignment a roll decays
+    assert 0.0 < roll_rate(0.0, 2.0) < 2.0
+
+
+def test_fin_set_geometry_and_normal_force_slope() -> None:
+    """Closed-form strip integrals, and a slope continuous through Mach 1."""
+    fins = TrapezoidFinSet(
+        fin_count=3,
+        root_chord_m=0.2,
+        tip_chord_m=0.2,
+        span_m=0.1,
+        sweep_length_m=0.0,
+        body_radius_m=0.05,
+    )
+    # Rectangular fins: N * c * (outer**(n+1) - inner**(n+1)) / (n + 1)
+    assert fins.roll_forcing_integral == pytest.approx(
+        3 * 0.2 * (0.15**2 - 0.05**2) / 2
+    )
+    assert fins.roll_damping_integral == pytest.approx(
+        3 * 0.2 * (0.15**3 - 0.05**3) / 3
+    )
+    assert fins.aspect_ratio == pytest.approx(0.5)
+    assert fins.midchord_sweep_rad == pytest.approx(0.0)
+    slender = np.pi * fins.aspect_ratio
+    assert fins.normal_force_slope(0.999) == pytest.approx(slender, rel=1e-2)
+    assert fins.normal_force_slope(1.0) == pytest.approx(slender)
+    assert fins.normal_force_slope(1.001) == pytest.approx(slender)
+    assert fins.normal_force_slope(0.0) < slender
+    assert fins.normal_force_slope(5.0) == pytest.approx(4.0 / np.sqrt(24.0))

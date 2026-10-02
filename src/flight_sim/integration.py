@@ -315,6 +315,51 @@ def _aero_loads(
     return force_body, torque_body
 
 
+def _fin_roll_torque(
+    velocity: np.ndarray,
+    altitude: float,
+    roll_rate: float,
+    inputs: _StepInputs,
+) -> float:
+    """Return the net roll torque in N*m from the fins about the body X axis.
+
+    Strip theory: a fin element at distance y from the roll axis meets the
+    air at the fin misalignment minus roll_rate * y / V, so
+    torque = q * a * (F * misalignment - K * roll_rate / V), with q the
+    dynamic pressure, F = N * integral of c * y dy, K = N * integral of
+    c * y**2 dy, and a the fin's finite-span normal force slope applied to
+    every strip. The first term is the slight fin defect that spins the
+    rocket up; the second damps the roll, so the roll rate settles at
+    V * misalignment * F / K.
+
+    Args:
+        velocity (np.ndarray): Velocity in the world frame in m/s.
+        altitude (float): Altitude in metres.
+        roll_rate (float): Body roll rate in rad/s.
+        inputs (_StepInputs): Constants of the step.
+
+    Returns:
+        float: Torque about the body X axis, zero without fins.
+    """
+    fins = inputs.properties.fins
+    if fins is None:
+        return 0.0
+    conditions = inputs.atmosphere(altitude)
+    speed = float(np.linalg.norm(velocity - inputs.wind(altitude)))
+    if speed == 0.0:
+        return 0.0
+    slope = fins.normal_force_slope(speed / conditions.speed_of_sound)
+    dynamic_pressure = 0.5 * conditions.air_density * speed**2
+    return (
+        dynamic_pressure
+        * slope
+        * (
+            fins.roll_forcing_integral * fins.misalignment_rad
+            - fins.roll_damping_integral * roll_rate / speed
+        )
+    )
+
+
 def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.ndarray:
     """Compute the time derivative of a state array.
 
@@ -346,6 +391,9 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     if mass > 0:
         force_body, body_torque = _aero_loads(velocity, altitude, to_world.T, inputs)
         acceleration += (to_world @ force_body) / mass
+        body_torque[0] += _fin_roll_torque(
+            velocity, altitude, float(values[_ANGULAR_VELOCITY][0]), inputs
+        )
 
     # Euler's equations about the principal axes
     angular_acceleration = (
