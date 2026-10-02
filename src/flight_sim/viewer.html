@@ -121,6 +121,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <label class="chip"><input type="checkbox" data-k="pad">Pad</label>
       <label class="chip" id="conjWrap" hidden><input type="checkbox" id="conj">Conjugate q</label>
       <label class="btn">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
+      <label class="btn" id="realBtn" hidden>Showing simulation</label>
     </div>
   </header>
 
@@ -479,7 +480,7 @@ function genDemo(){
   return rowsToDs(o,'Demo flight',true);
 }
 function isaMach(alt,spd){ var h=Math.max(alt,0), T=288.15-0.0065*Math.min(h,11000); return spd/Math.sqrt(1.4*287.05*T); }
-var rawTel=null;
+var rawTel=null, simTel=null, realTel=null, showingReal=false;
 function fromTelemetry(j,conj,name){
   var n=j.t&&j.t.length; if(!n||n<2) throw new Error('"t" needs at least 2 samples');
   ['pos','vel','quat'].forEach(function(k){ if(!j[k]||j[k].length!==n) throw new Error('"'+k+'" must have the same length as "t"'); });
@@ -1074,7 +1075,12 @@ function tick(now){
 if(!renderer) $('nogl').hidden=false; else resize();
 document.fonts&&document.fonts.ready&&0;
 setDataset(genDemo());
-if(window.TELEMETRY){ try{ rawTel={j:window.TELEMETRY,name:window.TELEMETRY_NAME||'simulation'}; setDataset(fromTelemetry(rawTel.j,false,rawTel.name)); }catch(err){ console.error(err); } }
+if(window.TELEMETRY){ try{ rawTel=simTel={j:window.TELEMETRY,name:window.TELEMETRY_NAME||'simulation'}; setDataset(fromTelemetry(rawTel.j,false,rawTel.name)); }catch(err){ console.error(err); } }
+/* real flight, when the run had its log: one button toggles between it and the simulation at the same moment of flight */
+if(window.REAL_TELEMETRY&&simTel){ realTel={j:window.REAL_TELEMETRY,name:window.REAL_TELEMETRY_NAME||'real flight'}; $('realBtn').hidden=false;
+  $('realBtn').onclick=function(){ showingReal=!showingReal; var src=showingReal?realTel:simTel, keep=tNow;
+    try{ rawTel=src; $('conj').checked=false; setDataset(fromTelemetry(src.j,false,src.name)); tNow=Math.min(keep,tMax); prevT=tNow;
+      this.textContent=showingReal?'Showing real flight':'Showing simulation'; }catch(err){ showingReal=!showingReal; rawTel=showingReal?realTel:simTel; showBanner('burnout','Could not show the real flight: '+err.message,false); } }; }
 Object.keys(vis).forEach(function(k){ G[k].visible=vis[k]; });
 tNow=-2; prevT=tNow; /* opens 2 s before launch */
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);

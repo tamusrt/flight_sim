@@ -140,6 +140,8 @@ class RocketProfile:
     fins: TrapezoidFinSet
     rail: LaunchRail
     recovery: RecoverySystem
+    # Logged flight to compare against in the viewer, if there is one
+    flight_data: str | None = None
 
 
 INVICTUS = RocketProfile(
@@ -165,6 +167,10 @@ INVICTUS = RocketProfile(
 # assumed defect as above. Recovery is the file's 36 in drogue at apogee and
 # Iris Compact 96 in main at 1200 ft, with the drogue's drag coefficient left
 # at OpenRocket's automatic 0.8.
+MORPHEUS_FLIGHT_DATA = (
+    r"G:\Shared drives\TAMU-SRT\srt_general\9_flight_data\Morpheus"
+    r"\06132025_irec\SRT_BJAY LR_06-13-2025_08_26_21.csv"
+)
 MORPHEUS_REFERENCE_AREA_M2 = math.pi / 4 * (5.074 * 0.0254) ** 2
 MORPHEUS = RocketProfile(
     name="Morpheus",
@@ -207,6 +213,7 @@ MORPHEUS = RocketProfile(
         ),
         body_drag_area_m2=0.55 * MORPHEUS_REFERENCE_AREA_M2,
     ),
+    flight_data=MORPHEUS_FLIGHT_DATA,
 )
 
 

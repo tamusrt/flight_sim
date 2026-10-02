@@ -12,6 +12,7 @@ rocket swinging under its canopy); ``--apogee`` stops at apogee instead.
 # pylint: disable=duplicate-code
 
 import argparse
+import os
 
 from flight_sim import recovery_extension
 from flight_sim.__main__ import (
@@ -31,6 +32,7 @@ from flight_sim.events import (
     rail_exit,
 )
 from flight_sim.integration import IntegrationConfiguration, adaptive_step
+from flight_sim.real_flight import real_flight_telemetry
 from flight_sim.units import scalar
 from flight_sim.vehicle.rocket_state import RocketState
 from flight_sim.visualize import TelemetryLog, write_viewer
@@ -44,6 +46,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--apogee", action="store_true", help="stop at apogee, with no descent"
+    )
+    parser.add_argument(
+        "--real",
+        metavar="FILE",
+        default=None,
+        help="Blue Raven log to offer in the viewer (default: the rocket's own)",
     )
     add_rocket_arguments(parser)
     args = parser.parse_args()
@@ -90,7 +98,15 @@ def main() -> None:
     if hit is APOGEE and not args.apogee:
         _log_recovery(log, flight, config, max_time, profile)
 
-    print(f"Viewer written to {write_viewer(log)}")
+    real = None
+    real_path = args.real or profile.flight_data
+    if real_path is not None and os.path.isfile(real_path):
+        azimuth = float(profile.rail.azimuth.m_as("deg"))
+        real = real_flight_telemetry(real_path, azimuth)
+        print(f"Loaded real flight from {real_path}")
+    elif args.real is not None:
+        parser.error(f"flight log not found: {args.real}")
+    print(f"Viewer written to {write_viewer(log, real=real)}")
 
 
 def _log_recovery(

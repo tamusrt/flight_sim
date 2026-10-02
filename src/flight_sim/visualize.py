@@ -169,13 +169,30 @@ class TelemetryLog:
 
 
 def write_viewer(
-    log: TelemetryLog, output: str | Path = "flight.html", open_browser: bool = True
+    log: TelemetryLog,
+    output: str | Path = "flight.html",
+    open_browser: bool = True,
+    real: dict[str, Any] | None = None,
 ) -> Path:
-    """Write a self-contained viewer page for the logged flight and open it."""
-    page = _TEMPLATE.read_text(encoding="utf-8").replace(
-        "<!--TELEMETRY-->",
-        f"<script>window.TELEMETRY={log.to_json()};window.TELEMETRY_NAME='simulation';</script>",
+    """Write a self-contained viewer page for the logged flight and open it.
+
+    Args:
+        log (TelemetryLog): The simulated flight.
+        output (str | Path): Where to write the page.
+        open_browser (bool): Whether to open the page.
+        real (dict[str, Any] | None): Telemetry of the real flight; when given
+            the viewer gets a button that toggles between it and the sim.
+    """
+    scripts = (
+        f"<script>window.TELEMETRY={log.to_json()};"
+        "window.TELEMETRY_NAME='simulation';</script>"
     )
+    if real is not None:
+        scripts += (
+            f"<script>window.REAL_TELEMETRY={json.dumps(real)};"
+            "window.REAL_TELEMETRY_NAME='real flight';</script>"
+        )
+    page = _TEMPLATE.read_text(encoding="utf-8").replace("<!--TELEMETRY-->", scripts)
     output = Path(output).resolve()
     output.write_text(_HEAD + page + "</body></html>", encoding="utf-8")
     if open_browser:
