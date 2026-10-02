@@ -1,4 +1,8 @@
-"""Core FS runner: flies Sol Invictus from the pad to the ground and plots it.
+"""Core FS runner: flies a rocket from the pad to the ground and plots it.
+
+The default rocket is Sol Invictus. Pass ``--morpheus`` (or any aero CSV whose
+file name contains "morph") to fly Morpheus, the IREC 2025 rocket, with its own
+vehicle numbers. See ``RocketProfile``.
 
 Vehicle, launch site and recovery values come from the team's OpenRocket
 model (dynamics repo, aero_modeling/SOL_INVICTUS/OpenRocket/SOL_4_30.ork,
@@ -8,8 +12,12 @@ comparison. The recovery system follows the recovery team's IREC info doc
 instead of the drogue and main in that file.
 """
 
+import argparse
 import math
 import os
+import sys
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,6 +25,7 @@ import pandas as pd  # type: ignore[import-untyped]
 
 from flight_sim.descent import (
     DescentResult,
+    Parachute,
     RecoverySystem,
     ReefedParachute,
     simulate_descent,
@@ -113,43 +122,143 @@ RECOVERY = RecoverySystem(
 )
 
 
-def get_default_state() -> RocketState:
-    """Generate the standard launchpad initial state for Sol Invictus."""
+@dataclass(frozen=True)
+class RocketProfile:
+    """Everything that changes from one rocket to the next.
+
+    The launch site, wind, atmosphere and latitude are shared, since both
+    rockets flew from the same IREC site.
+    """
+
+    name: str
+    aero_file: str
+    motor_file: str
+    propellant_mass_kg: float
+    mass_properties: MassPropertiesTable
+    reference_area_m2: float
+    reference_length_m: float
+    fins: TrapezoidFinSet
+    rail: LaunchRail
+    recovery: RecoverySystem
+
+
+INVICTUS = RocketProfile(
+    name="Sol Invictus",
+    aero_file="data/ras_alpha_files/invictus_aero.csv",
+    motor_file="data/motors/IgnisSET5.eng",
+    propellant_mass_kg=PROPELLANT_MASS_KG,
+    mass_properties=MASS_PROPERTIES,
+    reference_area_m2=REFERENCE_AREA_M2,
+    reference_length_m=0.1524,
+    fins=FINS,
+    rail=LAUNCH_RAIL,
+    recovery=RECOVERY,
+)
+
+# Morpheus, flown at IREC 2025 on a Cesaroni Pro98 O3400. Mass, CG and
+# inertia are OpenRocket's for the June 2025 design file (srt_12 dynamics,
+# "Morpheus 0in Radius Tip - Full Cubesat.ork") with the O3400 loaded in
+# place of its Loki motor; the drop between the two masses is the 11.272 kg
+# of propellant in the .eng header. The body is 5.074 in across, and the fins
+# are the RASAero ones. The rail is 17 ft, tilted the 7.1 degrees from
+# vertical that the flight computer logged. The fin misalignment is the same
+# assumed defect as above. Recovery is the file's 36 in drogue at apogee and
+# Iris Compact 96 in main at 1200 ft, with the drogue's drag coefficient left
+# at OpenRocket's automatic 0.8.
+MORPHEUS_REFERENCE_AREA_M2 = math.pi / 4 * (5.074 * 0.0254) ** 2
+MORPHEUS = RocketProfile(
+    name="Morpheus",
+    aero_file="data/ras_alpha_files/morpheus_aero.csv",
+    motor_file="data/motors/Cesaroni_21062O3400-P.eng",
+    propellant_mass_kg=11.272,
+    mass_properties=MassPropertiesTable(
+        launch_mass_kg=28.902,
+        launch_cg_m=-1.796,
+        launch_inertia_kg_m2=(0.0572, 15.878, 15.878),
+        burnout_mass_kg=17.630,
+        burnout_cg_m=-1.586,
+        burnout_inertia_kg_m2=(0.0436, 12.264, 12.264),
+    ),
+    reference_area_m2=MORPHEUS_REFERENCE_AREA_M2,
+    reference_length_m=5.074 * 0.0254,
+    fins=TrapezoidFinSet(
+        fin_count=4,
+        root_chord_m=0.2794,
+        tip_chord_m=0.0762,
+        span_m=0.13335,
+        sweep_length_m=0.2286,
+        body_radius_m=5.074 * 0.0254 / 2,
+        misalignment_rad=math.radians(FIN_MISALIGNMENT_DEG),
+    ),
+    rail=LaunchRail(
+        length=scalar(17.0, "ft"),
+        elevation=scalar(90.0 - 7.1, "deg"),
+        azimuth=scalar(270.0, "deg"),
+    ),
+    recovery=RecoverySystem(
+        parachutes=(
+            Parachute("drogue", diameter_m=36 * 0.0254, drag_coefficient=0.8),
+            Parachute(
+                "main",
+                diameter_m=96 * 0.0254,
+                drag_coefficient=2.2,
+                deploy_altitude_m=365.76,
+            ),
+        ),
+        body_drag_area_m2=0.55 * MORPHEUS_REFERENCE_AREA_M2,
+    ),
+)
+
+
+def profile_for(aero_file: str) -> RocketProfile:
+    """Pick the rocket from the aero file name: "morph" means Morpheus."""
+    return MORPHEUS if "morph" in os.path.basename(aero_file).lower() else INVICTUS
+
+
+def get_default_state(profile: RocketProfile = INVICTUS) -> RocketState:
+    """Generate the standard launchpad initial state of a rocket."""
     return RocketState(
         position=vector((0.0, 0.0, 0.0), "m"),
         velocity=vector((0.0, 0.0, 0.0), "m/s"),
-        current_mass=scalar(MASS_PROPERTIES.launch_mass_kg, "kg"),
-        inertia=vector(MASS_PROPERTIES.launch_inertia_kg_m2, "kg*m**2"),
-        cg_location=vector((MASS_PROPERTIES.launch_cg_m, 0.0, 0.0), "m"),
+        current_mass=scalar(profile.mass_properties.launch_mass_kg, "kg"),
+        inertia=vector(profile.mass_properties.launch_inertia_kg_m2, "kg*m**2"),
+        cg_location=vector((profile.mass_properties.launch_cg_m, 0.0, 0.0), "m"),
         angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
         orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
         on_rail=True,
     )
 
 
-def get_launch_state() -> RocketState:
+def get_launch_state(profile: RocketProfile = INVICTUS) -> RocketState:
     """Return the launchpad state with the rocket lying along the launch rail."""
-    state = get_default_state()
-    state.orientation = LAUNCH_RAIL.orientation()
+    state = get_default_state(profile)
+    state.orientation = profile.rail.orientation()
     return state
 
 
-def get_default_properties() -> RocketProperties:
-    """Build the Sol Invictus properties, including the fins for roll."""
+def get_default_properties(
+    profile: RocketProfile = INVICTUS, aero_file: str | None = None
+) -> RocketProperties:
+    """Build a rocket's properties, including the fins for roll.
+
+    Args:
+        profile (RocketProfile): The rocket.
+        aero_file (str | None): Aero CSV to use in place of the profile's own.
+    """
     return RocketProperties(
         aero_table=aero_table_from_csv(
-            "data/ras_alpha_files/invictus_aero.csv",
-            reference_area=scalar(REFERENCE_AREA_M2, "m**2"),
-            reference_length=scalar(0.1524, "m"),
+            aero_file or profile.aero_file,
+            reference_area=scalar(profile.reference_area_m2, "m**2"),
+            reference_length=scalar(profile.reference_length_m, "m"),
             reference_point=zero_vector("m"),
         ),
-        motor_file_path="data/motors/IgnisSET5.eng",
-        propellant_mass=PROPELLANT_MASS_KG,
-        fins=FINS,
+        motor_file_path=profile.motor_file,
+        propellant_mass=profile.propellant_mass_kg,
+        fins=profile.fins,
     )
 
 
-def get_default_config() -> IntegrationConfiguration:
+def get_default_config(profile: RocketProfile = INVICTUS) -> IntegrationConfiguration:
     """Build the integration settings for the launch site, wind and rail."""
     return IntegrationConfiguration(
         truth=TruthConfiguration(
@@ -161,7 +270,7 @@ def get_default_config() -> IntegrationConfiguration:
             wind=WIND,
             launch_latitude=scalar(LAUNCH_LATITUDE_DEG, "deg"),
             launch_elevation=scalar(PAD_ELEVATION_M, "m"),
-            launch_rail=LAUNCH_RAIL,
+            launch_rail=profile.rail,
         )
     )
 
@@ -177,13 +286,18 @@ def telemetry_row(time_s: float, state: RocketState) -> dict[str, object]:
     }
 
 
-def apply_mass_properties(state: RocketState) -> None:
+def apply_mass_properties(
+    state: RocketState, profile: RocketProfile = INVICTUS
+) -> None:
     """Set the state's CG and inertia for the propellant left."""
-    MASS_PROPERTIES.apply(state)
+    profile.mass_properties.apply(state)
 
 
 def descend(
-    apogee_time_s: float, state: RocketState, config: IntegrationConfiguration
+    apogee_time_s: float,
+    state: RocketState,
+    config: IntegrationConfiguration,
+    profile: RocketProfile = INVICTUS,
 ) -> DescentResult:
     """From apogee, fall under the parachute as a point mass.
 
@@ -191,11 +305,12 @@ def descend(
         apogee_time_s (float): Time since ignition at apogee, in seconds.
         state (RocketState): State at apogee.
         config (IntegrationConfiguration): Truth models and settings.
+        profile (RocketProfile): The rocket, for its recovery system.
 
     Returns:
         DescentResult: The descent samples and parachute events.
     """
-    descent = simulate_descent(apogee_time_s, state, config, RECOVERY)
+    descent = simulate_descent(apogee_time_s, state, config, profile.recovery)
     for deployment in descent.deployments:
         print(f"{deployment.name} at {deployment.time_s:.2f} seconds")
     if descent.landed:
@@ -203,13 +318,48 @@ def descend(
     return descent
 
 
-def main() -> None:  # pylint: disable=too-many-statements
+def add_rocket_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the flags that pick the rocket to a parser."""
+    parser.add_argument(
+        "--aero", default=None, help="aero CSV; a file name with 'morph' flies Morpheus"
+    )
+    parser.add_argument(
+        "--morpheus", action="store_true", help="fly Morpheus instead of Sol Invictus"
+    )
+
+
+def select_rocket(args: argparse.Namespace) -> tuple[RocketProfile, str]:
+    """Pick the rocket and its aero CSV from parsed flags.
+
+    ``--morpheus`` flies Morpheus with its own aero CSV; ``--aero FILE`` flies
+    whichever rocket the file name says, so "morph" in the name means
+    Morpheus and anything else means Sol Invictus.
+
+    Returns:
+        tuple[RocketProfile, str]: The rocket and the aero CSV path.
+    """
+    profile = (
+        MORPHEUS if args.morpheus else profile_for(args.aero or INVICTUS.aero_file)
+    )
+    return profile, args.aero or profile.aero_file
+
+
+def parse_rocket(argv: Sequence[str]) -> tuple[RocketProfile, str]:
+    """Pick the rocket and its aero CSV from command line flags."""
+    parser = argparse.ArgumentParser()
+    add_rocket_arguments(parser)
+    return select_rocket(parser.parse_args(argv))
+
+
+def main(argv: Sequence[str] = ()) -> None:  # pylint: disable=too-many-statements
     """Main function to run entire flight"""
-    properties = get_default_properties()
-    state = get_launch_state()
-    config = get_default_config()
+    profile, aero_file = parse_rocket(argv)
+    print(f"Flying {profile.name} with {aero_file}")
+    properties = get_default_properties(profile, aero_file)
+    state = get_launch_state(profile)
+    config = get_default_config(profile)
     events = (
-        rail_exit(LAUNCH_RAIL),
+        rail_exit(profile.rail),
         peak_vertical_velocity(properties, config),
         APOGEE,
         IMPACT,
@@ -234,10 +384,10 @@ def main() -> None:  # pylint: disable=too-many-statements
         )
         current_time += float(dt_taken.m_as("s"))
         step_lengths.append(float(dt_taken.m_as("s")))
-        apply_mass_properties(state)
+        apply_mass_properties(state, profile)
 
     if hit is APOGEE:
-        descent = descend(current_time, state, config)
+        descent = descend(current_time, state, config, profile)
         telemetry.extend(map(telemetry_row, descent.times_s, descent.states))
 
     df = pd.DataFrame(telemetry)
@@ -287,4 +437,4 @@ def main() -> None:  # pylint: disable=too-many-statements
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

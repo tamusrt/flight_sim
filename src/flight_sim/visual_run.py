@@ -15,12 +15,13 @@ import argparse
 
 from flight_sim import recovery_extension
 from flight_sim.__main__ import (
-    LAUNCH_RAIL,
-    RECOVERY,
+    RocketProfile,
+    add_rocket_arguments,
     apply_mass_properties,
     get_default_config,
     get_default_properties,
     get_launch_state,
+    select_rocket,
 )
 from flight_sim.events import (
     APOGEE,
@@ -44,21 +45,24 @@ def main() -> None:
     parser.add_argument(
         "--apogee", action="store_true", help="stop at apogee, with no descent"
     )
+    add_rocket_arguments(parser)
     args = parser.parse_args()
     max_time: float | None = args.max_time
+    profile, aero_file = select_rocket(args)
+    print(f"Flying {profile.name} with {aero_file}")
 
-    properties = get_default_properties()
-    state = get_launch_state()
-    config = get_default_config()
+    properties = get_default_properties(profile, aero_file)
+    state = get_launch_state(profile)
+    config = get_default_config(profile)
     events = (
-        rail_exit(LAUNCH_RAIL),
+        rail_exit(profile.rail),
         peak_vertical_velocity(properties, config),
         APOGEE,
         IMPACT,
     )
     log = TelemetryLog(properties, config)
-    log.describe_rail(LAUNCH_RAIL)
-    log.describe_recovery(RECOVERY)
+    log.describe_rail(profile.rail)
+    log.describe_recovery(profile.recovery)
 
     dt = scalar(0.01, "s")
     current_time = 0.0
@@ -79,12 +83,12 @@ def main() -> None:
             current_time, state, properties, config, dt, events=events
         )
         current_time += float(dt_taken.m_as("s"))
-        apply_mass_properties(state)
+        apply_mass_properties(state, profile)
         if hit is not None and hit.name == "rail exit":
             log.add_event("rail", "Rail exit", current_time)
 
     if hit is APOGEE and not args.apogee:
-        _log_recovery(log, flight, config, max_time)
+        _log_recovery(log, flight, config, max_time, profile)
 
     print(f"Viewer written to {write_viewer(log)}")
 
@@ -94,9 +98,10 @@ def _log_recovery(
     flight: list[tuple[float, RocketState]],
     config: IntegrationConfiguration,
     max_time: float | None,
+    profile: RocketProfile,
 ) -> None:
     """Fly and log the descent with the extended recovery model."""
-    plan = recovery_extension.plan_full_recovery(flight, config, RECOVERY)
+    plan = recovery_extension.plan_full_recovery(flight, config, profile.recovery)
     print(f"charge fires at {plan.fire_s:.2f} seconds")
     print(f"line stretch at {plan.line_stretch_s:.2f} seconds")
     for deployment in plan.descent.deployments:
