@@ -1,0 +1,609 @@
+<title>Flight Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#e6e6e3; --panel:#f2f2f0; --fg:#161616; --muted:#5f5f5c; --line:#a9a9a4; --ctl:#dadad6; --accent:#3f6a9e; --accent-fg:#ffffff;
+  --ok:#4f8a4f; --warn:#b0553a; --thrust:#b0702f; --alpha:#a8832a; --phi:#7d5fa0;
+  --vel:#3f8a99; --air:#a65468; --ax:#a8433d; --ay:#4f8a4f; --az:#3f6a9e; --bar:#7d7d79;
+  --font:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif; --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101010; --panel:#171717; --fg:#d6d6d3; --muted:#8a8a86; --line:#3a3a38; --ctl:#222221; --accent:#6f9bd0; --accent-fg:#0b1420;
+    --ok:#8fbf8f; --warn:#d98a6a; --thrust:#d9a56f; --alpha:#d9bd7a; --phi:#b9a0d0; --vel:#6fb6c4; --air:#cf8aa0; --ax:#d98b86; --ay:#8fbf8f; --az:#8fb0d4;
+    --bar:#9a9a96; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101010; --panel:#171717; --fg:#d6d6d3; --muted:#8a8a86; --line:#3a3a38; --ctl:#222221; --accent:#6f9bd0; --accent-fg:#0b1420;
+  --ok:#8fbf8f; --warn:#d98a6a; --thrust:#d9a56f; --alpha:#d9bd7a; --phi:#b9a0d0; --vel:#6fb6c4; --air:#cf8aa0; --ax:#d98b86; --ay:#8fbf8f; --az:#8fb0d4;
+  --bar:#9a9a96; color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);padding-inline:16px;padding-block:12px}
+*{box-sizing:border-box}
+h1,h2{margin:0;font-weight:500}
+.app{display:grid;gap:10px;max-width:1280px;margin-inline:auto;
+  grid-template-columns:minmax(0,1fr) 240px;
+  grid-template-areas:"top top" "stage side" "time side"}
+.top{grid-area:top;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:8px}
+.ttl h1{font:500 13px var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.tools{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font:400 12px var(--mono)}
+.seg{display:flex;border:1px solid var(--line)}
+.seg button,.btn{font:400 12px var(--mono);color:var(--fg);background:var(--ctl);border:0;padding:5px 10px;cursor:pointer;border-radius:0}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--accent);color:var(--accent-fg)}
+.btn{border:1px solid var(--line)}
+.chip{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.chip input{accent-color:var(--accent);margin:0}
+.fld{display:inline-flex;align-items:center;gap:6px}
+.fld input{font:400 12px var(--mono);width:56px;padding:4px 6px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:0}
+.stagewrap{grid-area:stage;display:flex;flex-direction:column;gap:6px;min-width:0}
+.stage{position:relative;height:min(64vh,600px);min-height:320px;overflow:hidden;border:1px solid var(--line);background:#000}
+.stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+.note{position:absolute;left:8px;bottom:6px;font:400 11px var(--mono);color:#bdbdb8;pointer-events:none}
+.banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:500 13px var(--mono);letter-spacing:.08em;padding:6px 14px;background:#d6d6d3;color:#101010;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
+.banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}.banner[data-kind="sim"]{background:#b9a0d0;color:#140b1d}
+.nogl[hidden],.chip[hidden]{display:none}
+.nogl{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:#ddd;font:400 13px var(--mono)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font:400 11.5px var(--mono);color:var(--muted)}
+.lg{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:12px;height:3px;background:var(--c);display:inline-block}
+.lg i.sq{height:9px;width:9px;opacity:.85}
+.time{grid-area:time;display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);padding:10px 12px;min-width:0}
+.play{flex:none;width:34px;height:34px;border:0;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;cursor:pointer;border-radius:0}
+.play svg{width:14px;height:14px;fill:currentColor}
+.scrubwrap{position:relative;flex:1;min-width:0;padding-top:22px}
+.mks{position:absolute;left:0;right:0;top:0;height:22px;pointer-events:none}
+.mk{position:absolute;top:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;font:400 10px var(--mono);color:var(--muted);letter-spacing:.06em;white-space:nowrap}
+.mk i{width:2px;height:9px;background:var(--fg);margin-top:2px}
+.mk.burnout{color:var(--thrust)}.mk.burnout i{background:var(--thrust)}.mk.apogee{color:var(--alpha)}.mk.apogee i{background:var(--alpha)}.mk.impact{color:var(--warn)}.mk.impact i{background:var(--warn)}
+.mk.impact{transform:translateX(-100%);align-items:flex-end}
+.mk.sim{color:var(--phi)}.mk.sim i{background:var(--phi)}
+.mk b{font-weight:400}.mk b.quiet{visibility:hidden}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;cursor:pointer;display:block}
+input[type=range]::-webkit-slider-runnable-track{height:4px;background:linear-gradient(to right,var(--accent) var(--p,0%),var(--line) var(--p,0%))}
+input[type=range]::-moz-range-track{height:4px;background:var(--line)}
+input[type=range]::-moz-range-progress{height:4px;background:var(--accent)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:8px;height:16px;background:var(--fg);border:1px solid var(--panel);margin-top:-6px;border-radius:0}
+input[type=range]::-moz-range-thumb{width:6px;height:14px;background:var(--fg);border:1px solid var(--panel);border-radius:0}
+.tt{flex:none;font:500 13px var(--mono);font-variant-numeric:tabular-nums;min-width:92px;text-align:right}
+.tt small{display:block;color:var(--muted);font-weight:400;font-size:11px}
+select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1px solid var(--line);padding:5px 6px;border-radius:0}
+.side{grid-area:side;background:var(--panel);border:1px solid var(--line);padding:12px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.side h2{font:500 10.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:4px}
+.bars{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.bar{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+.bval{font:500 13px var(--mono);font-variant-numeric:tabular-nums}
+.btrack{position:relative;width:100%;max-width:44px;height:clamp(150px,30vh,280px);background:var(--bg);border:1px solid var(--line);overflow:hidden;
+  background-image:repeating-linear-gradient(to top,transparent 0,transparent calc(20% - 1px),var(--line) calc(20% - 1px),var(--line) 20%)}
+.bfill{position:absolute;left:0;right:0;bottom:0;height:0;background:var(--c);opacity:.85}
+.btick{position:absolute;left:0;right:0;height:0;border-top:1px dashed var(--fg)}
+.blabel{font:500 11px var(--mono);text-transform:uppercase;letter-spacing:.06em}
+.bmax{font:400 10px var(--mono);color:var(--muted);text-align:center}
+.read{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;margin:0;font:400 12px var(--mono)}
+#rA{color:var(--alpha)}#rP{color:var(--phi)}#rV{color:var(--air)}#rT{color:var(--thrust)}#rM{color:var(--vel)}#rPh{color:var(--ok)}
+.read dt{color:var(--muted)} .read dd{margin:0;text-align:right;font-weight:500;font-variant-numeric:tabular-nums}
+.events{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.events li{display:flex;align-items:center;gap:8px;font:400 12px var(--mono);color:var(--muted)}
+.events li i{width:8px;height:8px;border:1px solid var(--muted);flex:none}
+.events li b{margin-left:auto;font-weight:400;font-size:11px;font-variant-numeric:tabular-nums}
+.events li.on{color:var(--fg)} .events li.on i{background:var(--c);border-color:var(--c)}
+@media (max-width:820px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "stage" "time" "side"}
+  .stage{height:56vh}
+}
+@media (max-width:520px){
+  .time{flex-wrap:wrap}
+  .scrubwrap{order:3;flex-basis:100%}
+  .tt{margin-left:auto}
+}
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="ttl"><h1>Flight Viewer</h1></div>
+    <div class="tools">
+      <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
+      <label class="fld">Rocket scale ×<input type="text" id="mult" value="10" inputmode="decimal" aria-label="Rocket size multiplier"></label>
+      <label class="chip"><input type="checkbox" data-k="world" checked>World</label>
+      <label class="chip"><input type="checkbox" data-k="body" checked>Body</label>
+      <label class="chip"><input type="checkbox" data-k="missile" checked>Missile</label>
+      <label class="chip"><input type="checkbox" data-k="vec" checked>Vectors</label>
+      <label class="chip"><input type="checkbox" data-k="trail" checked>Path</label>
+      <label class="chip" id="conjWrap" hidden><input type="checkbox" id="conj">Conjugate q</label>
+      <label class="btn">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
+    </div>
+  </header>
+
+  <section class="stagewrap">
+    <div class="stage" id="stage">
+      <canvas id="cv"></canvas>
+      <div class="note" id="scaleNote"></div>
+      <div class="banner" id="banner" hidden></div>
+      <div class="nogl" id="nogl" hidden>WebGL isn't available here, so the 3D view can't draw. The readouts on the right still work.</div>
+    </div>
+    <div class="legend">
+      <span class="lg"><i style="--c:var(--vel)"></i>Velocity (ground)</span>
+      <span class="lg"><i style="--c:var(--air)"></i>Airspeed V<sub>R</sub> (vs air)</span>
+      <span class="lg"><i style="--c:var(--thrust)"></i>Thrust</span>
+      <span class="lg"><i class="sq" style="--c:var(--alpha)"></i>α<sub>TOT</sub></span>
+      <span class="lg"><i class="sq" style="--c:var(--phi)"></i>φ<sub>A</sub></span>
+      <span class="lg"><i style="--c:var(--ax)"></i><i style="--c:var(--ay)"></i><i style="--c:var(--az)"></i>Body x<sub>b</sub> y<sub>b</sub> z<sub>b</sub></span>
+      <span class="lg">Missile frame x<sub>m</sub> y<sub>m</sub> z<sub>m</sub>, X<sub>m</sub>–Z<sub>m</sub> plane</span>
+    </div>
+  </section>
+
+  <section class="time">
+    <button class="play" id="play" aria-label="Play"><svg viewBox="0 0 16 16" id="ico"><path d="M3 1.5v13l11-6.5z"/></svg></button>
+    <div class="scrubwrap"><div class="mks" id="mks"></div><input type="range" id="scrub" min="0" max="60" step="0.01" value="0" aria-label="Flight time"></div>
+    <div class="tt" id="tt">0.00 s<small>of 0.0 s</small></div>
+    <select id="rate" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+  </section>
+
+  <aside class="side">
+    <h2>Flight data</h2>
+    <div class="bars" id="bars"></div>
+    <dl class="read">
+      <dt>α total</dt><dd id="rA">–</dd>
+      <dt>φ roll (aero)</dt><dd id="rP">–</dd>
+      <dt>Airspeed</dt><dd id="rV">–</dd>
+      <dt>Thrust</dt><dd id="rT">–</dd>
+      <dt>Mass</dt><dd id="rM">–</dd>
+      <dt>Phase</dt><dd id="rPh">–</dd>
+    </dl>
+    <h2>Events</h2>
+    <ul class="events" id="events"></ul>
+  </aside>
+</div>
+
+<!--TELEMETRY-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+'use strict';
+var $=function(id){return document.getElementById(id)};
+var C={x:0xb5504a,y:0x6b9b6b,z:0x5b86b8,vel:0x5ea0ad,air:0xb06b7b,thr:0xc4894f,alpha:0xc4a050,phi:0x9578b5,ym:0xb89a5a,zm:0x9578b5};
+var M2FT=3.28084, ROCKET_LEN=3, scaleMult=10, curLd=30;
+var V3=THREE.Vector3, DEG=180/Math.PI, TAU=Math.PI*2, DT=0.02, STRIDE=10;
+function clamp(x,a,b){return x<a?a:x>b?b:x}
+
+/* ---------- renderer / scene (everything below `root` is in SIM coordinates: +X up, Y, Z horizontal) ---------- */
+var cv=$('cv'), stage=$('stage'), renderer=null;
+try{ renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true}); }catch(e){ renderer=null; }
+var scene=new THREE.Scene(), camera=new THREE.PerspectiveCamera(40,1,1,120000);
+var root=new THREE.Group(); root.matrixAutoUpdate=false;
+/* sim X->three Y, sim Y->three Z, sim Z->three X  (cyclic, keeps handedness) */
+root.matrix.set(0,0,1,0, 1,0,0,0, 0,1,0,0, 0,0,0,1); root.matrixWorldNeedsUpdate=true;
+scene.add(root);
+scene.add(new THREE.AmbientLight(0xffffff,0.7));
+var sun=new THREE.DirectionalLight(0xffffff,0.75); sun.position.set(0.6,1,0.8); scene.add(sun);
+scene.fog=new THREE.Fog(0xcccccc,9000,42000);
+var tmpT=new V3();
+function s2t(v,out){ return (out||new V3()).set(v.z,v.x,v.y); }
+
+var G={world:new THREE.Group(),body:new THREE.Group(),missile:new THREE.Group(),vec:new THREE.Group(),trail:new THREE.Group()};
+for(var gk in G) root.add(G[gk]);
+
+/* ---------- helpers: arrows and labels ---------- */
+var CYL=new THREE.CylinderGeometry(1,1,1,10,1,false), CONE=new THREE.ConeGeometry(1,1,16), XAX=new V3(1,0,0);
+function makeArrow(color,opacity,grp){
+  var mat=new THREE.MeshBasicMaterial({color:color,transparent:opacity<1,opacity:opacity});
+  var g=new THREE.Group(), shaft=new THREE.Mesh(CYL,mat), head=new THREE.Mesh(CONE,mat);
+  shaft.rotation.z=-Math.PI/2; head.rotation.z=-Math.PI/2; g.add(shaft,head);
+  g.userData={shaft:shaft,head:head,mat:mat}; (grp||root).add(g); return g;
+}
+function setArrow(g,o,d,L,thick,absW){
+  if(!(L>1e-6)){g.visible=false;return;} g.visible=true;
+  var w=absW||curLd*0.0045*(thick||1);
+  var hl=Math.min(L*0.4,w*7), sl=Math.max(L-hl,0), u=g.userData;
+  g.position.copy(o); g.quaternion.setFromUnitVectors(XAX,d);
+  u.shaft.scale.set(w,sl,w); u.shaft.position.x=sl/2;
+  u.head.scale.set(w*2.6,hl,w*2.6); u.head.position.x=sl+hl/2;
+}
+var labels=[];
+function makeLabel(text,color,grp,size){
+  var c=document.createElement('canvas'), x=c.getContext('2d'), f='600 30px "JetBrains Mono",ui-monospace,monospace';
+  x.font=f; var w=Math.ceil(x.measureText(text).width)+26; c.width=w; c.height=46; x.font=f;
+  x.fillStyle='rgba(0,0,0,0.78)'; x.beginPath();
+  if(x.roundRect) x.roundRect(0,0,w,46,23); else x.rect(0,0,w,46); x.fill();
+  x.strokeStyle=color; x.lineWidth=2.5; x.stroke();
+  x.fillStyle=color; x.textBaseline='middle'; x.textAlign='center'; x.fillText(text,w/2,24);
+  var tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter;
+  var s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
+  s.renderOrder=20; s.userData={asp:w/46,size:size||0.03}; (grp||root).add(s); labels.push(s); return s;
+}
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+
+/* ---------- ground, pad, grids ---------- */
+var ground=new THREE.Mesh(new THREE.PlaneGeometry(90000,90000),new THREE.MeshBasicMaterial({color:0xdddddd,side:THREE.DoubleSide}));
+ground.rotation.y=Math.PI/2; root.add(ground);
+var grids=[];
+function buildGrids(){
+  grids.forEach(function(g){root.remove(g);g.geometry.dispose();g.material.dispose()}); grids=[];
+  var a=new THREE.GridHelper(14000,70,0x7c8794,0x7c8794); a.rotation.z=-Math.PI/2; a.position.x=0.4;
+  var b=new THREE.GridHelper(14000,14,0xe2e8f0,0xe2e8f0); b.rotation.z=-Math.PI/2; b.position.x=0.8;
+  [a,b].forEach(function(g){g.material.transparent=true;g.material.opacity=.55;root.add(g);grids.push(g)});
+}
+var pad=new THREE.Mesh(new THREE.RingGeometry(8,13,40),new THREE.MeshBasicMaterial({color:C.thr,side:THREE.DoubleSide}));
+pad.rotation.y=Math.PI/2; pad.position.x=1; root.add(pad);
+
+/* world frame at the pad */
+var padAx=[makeArrow(C.x,1,G.world),makeArrow(C.y,1,G.world),makeArrow(C.z,1,G.world)];
+var padDirs=[new V3(1,0,0),new V3(0,1,0),new V3(0,0,1)], PADL=900;
+var padLb=[makeLabel('X  up','#d98b86',G.world),makeLabel('Y','#98c398',G.world),makeLabel('Z','#8fb0d4',G.world)];
+var padTag=makeLabel('PAD','#d9a56f',G.world);
+var windArrow=makeArrow(C.vel,1,G.world), windLb=makeLabel('wind','#8fc0ca',G.world);
+/* ghost world triad that rides with the rocket */
+var ghost=[makeArrow(C.x,.38,G.world),makeArrow(C.y,.38,G.world),makeArrow(C.z,.38,G.world)];
+
+/* ---------- the rocket (model drawn in body coordinates, nose = +x) ---------- */
+var rocket=new THREE.Group(); rocket.matrixAutoUpdate=false; root.add(rocket);
+var model=new THREE.Group(); rocket.add(model);
+var mBody=new THREE.MeshLambertMaterial({color:0xd6d6d2}), mNose=new THREE.MeshLambertMaterial({color:0x56637d});
+var cyl=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,2.5,28),mBody); cyl.rotation.z=-Math.PI/2; cyl.position.x=-0.25; model.add(cyl);
+var band=new THREE.Mesh(new THREE.CylinderGeometry(0.103,0.103,0.18,28),mNose); band.rotation.z=-Math.PI/2; band.position.x=0.55; model.add(band);
+var nose=new THREE.Mesh(new THREE.ConeGeometry(0.1,0.5,28),mNose); nose.rotation.z=-Math.PI/2; nose.position.x=1.25; model.add(nose);
+var finGeo=new THREE.BufferGeometry();
+finGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array([-0.65,0.1,0, -1.5,0.1,0, -1.5,0.46,0]),3)); finGeo.computeVertexNormals();
+var finCols=[0x6b9b6b,0x5b86b8,0x8a8f9a,0x8a8f9a];
+for(var k=0;k<4;k++){ var f=new THREE.Mesh(finGeo,new THREE.MeshLambertMaterial({color:finCols[k],side:THREE.DoubleSide})); f.rotation.x=k*Math.PI/2; model.add(f); }
+var nozzle=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,0.1,20),mNose); nozzle.rotation.z=-Math.PI/2; nozzle.position.x=-1.52; model.add(nozzle);
+var flame=new THREE.Mesh(new THREE.ConeGeometry(0.075,0.9,14),new THREE.MeshBasicMaterial({color:0xb98a5a,transparent:true,opacity:.7}));
+flame.rotation.z=Math.PI/2; model.add(flame);
+
+/* body frame, vectors, missile frame */
+var bAx=[makeArrow(C.x,1,G.body),makeArrow(C.y,1,G.body),makeArrow(C.z,1,G.body)];
+var bLb=[makeLabel('x_b = x_m','#d98b86',G.body),makeLabel('y_b','#98c398',G.body),makeLabel('z_b','#8fb0d4',G.body)];
+var vVel=makeArrow(C.vel,1,G.vec), vAir=makeArrow(C.air,1,G.vec), vThr=makeArrow(C.thr,1,G.vec);
+var vLb=[makeLabel('V','#8fc0ca',G.vec),makeLabel('V_R','#d99aa8',G.vec),makeLabel('T','#d9a56f',G.vec)];
+var mAx=[makeArrow(C.ym,1,G.missile),makeArrow(C.zm,1,G.missile)];
+var mLb=[makeLabel('y_m','#d9bd7a',G.missile),makeLabel('z_m','#b9a0d0',G.missile)];
+var mPlane=new THREE.Group(); mPlane.matrixAutoUpdate=false; G.missile.add(mPlane);
+var planeMesh=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({color:C.zm,transparent:true,opacity:.14,side:THREE.DoubleSide,depthWrite:false}));
+planeMesh.rotation.x=-Math.PI/2; mPlane.add(planeMesh);
+var planeEdge=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(1,1)),new THREE.LineBasicMaterial({color:C.zm,transparent:true,opacity:.7}));
+planeEdge.rotation.x=-Math.PI/2; mPlane.add(planeEdge);
+var ARC=32;
+function makeWedge(color,grp){
+  var geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array((ARC+2)*3),3));
+  var idx=[]; for(var i=1;i<=ARC;i++) idx.push(0,i,i+1); geo.setIndex(idx);
+  var mesh=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:.42,side:THREE.DoubleSide,depthWrite:false}));
+  var lg=new THREE.BufferGeometry(); lg.setAttribute('position',new THREE.BufferAttribute(new Float32Array((ARC+1)*3),3));
+  var line=new THREE.Line(lg,new THREE.LineBasicMaterial({color:color})); mesh.frustumCulled=false; line.frustumCulled=false;
+  grp.add(mesh,line); return {geo:geo,lg:lg,mesh:mesh,line:line};
+}
+var aW=makeWedge(C.alpha,G.missile), pW=makeWedge(C.phi,G.missile);
+var aLb=makeLabel('α','#d9bd7a',G.missile), pLb=makeLabel('φ','#b9a0d0',G.missile);
+[].concat(bLb,vLb,mLb,[aLb,pLb]).forEach(function(l){l.userData.world=true;});
+
+/* drop line + ground footprint + path dots + markers */
+var dropGeo=new THREE.BufferGeometry(); dropGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
+var drop=new THREE.Line(dropGeo,new THREE.LineBasicMaterial({color:0x8a93a6,transparent:true,opacity:.7})); drop.frustumCulled=false; G.trail.add(drop);
+var footGeo=new THREE.BufferGeometry(); footGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3),3));
+var foot=new THREE.Points(footGeo,new THREE.PointsMaterial({color:C.thr,size:9,sizeAttenuation:false})); foot.frustumCulled=false; G.trail.add(foot);
+var ptsP=null, ptsF=null, ptsG=null, trailPos=null;
+var apoMk=new THREE.Mesh(new THREE.OctahedronGeometry(1),new THREE.MeshBasicMaterial({color:C.alpha})); G.trail.add(apoMk);
+var impMk=new THREE.Mesh(new THREE.OctahedronGeometry(1),new THREE.MeshBasicMaterial({color:C.thr})); G.trail.add(impMk);
+var apoLb=makeLabel('APOGEE','#d9bd7a',G.trail), impLb=makeLabel('IMPACT','#d9a56f',G.trail);
+
+/* ---------- datasets ---------- */
+var ds=null;
+var F={pos:new V3(),vel:new V3(),air:new V3(),xb:new V3(),yb:new V3(),zb:new V3(),thrust:0,mass:0,mach:0};
+
+function rowsToDs(r,name,demo){
+  var N=r.thrust.length, d={name:name,demo:demo,N:N,
+    pos:Float32Array.from(r.pos),vel:Float32Array.from(r.vel),air:Float32Array.from(r.air),
+    xb:Float32Array.from(r.xb),yb:Float32Array.from(r.yb),zb:Float32Array.from(r.zb),
+    thrust:Float32Array.from(r.thrust),mass:Float32Array.from(r.mass),mach:Float32Array.from(r.mach),
+    wind:r.wind||[0,0,0]};
+  return d;
+}
+function genDemo(){
+  var g=9.80665, wind=new V3(0,6,2), up=new V3(1,0,0), hv=new V3(0,0,1);
+  var pos=new V3(), vel=new V3(), air=new V3(), d=new V3(), e1=new V3(), e2=new V3(), xb=new V3(), yb=new V3(), zb=new V3(), y0=new V3(), z0=new V3(), acc=new V3();
+  var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],wind:[wind.x,wind.y,wind.z]};
+  var T0=2200, tb=3.5, A=Math.PI*0.1*0.1, thr=0, m=25, a=340;
+  function rec(){
+    o.pos.push(pos.x,pos.y,pos.z); o.vel.push(vel.x,vel.y,vel.z); o.air.push(air.x,air.y,air.z);
+    o.xb.push(xb.x,xb.y,xb.z); o.yb.push(yb.x,yb.y,yb.z); o.zb.push(zb.x,zb.y,zb.z);
+    o.thrust.push(thr); o.mass.push(m); o.mach.push(air.length()/a);
+  }
+  for(var k=0;k<30000;k++){
+    var t=k*DT, h=Math.max(pos.x,0), Tk=288.15-0.0065*Math.min(h,11000);
+    var rho=1.225*Math.pow(Tk/288.15,4.256); a=Math.sqrt(1.4*287.05*Tk);
+    air.copy(vel).sub(wind); var sp=air.length();
+    d.copy(air).addScaledVector(up,40*Math.exp(-t/0.5)); if(d.lengthSq()<1e-6) d.copy(up); d.normalize();
+    var al=0.012+0.16*Math.exp(-t/2.5); if(t>3) al+=0.42*Math.exp(-Math.pow(vel.x/30,2));
+    var psi=TAU*t/2.4;
+    e1.crossVectors(hv,d).normalize(); e2.crossVectors(d,e1);
+    xb.copy(d).multiplyScalar(Math.cos(al)).addScaledVector(e1,Math.sin(al)*Math.cos(psi)).addScaledVector(e2,Math.sin(al)*Math.sin(psi)).normalize();
+    y0.crossVectors(hv,xb).normalize(); z0.crossVectors(xb,y0);
+    var r=0.9*t; yb.copy(y0).multiplyScalar(Math.cos(r)).addScaledVector(z0,Math.sin(r)); zb.crossVectors(xb,yb);
+    thr=t<tb?T0*Math.min(1,t/0.15):0; m=25-5*Math.min(t/tb,1);
+    var cosA=sp>1e-6?air.dot(xb)/sp:1, cd=0.5+1.4*(1-cosA*cosA);
+    acc.copy(xb).multiplyScalar(thr/m).addScaledVector(air,-0.5*rho*sp*cd*A/m); acc.x-=g;
+    if(pos.x<=0&&vel.x<=0&&acc.x<0){acc.set(0,0,0);vel.set(0,0,0);}
+    rec();
+    vel.addScaledVector(acc,DT); pos.addScaledVector(vel,DT);
+    if(t>2&&pos.x<=0){ pos.x=0; thr=0; air.copy(vel).sub(wind); rec(); break; }
+  }
+  return rowsToDs(o,'Demo flight',true);
+}
+function isaMach(alt,spd){ var h=Math.max(alt,0), T=288.15-0.0065*Math.min(h,11000); return spd/Math.sqrt(1.4*287.05*T); }
+var rawTel=null;
+function fromTelemetry(j,conj,name){
+  var n=j.t&&j.t.length; if(!n||n<2) throw new Error('"t" needs at least 2 samples');
+  ['pos','vel','quat'].forEach(function(k){ if(!j[k]||j[k].length!==n) throw new Error('"'+k+'" must have the same length as "t"'); });
+  var T0=j.t[0], N=Math.floor((j.t[n-1]-T0)/DT)+1, wind=j.wind||[0,0,0];
+  var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],wind:wind};
+  var i=0, q=[0,0,0,0];
+  for(var k=0;k<N;k++){
+    var tt=T0+k*DT; while(i<n-2&&j.t[i+1]<tt) i++;
+    var span=j.t[i+1]-j.t[i], u=span>0?clamp((tt-j.t[i])/span,0,1):0;
+    function L(a,b){return a+(b-a)*u}
+    var P=[0,1,2].map(function(c){return L(j.pos[i][c],j.pos[i+1][c])}), Vv=[0,1,2].map(function(c){return L(j.vel[i][c],j.vel[i+1][c])});
+    var q0=j.quat[i], q1=j.quat[i+1], sg=(q0[0]*q1[0]+q0[1]*q1[1]+q0[2]*q1[2]+q0[3]*q1[3])<0?-1:1, nn=0;
+    for(var c=0;c<4;c++){ q[c]=L(q0[c],sg*q1[c]); nn+=q[c]*q[c]; } nn=Math.sqrt(nn)||1;
+    var w=q[0]/nn, x=q[1]/nn, y=q[2]/nn, z=q[3]/nn; if(conj){x=-x;y=-y;z=-z;}
+    /* passive world->body matrix; its rows are the body axes written in world components */
+    o.xb.push(1-2*(y*y+z*z), 2*(x*y+w*z), 2*(x*z-w*y));
+    o.yb.push(2*(x*y-w*z), 1-2*(x*x+z*z), 2*(y*z+w*x));
+    o.zb.push(2*(x*z+w*y), 2*(y*z-w*x), 1-2*(x*x+y*y));
+    var ar=[Vv[0]-wind[0],Vv[1]-wind[1],Vv[2]-wind[2]];
+    o.pos.push(P[0],P[1],P[2]); o.vel.push(Vv[0],Vv[1],Vv[2]); o.air.push(ar[0],ar[1],ar[2]);
+    o.thrust.push(j.thrust&&j.thrust.length===n?L(j.thrust[i],j.thrust[i+1]):0);
+    o.mass.push(j.mass&&j.mass.length===n?L(j.mass[i],j.mass[i+1]):0);
+    o.mach.push(j.mach&&j.mach.length===n?L(j.mach[i],j.mach[i+1]):isaMach(P[0],Math.hypot(ar[0],ar[1],ar[2])));
+  }
+  simEvents=(j.events||[]).filter(function(e){ return e&&e.length===2&&!/^(apogee|impact|peak vertical velocity)$/i.test(e[0]); })
+    .map(function(e){ return {label:e[0].charAt(0).toUpperCase()+e[0].slice(1),t:e[1]-T0}; });
+  return rowsToDs(o,name,false);
+}
+function getFrame(tt){
+  var f=clamp(tt/DT,0,ds.N-1), i=Math.floor(f), j=Math.min(i+1,ds.N-1), u=f-i;
+  function l3(a,out){ out.set(a[3*i]+(a[3*j]-a[3*i])*u, a[3*i+1]+(a[3*j+1]-a[3*i+1])*u, a[3*i+2]+(a[3*j+2]-a[3*i+2])*u); }
+  l3(ds.pos,F.pos); l3(ds.vel,F.vel); l3(ds.air,F.air); l3(ds.xb,F.xb); l3(ds.yb,F.yb); l3(ds.zb,F.zb);
+  F.thrust=ds.thrust[i]+(ds.thrust[j]-ds.thrust[i])*u; F.mass=ds.mass[i]+(ds.mass[j]-ds.mass[i])*u; F.mach=ds.mach[i]+(ds.mach[j]-ds.mach[i])*u;
+  F.xb.normalize(); F.yb.addScaledVector(F.xb,-F.xb.dot(F.yb)).normalize(); F.zb.crossVectors(F.xb,F.yb);
+}
+
+/* ---------- state ---------- */
+var tNow=0, tMax=1, prevT=0, playing=false, rate=1, last=performance.now(), view='follow';
+var cam={az:0.62,azT:0.62,el:0.3,elT:0.3,dist:100,distT:100,tgt:new V3()}, wideC=new V3(), wideD=6000;
+var events=[], bars=[], apoIdx=0, simEvents=[];
+var vis={world:true,body:true,missile:true,vec:true,trail:true};
+
+function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p; return (n<=1?1:n<=1.5?1.5:n<=2?2:n<=3?3:n<=5?5:10)*p; }
+function fmt(v,dp){ return v.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
+
+function setDataset(d){
+  ds=d; tMax=(d.N-1)*DT; var maxM=0,maxS=0,maxA=0,maxT=0;
+  apoIdx=0;
+  for(var i=0;i<d.N;i++){
+    var s=Math.hypot(d.vel[3*i],d.vel[3*i+1],d.vel[3*i+2]); maxM=Math.max(maxM,d.mach[i]); maxS=Math.max(maxS,s);
+    if(d.pos[3*i]>maxA){maxA=d.pos[3*i];apoIdx=i;} maxT=Math.max(maxT,d.thrust[i]);
+  }
+  var bo=-1; if(maxT>0){ for(var k=d.N-1;k>=0;k--){ if(d.thrust[k]>0.005*maxT){bo=k;break;} } }
+  var lastAlt=d.pos[3*(d.N-1)];
+  events=[{k:'liftoff',label:'Liftoff',t:0,c:'--ok'}];
+  if(bo>0) events.push({k:'burnout',label:'Burnout',t:bo*DT,c:'--thrust'});
+  events.push({k:'apogee',label:'Apogee',t:apoIdx*DT,c:'--alpha',alt:maxA});
+  simEvents.forEach(function(e){ if(e.t>0&&e.t<tMax) events.push({k:'sim',label:e.label,t:e.t,c:'--phi'}); });
+  simEvents=[];
+  events.sort(function(a,b){return a.t-b.t});
+  events.push({k:'impact',label:lastAlt<5?'Impact':'End of data',t:tMax,c:'--warn'});
+  /* side bars */
+  var cfg=[{k:'mach',l:'Mach',max:2.5,dp:2,c:'var(--air)'},{k:'spd',l:'Speed m/s',max:600,dp:0,c:'var(--vel)'},{k:'alt',l:'Alt ft',max:40000,dp:0,c:'var(--alpha)'}];
+  var host=$('bars'); host.innerHTML=''; bars=[];
+  cfg.forEach(function(b){
+    var el=document.createElement('div'); el.className='bar';
+    el.innerHTML='<div class="bval">0</div><div class="btrack" style="--c:'+b.c+'"><div class="bfill"></div>'+(b.k==='alt'?'<div class="btick" title="apogee"></div>':'')+'</div><div class="blabel">'+b.l+'</div><div class="bmax">max '+fmt(b.max,b.dp)+'</div>';
+    host.appendChild(el); b.val=el.querySelector('.bval'); b.val.style.color=b.c; b.fill=el.querySelector('.bfill'); b.tick=el.querySelector('.btick');
+    if(b.tick){ var tp=maxA*M2FT/b.max*100; if(tp>100) b.tick.style.display='none'; else b.tick.style.bottom=tp+'%'; } bars.push(b);
+  });
+  /* events list + time markers */
+  var ev=$('events'); ev.innerHTML='';
+  events.forEach(function(e){ var li=document.createElement('li'); li.style.setProperty('--c','var('+e.c+')');
+    li.innerHTML='<i></i><span>'+e.label+'</span><b>'+fmt(e.t,1)+' s'+(e.alt!==undefined?' · '+fmt(e.alt*M2FT,0)+' ft':'')+'</b>'; ev.appendChild(li); e.li=li; });
+  var mk=$('mks'); mk.innerHTML='';
+  var trackPx=Math.max(($('scrub').clientWidth||600)-16,100), lastPx=-1e9, impactPx=trackPx;
+  events.forEach(function(e){ if(e.k==='liftoff') return; var s=document.createElement('span'); s.className='mk '+e.k;
+    var p=e.t/tMax, px=p*trackPx; if(e.k!=='impact') s.style.left='calc(8px + (100% - 16px) * '+p+')'; else s.style.right='0';
+    /* Crowded markers keep their tick; the name is in the tooltip and the events list */
+    var room=e.k==='impact'||(px>=40&&px-lastPx>=78&&impactPx-px>=78);
+    s.innerHTML='<b'+(room?'':' class="quiet"')+'>'+e.label.toUpperCase()+'</b><i></i>'; s.title=e.label+' · '+fmt(e.t,1)+' s';
+    if(room&&e.k!=='impact') lastPx=px; mk.appendChild(s); });
+  var sc=$('scrub'); sc.max=tMax.toFixed(2);
+  /* path dots */
+  [ptsP,ptsF,ptsG].forEach(function(p){ if(p){G.trail.remove(p);p.geometry.dispose();} });
+  var cnt=Math.floor((d.N-1)/STRIDE)+1, a3=new Float32Array(cnt*3), g3=new Float32Array(cnt*3);
+  for(var c=0;c<cnt;c++){ var si=Math.min(c*STRIDE,d.N-1); a3[3*c]=d.pos[3*si];a3[3*c+1]=d.pos[3*si+1];a3[3*c+2]=d.pos[3*si+2]; g3[3*c]=0.5;g3[3*c+1]=d.pos[3*si+1];g3[3*c+2]=d.pos[3*si+2]; }
+  var att=new THREE.BufferAttribute(a3,3), gat=new THREE.BufferAttribute(g3,3);
+  var gF=new THREE.BufferGeometry(); gF.setAttribute('position',att);
+  var gP=new THREE.BufferGeometry(); gP.setAttribute('position',att);
+  var gG=new THREE.BufferGeometry(); gG.setAttribute('position',gat);
+  ptsF=new THREE.Points(gF,new THREE.PointsMaterial({size:3.5,sizeAttenuation:false,transparent:true,opacity:.3}));
+  ptsP=new THREE.Points(gP,new THREE.PointsMaterial({size:4.5,sizeAttenuation:false}));
+  ptsG=new THREE.Points(gG,new THREE.PointsMaterial({size:3,sizeAttenuation:false,transparent:true,opacity:.35}));
+  [ptsF,ptsG,ptsP].forEach(function(p){p.frustumCulled=false;G.trail.add(p)}); ptsP.userData.cnt=cnt;
+  applyTheme();
+  var ap=new V3(ds.pos[3*apoIdx],ds.pos[3*apoIdx+1],ds.pos[3*apoIdx+2]), im=new V3(ds.pos[3*(d.N-1)],ds.pos[3*(d.N-1)+1],ds.pos[3*(d.N-1)+2]);
+  apoMk.position.copy(ap); impMk.position.copy(im); apoLb.position.copy(ap); impLb.position.copy(im);
+  wideC.set(maxA*0.5,ap.y*0.5,ap.z*0.5); wideD=Math.max(maxA*2.3,900);
+  var w=new V3(0,d.wind[1],d.wind[2]); windArrow.userData.dir=w.lengthSq()>0.01?w.clone().normalize():null; windArrow.userData.mag=w.length();
+  $('conjWrap').hidden=d.demo;
+}
+function applyTheme(){
+  if(renderer){ renderer.setClearColor(0x000000); } scene.fog.color.set(0x000000);
+  ground.material.color.set(0x23272d); if(!grids.length) buildGrids();
+  if(ptsP){ ptsP.material.color.set(0xd9bd7a); ptsF.material.color.set(0xe2e8f0); ptsG.material.color.set(0x7c8794); }
+}
+
+/* ---------- camera setup & interaction ---------- */
+function setView(v){
+  view=v; document.querySelectorAll('#views button').forEach(function(b){b.classList.toggle('on',b.dataset.v===v)});
+  if(v==='follow'){cam.distT=100;cam.elT=0.3;cam.azT=0.62;} else {cam.distT=wideD;cam.elT=0.18;cam.azT=0.9;}
+}
+var ptrs=new Map(), pinch=0;
+function pd(){var a=Array.from(ptrs.values());return Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)}
+cv.addEventListener('pointerdown',function(e){cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});if(ptrs.size===2)pinch=pd();});
+cv.addEventListener('pointermove',function(e){
+  var p=ptrs.get(e.pointerId); if(!p) return; var dx=e.clientX-p.x, dy=e.clientY-p.y; p.x=e.clientX; p.y=e.clientY;
+  if(ptrs.size===1){ cam.az-=dx*0.006;cam.azT-=dx*0.006; cam.el=clamp(cam.el+dy*0.006,-0.25,1.45);cam.elT=cam.el; }
+  else if(ptrs.size===2){ var nd=pd(); if(pinch>0) cam.distT=clamp(cam.distT*pinch/nd,4,40000); pinch=nd; }
+});
+function up(e){ptrs.delete(e.pointerId);pinch=0}
+cv.addEventListener('pointerup',up); cv.addEventListener('pointercancel',up);
+cv.addEventListener('wheel',function(e){e.preventDefault();cam.distT=clamp(cam.distT*Math.exp(e.deltaY*0.0012),4,40000);},{passive:false});
+
+/* ---------- UI wiring ---------- */
+var banner=$('banner'), bannerTimer=0;
+function showBanner(kind,text,sticky){
+  banner.dataset.kind=kind; banner.textContent=text; banner.hidden=false; clearTimeout(bannerTimer);
+  if(!sticky) bannerTimer=setTimeout(function(){banner.hidden=true},2600);
+}
+function setPlaying(p){ playing=p; $('ico').innerHTML=p?'<path d="M3 1.5h3.5v13H3zM9.5 1.5H13v13H9.5z"/>':'<path d="M3 1.5v13l11-6.5z"/>'; $('play').setAttribute('aria-label',p?'Pause':'Play'); }
+$('play').onclick=function(){ if(!playing&&tNow>=tMax-1e-3){tNow=0;prevT=0;banner.hidden=true;} last=performance.now(); setPlaying(!playing); };
+$('scrub').oninput=function(){ tNow=parseFloat(this.value); prevT=tNow; if(tNow<tMax-1e-3&&banner.dataset.kind==='impact') banner.hidden=true; };
+$('mult').onchange=function(){ var v=parseFloat(this.value); if(!(v>0)) v=scaleMult; scaleMult=clamp(v,0.1,1000); this.value=scaleMult; };
+$('rate').onchange=function(){rate=parseFloat(this.value)};
+document.querySelectorAll('#views button').forEach(function(b){b.onclick=function(){setView(b.dataset.v)}});
+document.querySelectorAll('input[data-k]').forEach(function(c){c.onchange=function(){ vis[c.dataset.k]=c.checked; G[c.dataset.k].visible=c.checked; }});
+$('conj').onchange=function(){ if(rawTel){ var keep=tNow; setDataset(fromTelemetry(rawTel.j,$('conj').checked,rawTel.name)); tNow=Math.min(keep,tMax); } };
+$('file').onchange=function(){
+  var f=this.files&&this.files[0]; if(!f) return; var rd=new FileReader();
+  rd.onload=function(){ try{ var j=JSON.parse(rd.result); rawTel={j:j,name:f.name}; $('conj').checked=false;
+      setDataset(fromTelemetry(j,false,f.name)); tNow=0;prevT=0;setPlaying(false);banner.hidden=true; setView(view);
+    }catch(err){ showBanner('burnout','Could not read telemetry: '+err.message,false); } };
+  rd.readAsText(f); this.value='';
+};
+var mq=window.matchMedia('(prefers-color-scheme: dark)'); if(mq.addEventListener) mq.addEventListener('change',applyTheme);
+new MutationObserver(applyTheme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+function resize(){ if(!renderer) return; var w=stage.clientWidth,h=stage.clientHeight; renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
+if(window.ResizeObserver) new ResizeObserver(resize).observe(stage); window.addEventListener('resize',resize);
+
+/* ---------- per-frame drawing ---------- */
+var v1=new V3(), v2=new V3(), v3=new V3(), zm=new V3(), ym=new V3(), airDir=new V3(), org=new V3(), basis=new THREE.Matrix4();
+function arcPoints(w,center,a0,a1,rad,ang){
+  var pa=w.geo.attributes.position.array, la=w.lg.attributes.position.array;
+  pa[0]=center.x;pa[1]=center.y;pa[2]=center.z;
+  for(var i=0;i<=ARC;i++){ var s=ang*i/ARC, c=Math.cos(s), n=Math.sin(s);
+    var x=center.x+rad*(c*a0.x+n*a1.x), y=center.y+rad*(c*a0.y+n*a1.y), z=center.z+rad*(c*a0.z+n*a1.z);
+    pa[3*(i+1)]=x;pa[3*(i+1)+1]=y;pa[3*(i+1)+2]=z; la[3*i]=x;la[3*i+1]=y;la[3*i+2]=z; }
+  w.geo.attributes.position.needsUpdate=true; w.lg.attributes.position.needsUpdate=true;
+}
+function place(l,p,dir,off){ l.position.copy(p).addScaledVector(dir,off); }
+var noteMult=-1, rA=$('rA'),rP=$('rP'),rV=$('rV'),rT=$('rT'),rM=$('rM'),rPh=$('rPh'), ttEl=$('tt'), scrub=$('scrub');
+
+function draw(dtReal){
+  getFrame(tNow);
+  var bx=F.air.dot(F.xb), by=F.air.dot(F.yb), bz=F.air.dot(F.zb), hh=Math.hypot(by,bz);
+  var alpha=Math.atan2(hh,bx), phiS=hh>1e-9?Math.atan2(-by,bz):0, phi=(phiS+TAU)%TAU;
+  var spA=F.air.length(), spG=F.vel.length(), alt=F.pos.x;
+
+  /* camera */
+  var k=1-Math.exp(-dtReal*10);
+  cam.az+=(cam.azT-cam.az)*k; cam.el+=(cam.elT-cam.el)*k; cam.dist+=(cam.distT-cam.dist)*k;
+  var goal=view==='follow'?F.pos:wideC; cam.tgt.lerp(goal,view==='follow'?1-Math.exp(-dtReal*14):k);
+  var tt=s2t(cam.tgt,new V3()), d=cam.dist;
+  camera.position.set(tt.x+d*Math.cos(cam.el)*Math.sin(cam.az), tt.y+d*Math.sin(cam.el), tt.z+d*Math.cos(cam.el)*Math.cos(cam.az));
+  camera.near=Math.max(0.2,d*0.01); camera.far=120000; camera.updateProjectionMatrix(); camera.lookAt(tt);
+
+  var Ld=ROCKET_LEN*scaleMult; curLd=Ld; PADL=Ld*30; if(noteMult!==scaleMult){ noteMult=scaleMult; $('scaleNote').textContent='rocket length '+fmt(Ld,1)+' m  (3 m × '+scaleMult+')'; }
+  var pos=F.pos;
+
+  /* rocket pose */
+  basis.makeBasis(F.xb,F.yb,F.zb); basis.setPosition(pos); rocket.matrix.copy(basis); rocket.matrixWorldNeedsUpdate=true; model.scale.setScalar(scaleMult);
+  var burning=F.thrust>1; flame.visible=burning;
+  if(burning){ var fl=0.7+0.5*(F.thrust/2200)+0.12*Math.sin(tNow*90); flame.scale.set(1,fl,1); flame.position.x=-1.52-0.45*fl; }
+
+  /* pad frame */
+  for(var i=0;i<3;i++){ setArrow(padAx[i],v1.set(0,0,0),padDirs[i],PADL,1,Ld*0.0045); place(padLb[i],v2.copy(padDirs[i]).multiplyScalar(PADL),padDirs[i],PADL*0.04); }
+  padTag.position.set(0,0,0).addScaledVector(padDirs[0],-d*0.02-20).addScaledVector(padDirs[1],-40);
+  var wd=windArrow.userData.dir; if(wd){ setArrow(windArrow,v1.set(2,-Ld*4,0),wd,Ld*8.7,1,Ld*0.0045); place(windLb,v2.set(2,-Ld*4,0).addScaledVector(wd,Ld*9.7),wd,0); } else {windArrow.visible=false; windLb.visible=false;}
+  if(wd) windLb.visible=true;
+  ghost.forEach(function(g,i){ setArrow(g,pos,padDirs[i],Ld*0.7,0.7); });
+
+  /* body frame */
+  var ax=[F.xb,F.yb,F.zb], bl=[Ld*0.95,Ld*0.55,Ld*0.55];
+  for(i=0;i<3;i++){ setArrow(bAx[i],pos,ax[i],bl[i],1.15); place(bLb[i],v1.copy(pos).addScaledVector(ax[i],bl[i]),ax[i],Ld*(i?0.12:0.22)); }
+
+  /* vectors */
+  var lenV=Ld*(0.5+1.3*Math.min(spG/320,1)), lenA=Ld*(0.5+1.3*Math.min(spA/320,1));
+  if(spG>0.05){ v1.copy(F.vel).divideScalar(spG); setArrow(vVel,pos,v1,lenV,1.1); place(vLb[0],v2.copy(pos).addScaledVector(v1,lenV),v1,Ld*0.16); vVel.visible=vLb[0].visible=true; } else vVel.visible=vLb[0].visible=false;
+  if(spA>0.05){ airDir.copy(F.air).divideScalar(spA); setArrow(vAir,pos,airDir,lenA*0.92,0.85); place(vLb[1],v2.copy(pos).addScaledVector(airDir,lenA*0.92),airDir,Ld*0.16); vAir.visible=vLb[1].visible=true; } else { airDir.copy(F.xb); vAir.visible=vLb[1].visible=false; }
+  if(burning){ var tl=Ld*0.9*(F.thrust/2200); v1.copy(pos).addScaledVector(F.xb,-Ld*0.5-tl-Ld*0.55); setArrow(vThr,v1,F.xb,tl,1.3); place(vLb[2],v2.copy(v1),F.xb,-Ld*0.14); vThr.visible=vLb[2].visible=true; } else vThr.visible=vLb[2].visible=false;
+
+  /* missile frame: body rolled about x by phi so V_R lies in the x_m–z_m plane */
+  if(hh>1e-9){ zm.set(0,0,0).addScaledVector(F.yb,by/hh).addScaledVector(F.zb,bz/hh); } else zm.copy(F.zb);
+  ym.crossVectors(zm,F.xb);
+  setArrow(mAx[0],pos,ym,Ld*0.55,0.8); setArrow(mAx[1],pos,zm,Ld*0.75,0.8);
+  place(mLb[0],v1.copy(pos).addScaledVector(ym,Ld*0.55),ym,Ld*0.12); place(mLb[1],v1.copy(pos).addScaledVector(zm,Ld*0.75),zm,Ld*0.12);
+  basis.makeBasis(F.xb,ym,zm); basis.setPosition(pos); mPlane.matrix.copy(basis); mPlane.matrixWorldNeedsUpdate=true;
+  planeMesh.scale.set(Ld*1.8,Ld*1.0,1); planeMesh.position.set(Ld*0.3,0,Ld*0.4); planeEdge.scale.copy(planeMesh.scale); planeEdge.position.copy(planeMesh.position);
+  /* α wedge: x_m rotating toward airspeed inside the x_m–z_m plane (zero-angle wedge when V_R is along x) */
+  arcPoints(aW,pos,F.xb,zm,Ld*0.8,alpha);
+  place(aLb,v1.copy(pos).addScaledVector(F.xb,Math.cos(alpha/2)*Ld*0.95).addScaledVector(zm,Math.sin(alpha/2)*Ld*0.95),F.xb,0);
+  /* φ wedge: z_b rotating about x_b to z_m, drawn in the body cross-section ahead of the nose */
+  org.copy(pos).addScaledVector(F.xb,Ld*0.78);
+  var pa=phiS; v3.copy(F.yb).multiplyScalar(-1); /* x_b × z_b = −y_b */
+  arcPoints(pW,org,F.zb,v3,Ld*0.38,pa);
+  place(pLb,v1.copy(org).addScaledVector(F.zb,Math.cos(pa/2)*Ld*0.55).addScaledVector(v3,Math.sin(pa/2)*Ld*0.55),F.xb,Ld*0.04);
+  aW.mesh.visible=aW.line.visible=aLb.visible=alpha>0.004; pW.mesh.visible=pW.line.visible=pLb.visible=Math.abs(pa)>0.02&&alpha>0.004;
+
+  /* path, footprint, drop line, markers */
+  var kk=Math.min(Math.floor(tNow/DT/STRIDE)+1,ptsP.userData.cnt); ptsP.geometry.setDrawRange(0,kk);
+  var da=drop.geometry.attributes.position.array; da[0]=pos.x;da[1]=pos.y;da[2]=pos.z;da[3]=0.6;da[4]=pos.y;da[5]=pos.z; drop.geometry.attributes.position.needsUpdate=true;
+  var fa=foot.geometry.attributes.position.array; fa[0]=0.8;fa[1]=pos.y;fa[2]=pos.z; foot.geometry.attributes.position.needsUpdate=true;
+  [apoMk,impMk].forEach(function(m){ m.scale.setScalar(camera.position.distanceTo(s2t(m.position,tmpT))*0.008); });
+  apoLb.position.copy(apoMk.position); apoLb.position.x+=camera.position.distanceTo(s2t(apoMk.position,tmpT))*0.03;
+  impLb.position.copy(impMk.position); impLb.position.x+=camera.position.distanceTo(s2t(impMk.position,tmpT))*0.03;
+  apoLb.visible=impLb.visible=vis.trail;
+
+  /* label sizing */
+  labels.forEach(function(l){ if(!l.visible) return; var sc=l.userData.world?curLd*0.065:camera.position.distanceTo(s2t(l.position,tmpT))*l.userData.size; l.scale.set(sc*l.userData.asp,sc,1); });
+
+  if(renderer) renderer.render(scene,camera);
+
+  /* HUD */
+  var tb=events.filter(function(e){return e.k==='burnout'})[0];
+  var phase=tNow>=tMax-1e-3?'Impact':(tb&&tNow<tb.t)||(!tb&&F.thrust>1)?'Boost':F.vel.x>0?'Coast ↑':'Descent ↓';
+  rA.textContent=fmt(alpha*DEG,1)+'°'; rP.textContent=fmt(phi*DEG,0)+'°'; rV.textContent=fmt(spA,1)+' m/s';
+  rT.textContent=F.thrust>1?fmt(F.thrust,0)+' N':'0 N'; rM.textContent=F.mass>0?fmt(F.mass,2)+' kg':'–'; rPh.textContent=phase;
+  var vals={mach:F.mach,spd:spG,alt:Math.max(alt,0)*M2FT};
+  bars.forEach(function(b){ b.val.textContent=fmt(vals[b.k],b.dp); b.fill.style.height=clamp(vals[b.k]/b.max*100,0,100)+'%'; });
+  events.forEach(function(e){ e.li.classList.toggle('on',tNow>=e.t-1e-6); });
+  ttEl.innerHTML=fmt(tNow,2)+' s<small>of '+fmt(tMax,1)+' s</small>';
+  scrub.value=tNow; scrub.style.setProperty('--p',(tNow/tMax*100)+'%');
+}
+
+function tick(now){
+  var dtReal=Math.min((now-last)/1000,0.1); last=now;
+  if(playing){
+    prevT=tNow; tNow=Math.min(tNow+dtReal*rate,tMax);
+    events.forEach(function(e){ if(e.k==='liftoff') return;
+      if(prevT<e.t&&tNow>=e.t-1e-6){
+        if(e.k==='apogee') showBanner('apogee','APOGEE · '+fmt(e.alt*M2FT,0)+' ft · t = '+fmt(e.t,1)+' s',false);
+        else if(e.k==='burnout') showBanner('burnout','BURNOUT · t = '+fmt(e.t,1)+' s',false);
+        else if(e.k==='sim') showBanner('sim',e.label.toUpperCase()+' · t = '+fmt(e.t,1)+' s',false);
+        else { var sp=Math.hypot(F.vel.x,F.vel.y,F.vel.z); showBanner('impact',e.label.toUpperCase()+' · t = '+fmt(e.t,1)+' s · '+fmt(sp,0)+' m/s',true); }
+      } });
+    if(tNow>=tMax-1e-6) setPlaying(false);
+  }
+  draw(dtReal); requestAnimationFrame(tick);
+}
+
+/* ---------- start ---------- */
+if(!renderer) $('nogl').hidden=false; else resize();
+document.fonts&&document.fonts.ready&&0;
+setDataset(genDemo());
+if(window.TELEMETRY){ try{ rawTel={j:window.TELEMETRY,name:window.TELEMETRY_NAME||'simulation'}; setDataset(fromTelemetry(rawTel.j,false,rawTel.name)); }catch(err){ console.error(err); } }
+G.world.visible=G.body.visible=G.missile.visible=G.vec.visible=G.trail.visible=true;
+tNow=Math.max(0,events.filter(function(e){return e.k==='apogee'})[0].t-2.2); prevT=tNow;
+cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
+window.__viewer={set:function(t){tNow=t;prevT=t},view:setView,cam:cam,toggle:function(k,v){G[k].visible=v}};
+requestAnimationFrame(tick);
+})();
+</script>
