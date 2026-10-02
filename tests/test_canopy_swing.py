@@ -11,9 +11,9 @@ import pytest
 
 from flight_sim.canopy_swing import CanopySwing, Gusts
 from flight_sim.descent import Parachute, RecoverySystem, simulate_descent
-from flight_sim.environment.atmosphere import LaunchSiteAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
-from flight_sim.integration import IntegrationConfiguration
+from flight_sim.environment.wind import UniformWind
+from flight_sim.integration import IntegrationConfiguration, TruthConfiguration
 from flight_sim.swing_descent import simulate_swing_descent
 from flight_sim.units import scalar, vector
 from flight_sim.utilities.dcm import body_to_world
@@ -110,8 +110,12 @@ def _state(altitude_m: float, mass_kg: float = 40.0) -> RocketState:
 def _config(wind_m_s: float = 0.0) -> IntegrationConfiguration:
     """Standard day, constant gravity, wind blowing along +Y."""
     return IntegrationConfiguration(
-        atmosphere=LaunchSiteAtmosphere(wind_m_s=np.array([0.0, wind_m_s, 0.0])),
-        gravity=ConstantGravity(_G),
+        truth=TruthConfiguration(
+            wind=UniformWind(
+                speed=scalar(wind_m_s, "m/s"), from_azimuth=scalar(270.0, "deg")
+            ),
+            gravity=ConstantGravity(_G),
+        )
     )
 
 
@@ -131,7 +135,7 @@ def test_two_body_steady_descent_matches_the_point_mass() -> None:
     )
     assert both.descent.landed
     assert both.descent.times_s[-1] == pytest.approx(point.times_s[-1], rel=0.01)
-    density = config.atmosphere.conditions(0.0).air_density
+    density = config.truth.atmosphere.conditions(0.0).air_density
     rate = math.sqrt(2 * 40.0 * _G / (density * 1.5 * math.pi * 1.5**2))
     landing = -both.descent.states[-1].velocity.m_as("m/s")[0]
     assert landing == pytest.approx(rate, rel=0.03)

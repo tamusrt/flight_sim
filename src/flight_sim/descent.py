@@ -287,6 +287,15 @@ class _Opening:
         return self.inflated_s is None or elapsed_s <= self.inflated_s + _LOAD_WINDOW_S
 
 
+def air_at(
+    config: IntegrationConfiguration, height_m: float
+) -> tuple[AtmosphereConditions, np.ndarray]:
+    """Air conditions and wind at a height above the pad, in m."""
+    truth = config.truth
+    altitude = float(truth.launch_elevation.m_as("m")) + height_m
+    return truth.atmosphere.conditions(altitude), truth.wind.velocity(altitude)
+
+
 @dataclass
 class _Descent:
     """Integrates one descent; ``simulate_descent`` is the public entry."""
@@ -300,9 +309,7 @@ class _Descent:
 
     def air(self, height_m: float) -> tuple[AtmosphereConditions, np.ndarray]:
         """Air conditions and wind at a height above the pad, in m."""
-        truth = self.config.truth
-        altitude = float(truth.launch_elevation.m_as("m")) + height_m
-        return truth.atmosphere.conditions(altitude), truth.wind.velocity(altitude)
+        return air_at(self.config, height_m)
 
     def drag_area(self, air_distance_m: float) -> float:
         """Total drag coefficient times area at a distance through the air."""
@@ -327,7 +334,7 @@ class _Descent:
         acceleration[0] -= truth.gravity.magnitude(
             self.latitude_rad, float(truth.launch_elevation.m_as("m")) + float(y[0])
         )
-        air, wind = self.air(float(y[0]))
+        _, wind = self.air(float(y[0]))
         airspeed = float(np.linalg.norm(y[3:6] - wind))
         return np.concatenate((y[3:6], acceleration, [airspeed]))
 
@@ -354,7 +361,7 @@ class _Descent:
 
     def release(self, stage: DragStage, elapsed_s: float, y: np.ndarray) -> None:
         """Start a canopy opening at a time since apogee and a state."""
-        air, wind = self.air(float(y[0]))
+        _, wind = self.air(float(y[0]))
         self.openings.append(
             _Opening(
                 stage=stage,
@@ -369,7 +376,7 @@ class _Descent:
     def after_step(self, elapsed_s: float, y: np.ndarray) -> None:
         """Note full inflations and track each opening's peak load, in g."""
         load = float(np.linalg.norm(self.drag_acceleration(y))) / _STANDARD_GRAVITY
-        air, wind = self.air(float(y[0]))
+        _, wind = self.air(float(y[0]))
         airspeed = float(np.linalg.norm(y[3:6] - wind))
         for opening in self.openings:
             if opening.inflated_s is None and opening.open_fraction(y[6]) >= 1.0:
@@ -436,7 +443,7 @@ class _Descent:
         start = self.apogee_state.orientation
         if not self.openings:
             return start
-        air, wind = self.air(float(y[0]))
+        _, wind = self.air(float(y[0]))
         airflow = wind - y[3:6]  # Air moving past the rocket
         speed = float(np.linalg.norm(airflow))
         nose = airflow / speed if speed > 1e-6 else np.array([1.0, 0.0, 0.0])

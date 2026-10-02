@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.__main__ import get_default_properties, get_default_state, main
+from flight_sim.__main__ import main
 from flight_sim.environment.atmosphere import StandardAtmosphere1976, VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity, GravityModel, WGS84Gravity
 from flight_sim.environment.launch_rail import LaunchRail
@@ -22,13 +22,28 @@ from flight_sim.integration import (
     locate_event,
     step,
 )
-from flight_sim.units import scalar, vector
+from flight_sim.units import scalar, vector, zero_vector
+from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.utilities.dcm import body_to_world
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties, TrapezoidFinSet
 from flight_sim.vehicle.rocket_state import RocketState
 
 _CONFIG = IntegrationConfiguration()
+
+
+def _baseline_state() -> RocketState:
+    """Launchpad state of the 25 kg test rocket the unit tests are built on."""
+    return RocketState(
+        position=vector((0.0, 0.0, 0.0), "m"),
+        velocity=vector((0.0, 0.0, 0.0), "m/s"),
+        current_mass=scalar(25.0, "kg"),
+        inertia=vector((2.5, 150.0, 150.0), "kg*m**2"),
+        cg_location=vector((-1.5, 0.0, 0.0), "m"),
+        angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
+        orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
+        on_rail=True,
+    )
 
 
 def _bare_state() -> RocketState:
@@ -48,7 +63,7 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
     """Verify the executive simulation loop runs from launch to impact."""
 
     # Force the physics step to immediately return an underground state.
-    mock_state = get_default_state()
+    mock_state = _baseline_state()
     mock_state.position = vector((-10.0, 0.0, 0.0), "m")
     mock_adaptive_step.return_value = (
         mock_state,
@@ -348,7 +363,7 @@ _RAIL = LaunchRail(
 
 def _rail_state() -> RocketState:
     """Return the default rocket at rest on the test rail."""
-    state = get_default_state()
+    state = _baseline_state()
     state.orientation = _RAIL.orientation()
     return state
 
@@ -398,9 +413,19 @@ def test_rail_holds_an_unpowered_rocket_on_the_pad(
 def test_default_rocket_turns_over_and_lands_nose_first() -> None:
     """With the estimated aero, a tilted launch falls nose-first after apogee."""
     rail = LaunchRail(length=scalar(17.0, "ft"), elevation=scalar(85.0, "deg"))
-    properties = get_default_properties()
+    properties = RocketProperties(
+        aero_table=aero_table_from_csv(
+            "data/aero/estimated_aero.csv",
+            reference_area=scalar(0.0182414692, "m**2"),
+            reference_length=scalar(0.1524, "m"),
+            reference_point=zero_vector("m"),
+            frame="missile",
+        ),
+        motor_file_path="tests/test_data/standard_motor.csv",
+        propellant_mass=5.0,
+    )
     config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
-    state = get_default_state()
+    state = _baseline_state()
     state.orientation = rail.orientation()
 
     time = 0.0
@@ -432,7 +457,7 @@ def test_six_dof_aerodynamic_response(
         get_mass_flow=MagicMock(return_value=0.0),
     )
 
-    state = get_default_state()
+    state = _baseline_state()
     state.position = vector((1000.0, 0.0, 0.0), "m")
     state.velocity = vector((100.0, 50.0, 0.0), "m/s")
 
@@ -462,7 +487,7 @@ def test_aerodynamics_finite_at_zero_and_reversed_angle_of_attack(
         get_thrust=MagicMock(return_value=0.0),
         get_mass_flow=MagicMock(return_value=0.0),
     )
-    state = get_default_state()
+    state = _baseline_state()
     state.position = vector((1000.0, 0.0, 0.0), "m")
     state.velocity = vector((vertical_velocity, 0.0, 0.0), "m/s")
 
@@ -588,7 +613,7 @@ def test_uniform_wind_loads_a_rocket_at_rest(
 ) -> None:
     """A rocket at rest feels no drag in still air and is pushed along a wind."""
     properties = baseline_rocket_properties
-    state = get_default_state()
+    state = _baseline_state()
     state.position = vector((1000.0, 0.0, 0.0), "m")
     coasting = 100.0
 
@@ -633,7 +658,7 @@ def test_table_loads_are_symmetric_about_the_nose(
 
     def loads(crossflow: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Return the accelerations of the pad-attitude rocket in one crossflow."""
-        state = get_default_state()
+        state = _baseline_state()
         state.position = vector((1000.0, 0.0, 0.0), "m")
         state.velocity = vector(
             speed * (np.cos(alpha_tot) * nose + np.sin(alpha_tot) * crossflow), "m/s"

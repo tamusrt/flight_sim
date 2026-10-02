@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from flight_sim.descent import RecoverySystem, ReefedParachute
+from flight_sim.descent import RecoverySystem, ReefedParachute, air_at
+from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.integration import IntegrationConfiguration
-from flight_sim.launch_rail import LaunchRail
 from flight_sim.recovery_motion import CORD_TO_BODY_M, CORD_TO_NOSE_M
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
@@ -84,10 +84,10 @@ class TelemetryLog:
         frame = frame or RecoveryFrame()
         pos = [float(x) for x in state.position.m_as("m")]
         velocity = [float(x) for x in state.velocity.m_as("m/s")]
-        air = self._config.atmosphere.conditions(pos[0])
+        air, wind = air_at(self._config, pos[0])
         if not self.rows["t"]:
-            self.wind = [float(x) for x in air.wind]
-        airspeed = math.dist(velocity, [float(x) for x in air.wind])
+            self.wind = [float(x) for x in wind]
+        airspeed = math.dist(velocity, [float(x) for x in wind])
         mach = airspeed / air.speed_of_sound
         q = state.orientation
         self.rows["t"].append(float(time_s))
@@ -120,10 +120,10 @@ class TelemetryLog:
         The table's pitching moment about the nose is CMy = x_cp * Cz / L,
         read at a small angle of attack where Cz is not zero.
         """
-        coefficients = self._properties.aero_coefficients(mach, _CP_ALPHA_DEG, 0.0)
+        coefficients = self._properties.aero_table(mach, _CP_ALPHA_DEG, 0.0)
         if coefficients.cz == 0.0:
             return float("nan")
-        length = float(self._properties.reference_length.m_as("m"))
+        length = float(self._properties.aero_table.reference_length.m_as("m"))
         return coefficients.cmy * length / coefficients.cz
 
     def add_event(self, kind: str, name: str, time_s: float, **extra: float) -> None:
@@ -133,9 +133,9 @@ class TelemetryLog:
     def describe_rail(self, rail: LaunchRail) -> None:
         """Record the launch rail the scene draws."""
         self.rail = {
-            "length": rail.length_m,
-            "direction": [float(x) for x in rail.direction],
-            "tilt_deg": math.degrees(rail.tilt_rad),
+            "length": float(rail.length.m_as("m")),
+            "direction": [float(x) for x in rail.direction()],
+            "tilt_deg": 90.0 - float(rail.elevation.m_as("deg")),
         }
 
     def describe_recovery(self, recovery: RecoverySystem) -> None:

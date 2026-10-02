@@ -30,6 +30,7 @@ from flight_sim.descent import (
     Parachute,
     RecoverySystem,
     ReefedParachute,
+    air_at,
     simulate_descent,
 )
 from flight_sim.integration import IntegrationConfiguration
@@ -100,7 +101,7 @@ class FlightComputer:
         dt = 1.0 / self.sample_rate_hz
         grid = np.arange(times[0], times[-1] + 1e-9, dt)
         alt = np.interp(grid, times, altitude)
-        pressure = np.array([config.atmosphere.conditions(h).pressure for h in alt])
+        pressure = np.array([air_at(config, h)[0].pressure for h in alt])
         noise = np.random.default_rng(self.seed).normal(
             0.0, self.baro_noise_pa, grid.size
         )
@@ -335,8 +336,8 @@ def _eject(
     state: RocketState, config: IntegrationConfiguration, charge: EjectionCharge
 ) -> Separation:
     """Fire the charge in the air the rocket is flying through."""
-    air = config.atmosphere.conditions(float(state.position.m_as("m")[0]))
-    airspeed = float(np.linalg.norm(state.velocity.m_as("m/s") - air.wind))
+    air, wind = air_at(config, float(state.position.m_as("m")[0]))
+    airspeed = float(np.linalg.norm(state.velocity.m_as("m/s") - wind))
     return charge.separate(
         float(state.current_mass.m_as("kg")), airspeed, air.air_density
     )

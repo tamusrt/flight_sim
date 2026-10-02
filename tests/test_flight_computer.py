@@ -12,7 +12,7 @@ from flight_sim.descent import Parachute, RecoverySystem, ReefedParachute
 from flight_sim.environment.atmosphere import LaunchSiteAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.flight_computer import FlightComputer, plan_recovery
-from flight_sim.integration import IntegrationConfiguration
+from flight_sim.integration import IntegrationConfiguration, TruthConfiguration
 from flight_sim.recovery_extension import (
     EJECTION_CHARGE,
     canopy_swing_for,
@@ -50,7 +50,9 @@ def _ballistic(apogee_s: float, up_to_s: float) -> list[tuple[float, RocketState
 def test_apogee_is_detected_shortly_after_the_true_apogee() -> None:
     """Filter lag, the pressure window and accelerometer bias make it late."""
     computer = FlightComputer()
-    config = IntegrationConfiguration(gravity=ConstantGravity(_G))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(_G))
+    )
     detection = computer.detect_apogee(computer.sense(_ballistic(20.0, 26.0), config))
 
     assert detection.detected_s is not None
@@ -64,7 +66,9 @@ def test_apogee_is_detected_shortly_after_the_true_apogee() -> None:
 def test_lockout_ignores_the_boost() -> None:
     """Nothing is counted before the lockout ends."""
     computer = FlightComputer(lockout_s=30.0)
-    config = IntegrationConfiguration(gravity=ConstantGravity(_G))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(_G))
+    )
     detection = computer.detect_apogee(computer.sense(_ballistic(20.0, 35.0), config))
     assert detection.detected_s == pytest.approx(30.0, abs=0.02)
 
@@ -72,8 +76,13 @@ def test_lockout_ignores_the_boost() -> None:
 def test_hot_day_makes_the_barometric_altitude_read_low() -> None:
     """The standard atmosphere underestimates height above a hot pad."""
     hot = IntegrationConfiguration(
-        atmosphere=LaunchSiteAtmosphere(
-            pad_elevation_m=890.0, pad_temperature_k=303.15, pad_pressure_pa=91432.8
+        truth=TruthConfiguration(
+            atmosphere=LaunchSiteAtmosphere(
+                pad_elevation_m=890.0,
+                pad_temperature_k=303.15,
+                pad_pressure_pa=91432.8,
+            ),
+            launch_elevation=scalar(890.0, "m"),
         )
     )
     computer = FlightComputer(baro_noise_pa=0.0)
@@ -84,7 +93,9 @@ def test_hot_day_makes_the_barometric_altitude_read_low() -> None:
 
 def test_plan_puts_the_canopy_at_line_stretch_after_the_charge() -> None:
     """Detect, wait the delay, eject, then inflate; the cut follows the barometer."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(_G))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(_G))
+    )
     recovery = RecoverySystem(
         (
             ReefedParachute(
@@ -118,7 +129,9 @@ def test_plan_puts_the_canopy_at_line_stretch_after_the_charge() -> None:
 
 def test_plan_with_a_swing_model_flies_the_two_body_descent() -> None:
     """Asking for the swing returns the line along the same timeline."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(_G))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(_G))
+    )
     recovery = RecoverySystem(
         (Parachute("main", diameter_m=3.0, drag_coefficient=1.5),),
         body_drag_area_m2=0.01,
@@ -145,7 +158,9 @@ def test_plan_with_a_swing_model_flies_the_two_body_descent() -> None:
 
 def test_full_recovery_extension_logs_the_timeline_and_frames() -> None:
     """The opt-in model plans with its own settings and draws every sample."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(_G))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(_G))
+    )
     recovery = RecoverySystem(
         (Parachute("main", diameter_m=3.0, drag_coefficient=1.5),),
         body_drag_area_m2=0.01,

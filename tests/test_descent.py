@@ -13,13 +13,12 @@ from flight_sim.descent import (
     simulate_descent,
 )
 from flight_sim.environment.atmosphere import (
-    LaunchSiteAtmosphere,
-    StandardAtmosphere1976,
     VacuumAtmosphere,
 )
 from flight_sim.environment.gravity import ConstantGravity
-from flight_sim.integration import IntegrationConfiguration
-from flight_sim.launch_rail import LaunchRail
+from flight_sim.environment.launch_rail import LaunchRail
+from flight_sim.environment.wind import UniformWind
+from flight_sim.integration import IntegrationConfiguration, TruthConfiguration
 from flight_sim.units import scalar, vector
 from flight_sim.utilities.dcm import body_to_world
 from flight_sim.vehicle.rocket_state import RocketState
@@ -44,13 +43,17 @@ def _state(
 
 
 def _sea_level() -> IntegrationConfiguration:
-    return IntegrationConfiguration(gravity=ConstantGravity(_G))
+    return IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(_G))
+    )
 
 
 def test_vacuum_descent_is_free_fall() -> None:
     """With no air the rocket falls as 0.5 * g * t**2, canopies or not."""
     config = IntegrationConfiguration(
-        atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(9.81)
+        truth=TruthConfiguration(
+            atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(9.81)
+        )
     )
     recovery = RecoverySystem((Parachute("main", 3.0, 1.5),))
     result = simulate_descent(10.0, _state(1000.0), config, recovery)
@@ -95,7 +98,13 @@ def test_parachute_reaches_the_designed_descent_rate() -> None:
 def test_wind_carries_the_rocket_downwind() -> None:
     """Under a canopy the horizontal speed matches the wind."""
     config = IntegrationConfiguration(
-        atmosphere=StandardAtmosphere1976(wind_m_s=np.array([0.0, 5.0, -2.0]))
+        truth=TruthConfiguration(
+            # Blowing toward (+Y 5, -Z 2) m/s, so it comes from the opposite way
+            wind=UniformWind(
+                speed=scalar(math.hypot(5.0, 2.0), "m/s"),
+                from_azimuth=scalar(math.degrees(math.atan2(-5.0, 2.0)), "deg"),
+            )
+        )
     )
     recovery = RecoverySystem((Parachute("main", 3.0, 1.5),))
     result = simulate_descent(0.0, _state(300.0), config, recovery)
@@ -149,12 +158,14 @@ def test_main_opens_at_once_below_its_height() -> None:
 def test_opening_load_matches_a_hand_estimate() -> None:
     """A heavy body that barely slows feels 0.5 * rho * v**2 * CdA / m."""
     parachute = Parachute("main", 2.0, 1.5)
-    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
+    )
     heavy = _state(100.0, (-20.0, 0.0, 0.0), mass_kg=1e5)
     result = simulate_descent(
         0.0, heavy, config, RecoverySystem((parachute,)), max_time_s=2.0
     )
-    density = config.atmosphere.conditions(100.0).air_density
+    density = config.truth.atmosphere.conditions(100.0).air_density
     expected = 0.5 * density * 20.0**2 * parachute.drag_area_m2 / 1e5 / _G
     # Within 0.5%: the air thickens slightly as it drops 36 m while opening
     assert result.deployments[0].peak_load_g == pytest.approx(expected, rel=5e-3)
@@ -168,7 +179,7 @@ def test_opening_load_is_below_the_instant_opening_value() -> None:
     result = simulate_descent(
         0.0, _state(400.0, (-25.0, 0.0, 0.0)), config, RecoverySystem((parachute,))
     )
-    density = config.atmosphere.conditions(400.0).air_density
+    density = config.truth.atmosphere.conditions(400.0).air_density
     instant = 0.5 * density * 25.0**2 * parachute.drag_area_m2 / 40.0 / _G
     assert 1.0 < result.deployments[0].peak_load_g < instant
 
@@ -185,8 +196,12 @@ def test_time_limit_stops_without_landing() -> None:
 def test_display_attitude_hangs_nose_up_under_the_canopy() -> None:
     """After the turn the nose points up along the airflow past the rocket."""
     config = IntegrationConfiguration(
-        atmosphere=LaunchSiteAtmosphere(wind_m_s=np.array([0.0, 4.0, 0.0])),
-        gravity=ConstantGravity(_G),
+        truth=TruthConfiguration(
+            wind=UniformWind(
+                speed=scalar(4.0, "m/s"), from_azimuth=scalar(270.0, "deg")
+            ),
+            gravity=ConstantGravity(_G),
+        )
     )
     recovery = RecoverySystem((Parachute("main", 3.0, 2.2, deploy_delay_s=1.0),))
     result = simulate_descent(0.0, _state(500.0), config, recovery)
@@ -230,10 +245,16 @@ def test_canopy_released_at_apogee_fills_over_its_distance() -> None:
 
 def test_display_attitude_turns_without_rolling() -> None:
     """A rocket lying along +Y swings nose-up about Z, keeping Z fixed."""
-    rail = LaunchRail(1.0, math.pi / 2, tilt_heading=(1.0, 0.0))
+    rail = LaunchRail(
+        length=scalar(1.0, "m"),
+        elevation=scalar(0.0, "deg"),
+        azimuth=scalar(90.0, "deg"),
+    )
     start = replace(_state(800.0), orientation=rail.orientation())
     recovery = RecoverySystem((Parachute("main", 3.0, 2.2, deploy_delay_s=0.5),))
-    config = IntegrationConfiguration(gravity=ConstantGravity(_G))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(_G))
+    )
     result = simulate_descent(0.0, start, config, recovery)
 
     first = body_to_world(result.states[0].orientation)
@@ -301,11 +322,11 @@ def test_reefed_canopy_flies_reefed_then_disreefs_at_its_height() -> None:
     assert cut.altitude_m == pytest.approx(2000 * _FT, abs=1e-3)
     # Just above the cut it falls near the reefed terminal speed there
     above = next(s for s in result.states if float(s.position.m_as("m")[0]) < 700.0)
-    density = _sea_level().atmosphere.conditions(700.0).air_density
+    density = _sea_level().truth.atmosphere.conditions(700.0).air_density
     reefed_rate = math.sqrt(2 * 40.0 * _G / (density * main.reefed_drag_area_m2))
     assert -above.velocity.m_as("m/s")[0] == pytest.approx(reefed_rate, rel=0.02)
     landing = -result.states[-1].velocity.m_as("m/s")[0]
-    density = _sea_level().atmosphere.conditions(0.0).air_density
+    density = _sea_level().truth.atmosphere.conditions(0.0).air_density
     open_rate = math.sqrt(2 * 40.0 * _G / (density * main.drag_area_m2))
     assert landing == pytest.approx(open_rate, rel=0.01)
     assert cut.peak_force_n == pytest.approx(cut.peak_load_g * _G * 40.0)

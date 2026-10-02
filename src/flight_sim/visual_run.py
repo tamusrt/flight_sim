@@ -17,12 +17,18 @@ from flight_sim import recovery_extension
 from flight_sim.__main__ import (
     LAUNCH_RAIL,
     RECOVERY,
+    apply_mass_properties,
     get_default_config,
     get_default_properties,
     get_launch_state,
-    launch_constraints,
 )
-from flight_sim.events import APOGEE, IMPACT, FlightEvent, peak_vertical_velocity
+from flight_sim.events import (
+    APOGEE,
+    IMPACT,
+    FlightEvent,
+    peak_vertical_velocity,
+    rail_exit,
+)
 from flight_sim.integration import IntegrationConfiguration, adaptive_step
 from flight_sim.units import scalar
 from flight_sim.vehicle.rocket_state import RocketState
@@ -44,7 +50,12 @@ def main() -> None:
     properties = get_default_properties()
     state = get_launch_state()
     config = get_default_config()
-    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
+    events = (
+        rail_exit(LAUNCH_RAIL),
+        peak_vertical_velocity(properties, config),
+        APOGEE,
+        IMPACT,
+    )
     log = TelemetryLog(properties, config)
     log.describe_rail(LAUNCH_RAIL)
     log.describe_recovery(RECOVERY)
@@ -52,7 +63,6 @@ def main() -> None:
     dt = scalar(0.01, "s")
     current_time = 0.0
     hit: FlightEvent | None = None
-    on_rail = True
     flight: list[tuple[float, RocketState]] = []
     while True:
         log.record(current_time, state)
@@ -69,9 +79,8 @@ def main() -> None:
             current_time, state, properties, config, dt, events=events
         )
         current_time += float(dt_taken.m_as("s"))
-        was_on_rail = on_rail
-        state, on_rail = launch_constraints(state, on_rail)
-        if was_on_rail and not on_rail:
+        apply_mass_properties(state)
+        if hit is not None and hit.name == "rail exit":
             log.add_event("rail", "Rail exit", current_time)
 
     if hit is APOGEE and not args.apogee:

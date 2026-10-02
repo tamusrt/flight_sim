@@ -30,6 +30,7 @@ from flight_sim.descent import (
     ReefedParachute,
     _Descent,
     _nose_along,
+    air_at,
 )
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.units import vector, zero_vector
@@ -187,9 +188,12 @@ class _SwingDescent(_Descent):
     def swing_derivative(self, y: np.ndarray) -> np.ndarray:
         """Rate of change of [rocket, speed, air distance, line, line rate]."""
         height = float(y[0])
-        air = self.config.atmosphere.conditions(height)
-        wind = air.wind + self.gust
-        pull = self.config.gravity.magnitude(self.latitude_rad, height)
+        air, ground_wind = air_at(self.config, height)
+        wind = ground_wind + self.gust
+        pull = self.config.truth.gravity.magnitude(
+            self.latitude_rad,
+            float(self.config.truth.launch_elevation.m_as("m")) + height,
+        )
         gravity = np.array([-pull, 0.0, 0.0])
         relative = y[3:6] - wind
         body_drag = (
@@ -226,8 +230,8 @@ class _SwingDescent(_Descent):
         """
         if not self.swinging(y):
             return super().drag_acceleration(y)
-        air = self.config.atmosphere.conditions(float(y[0]))
-        drag = self.canopy_drag(y, air.wind + self.gust, air.air_density)
+        air, wind = air_at(self.config, float(y[0]))
+        drag = self.canopy_drag(y, wind + self.gust, air.air_density)
         result: np.ndarray = drag / self.mass_kg
         return result
 
@@ -246,8 +250,8 @@ class _SwingDescent(_Descent):
         step = super().stable_step(y, h)
         if not self.swinging(y):
             return step
-        air = self.config.atmosphere.conditions(float(y[0]))
-        speed = float(np.linalg.norm(y[3:6] - air.wind))
+        air, wind = air_at(self.config, float(y[0]))
+        speed = float(np.linalg.norm(y[3:6] - wind))
         distance = float(y[6]) + speed * h
         inertia = self.swing.canopy_inertia_kg(
             air.air_density, self.open_diameter(distance)
@@ -265,7 +269,7 @@ class _SwingDescent(_Descent):
         """
         if not self.openings or self.swinging(y):
             return y
-        relative = y[3:6] - self.config.atmosphere.conditions(float(y[0])).wind
+        relative = y[3:6] - air_at(self.config, float(y[0]))[1]
         speed = float(np.linalg.norm(relative))
         down = np.array([-1.0, 0.0, 0.0])
         line = relative / speed if speed > _MIN_AIRSPEED_M_S else down
@@ -303,8 +307,8 @@ class _SwingDescent(_Descent):
             trace.angles_rad.append(0.0)
             trace.drag_fractions.append(0.0)
             return
-        air = self.config.atmosphere.conditions(float(y[0]))
-        angle, fraction = self.attack(y, air.wind + self.gust)
+        _, wind = air_at(self.config, float(y[0]))
+        angle, fraction = self.attack(y, wind + self.gust)
         trace.line_directions.append(y[7:10].copy())
         trace.canopy_velocities.append(self.canopy_velocity(y))
         trace.angles_rad.append(angle)
@@ -411,13 +415,13 @@ def simulate_swing_descent(
         )
         for stage, diameter in zip(canopy.stages(), opened, strict=True):
             diameters[stage.name] = diameter
-    ground_wind = float(np.linalg.norm(config.atmosphere.conditions(0.0).wind))
+    ground_wind = float(np.linalg.norm(air_at(config, 0.0)[1]))
     descent = _SwingDescent(
         apogee_state=apogee_state,
         config=config,
         recovery=recovery,
         mass_kg=float(apogee_state.current_mass.m_as("kg")),
-        latitude_rad=float(config.launch_latitude.m_as("rad")),
+        latitude_rad=float(config.truth.launch_latitude.m_as("rad")),
         swing=swing,
         gusts=Gusts(swing, ground_wind),
         diameters=diameters,
