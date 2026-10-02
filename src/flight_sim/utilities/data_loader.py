@@ -3,6 +3,8 @@
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
+from itertools import pairwise
+from pathlib import Path
 from typing import Annotated, Literal
 
 import numpy as np
@@ -181,3 +183,64 @@ def time_interpolator_from_csv(
         return float(np.interp(time, times, outputs, left=0.0, right=0.0))
 
     return interpolate
+
+
+def eng_to_csv(motor_file_path: str) -> str:
+    """Convert a RASP ".eng" thrust curve to a CSV, leaving other files alone.
+
+    The file holds ";" comment lines, one description line (name, diameter,
+    length, delays, propellant mass, total mass, maker), then "time thrust"
+    pairs in seconds and newtons. RASP curves start from zero thrust at
+    ignition, so a (0, 0) point is added when the first sample is later than
+    zero. Only the first motor of a file is read.
+
+    Args:
+        motor_file_path (str): Path to a motor file. Only a ".eng" file is
+            converted; any other path, such as a CSV, is returned as given.
+
+    Returns:
+        str: Path of the CSV to read. For a ".eng" file this is a CSV with the
+            same name beside it, written on every call, holding "Time" and
+            "Thrust" columns in seconds and newtons.
+
+    Raises:
+        ValueError: If the ".eng" file has no thrust samples, a sample line
+            without a thrust, or sample times that do not increase.
+    """
+    path = Path(motor_file_path)
+    if path.suffix.lower() != ".eng":
+        return motor_file_path
+
+    samples: list[tuple[float, float]] = []
+    description_seen = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.split(";", 1)[0].strip()
+        if not text:
+            continue
+        if not description_seen:
+            description_seen = True  # First line is the motor description
+            continue
+        values = text.split()
+        try:
+            time = float(values[0])
+        except ValueError:
+            break  # The description line of a second motor
+        try:
+            thrust = float(values[1])
+        except (IndexError, ValueError) as error:
+            raise ValueError(
+                f"Bad thrust sample {text!r} in {motor_file_path}"
+            ) from error
+        samples.append((time, thrust))
+    if not samples:
+        raise ValueError(f"No thrust samples found in {motor_file_path}")
+    times = [time for time, _ in samples]
+    if any(later <= earlier for earlier, later in pairwise(times)):
+        raise ValueError(f"Sample times do not increase in {motor_file_path}")
+    if times[0] > 0.0:
+        samples.insert(0, (0.0, 0.0))
+
+    csv_path = path.with_suffix(".csv")
+    rows = "".join(f"{time},{thrust}\n" for time, thrust in samples)
+    csv_path.write_text("Time,Thrust\n" + rows, encoding="utf-8")
+    return str(csv_path)

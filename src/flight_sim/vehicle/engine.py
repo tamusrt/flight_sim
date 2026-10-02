@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from flight_sim.utilities.data_loader import time_interpolator_from_csv
+from flight_sim.utilities.data_loader import eng_to_csv, time_interpolator_from_csv
 
 
 class Engine(ABC):
@@ -62,13 +62,14 @@ def solid_engine_from_csv(motor_file_path: str, propellant_mass: float) -> Solid
 
     Args:
         motor_file_path (str): CSV with "Time" and "Thrust" columns, in seconds
-            and newtons.
+            and newtons, or a RASP ".eng" file, which is converted to a CSV first.
         propellant_mass (float): Propellant mass burned over the curve in kg.
 
     Returns:
         SolidEngine: Motor with the interpolated thrust curve and the total
             impulse integrated from the samples.
     """
+    motor_file_path = eng_to_csv(motor_file_path)
     motor_data = np.genfromtxt(motor_file_path, delimiter=",", names=True)
     total_impulse = float(np.trapezoid(motor_data["Thrust"], motor_data["Time"]))
     return SolidEngine(
