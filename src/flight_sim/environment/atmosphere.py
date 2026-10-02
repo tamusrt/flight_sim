@@ -154,3 +154,74 @@ class VacuumAtmosphere(AtmosphereModel):
             air_density=0.0,
             speed_of_sound=self.speed_of_sound_m_s,
         )
+
+
+# Standard tropopause: geopotential altitude in m and temperature in K
+_TROPOPAUSE_M = _LAYER_BASE_M[1]
+_TROPOPAUSE_TEMPERATURE_K = _LAYER_BASE_TEMPERATURE_K[1]
+
+
+@dataclass
+class LaunchSiteAtmosphere(AtmosphereModel):
+    """Atmosphere built from the temperature and pressure measured at the pad.
+
+    Altitudes passed in are above sea level, as for any atmosphere model; the
+    pad elevation only anchors the measured pad temperature and pressure. Up to
+    the standard tropopause (11 km geopotential) the temperature falls
+    linearly from the pad temperature to the standard tropopause
+    temperature, and the pressure follows hydrostatically from the pad
+    pressure. Above it the US Standard Atmosphere 1976 is used, with its
+    pressure scaled to stay continuous. This is OpenRocket's "extended ISA"
+    model, so a hot pad warms the low air without heating the whole column.
+    """
+
+    # Height of the pad above sea level in metres
+    pad_elevation_m: float = 0.0
+
+    # Air temperature in K and pressure in Pa at the pad
+    pad_temperature_k: float = _SEA_LEVEL_TEMPERATURE_K
+    pad_pressure_pa: float = _SEA_LEVEL_PRESSURE_PA
+
+    def _troposphere(self, height_m: float) -> tuple[float, float]:
+        """Return temperature in K and pressure in Pa at a geopotential height."""
+        pad_height = _geopotential(self.pad_elevation_m)
+        lapse = (_TROPOPAUSE_TEMPERATURE_K - self.pad_temperature_k) / (
+            _TROPOPAUSE_M - pad_height
+        )
+        temperature = self.pad_temperature_k + lapse * (height_m - pad_height)
+        if abs(lapse) < 1e-12:
+            pressure = self.pad_pressure_pa * math.exp(
+                -_G0 * (height_m - pad_height) / (_AIR_GAS_CONSTANT * temperature)
+            )
+        else:
+            pressure = self.pad_pressure_pa * (
+                temperature / self.pad_temperature_k
+            ) ** (-_G0 / (_AIR_GAS_CONSTANT * lapse))
+        return temperature, pressure
+
+    def conditions(self, altitude_m: float) -> AtmosphereConditions:
+        """Return the air conditions at a geometric altitude above sea level."""
+        sea_level_altitude = min(max(altitude_m, _MIN_ALTITUDE_M), _MAX_ALTITUDE_M)
+        height = _geopotential(sea_level_altitude)
+        if height <= _TROPOPAUSE_M:
+            temperature, pressure = self._troposphere(height)
+        else:
+            standard = StandardAtmosphere1976().conditions(sea_level_altitude)
+            _, model_tropopause = self._troposphere(_TROPOPAUSE_M)
+            temperature = standard.temperature
+            pressure = standard.pressure * (
+                model_tropopause / _LAYER_BASE_PRESSURE_PA[1]
+            )
+        return AtmosphereConditions(
+            temperature=temperature,
+            pressure=pressure,
+            air_density=pressure / (_AIR_GAS_CONSTANT * temperature),
+            speed_of_sound=math.sqrt(
+                _HEAT_CAPACITY_RATIO * _AIR_GAS_CONSTANT * temperature
+            ),
+        )
+
+
+def _geopotential(altitude_m: float) -> float:
+    """Return the geopotential altitude in m for a geometric one."""
+    return _EARTH_RADIUS_M * altitude_m / (_EARTH_RADIUS_M + altitude_m)

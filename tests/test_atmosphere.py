@@ -1,9 +1,11 @@
 """Atmosphere model tests."""
 
+import numpy as np
 import pytest
 
 from flight_sim.environment.atmosphere import (
     AtmosphereConditions,
+    LaunchSiteAtmosphere,
     StandardAtmosphere1976,
     VacuumAtmosphere,
 )
@@ -90,3 +92,52 @@ def test_vacuum_has_no_air_but_a_finite_speed_of_sound() -> None:
     assert conditions.air_density == 0.0
     assert conditions.pressure == 0.0
     assert conditions.speed_of_sound > 0.0
+
+
+def test_launch_site_atmosphere_defaults_to_the_standard() -> None:
+    """Sea-level standard pad values reproduce the 1976 model below 30 km."""
+    site = LaunchSiteAtmosphere()
+    standard = StandardAtmosphere1976()
+    for altitude in (0.0, 3000.0, 10000.0, 15000.0, 30000.0):
+        assert site.conditions(altitude).air_density == pytest.approx(
+            standard.conditions(altitude).air_density, rel=1e-9
+        )
+
+
+def test_launch_site_atmosphere_matches_openrocket_extended_isa() -> None:
+    """A hot elevated pad reproduces OpenRocket's own conditions for it.
+
+    OpenRocket, with the pad at 890 m, 303.15 K and 91432.8 Pa, reports
+    1.051 kg/m**3 at the pad and 248.0 K with 0.576 kg/m**3 at 6445 m above it.
+    """
+    site = LaunchSiteAtmosphere(
+        pad_elevation_m=890.016, pad_temperature_k=303.15, pad_pressure_pa=91432.755
+    )
+    pad = site.conditions(890.016)
+    assert pad.temperature == pytest.approx(303.15)
+    assert pad.pressure == pytest.approx(91432.755)
+    assert pad.air_density == pytest.approx(1.051, abs=5e-4)
+    high = site.conditions(890.016 + 6445.0)
+    assert high.temperature == pytest.approx(248.0, abs=0.1)
+    assert high.air_density == pytest.approx(0.576, abs=1e-3)
+
+
+def test_launch_site_atmosphere_is_continuous_at_the_tropopause() -> None:
+    """Pressure and temperature join the standard stratosphere smoothly."""
+    site = LaunchSiteAtmosphere(
+        pad_elevation_m=1400.0, pad_temperature_k=300.0, pad_pressure_pa=86000.0
+    )
+    tropopause = _geometric_altitude(11000.0)
+    below = site.conditions(tropopause - 0.01)
+    above = site.conditions(tropopause + 0.01)
+    assert above.temperature == pytest.approx(below.temperature, abs=1e-3)
+    assert above.pressure == pytest.approx(below.pressure, rel=1e-5)
+
+
+def test_launch_site_atmosphere_handles_an_isothermal_column() -> None:
+    """A pad already at the tropopause temperature gives an isothermal layer."""
+    site = LaunchSiteAtmosphere(pad_temperature_k=216.65)
+    conditions = site.conditions(1000.0)
+    expected = 101325.0 * np.exp(-9.80665 * 999.84 / (287.0531 * 216.65))
+    assert conditions.temperature == pytest.approx(216.65)
+    assert conditions.pressure == pytest.approx(expected, rel=1e-4)
