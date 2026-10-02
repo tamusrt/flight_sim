@@ -44,7 +44,7 @@ h1,h2{margin:0;font-weight:500}
 .stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .note{position:absolute;left:8px;bottom:6px;font:400 11px var(--mono);color:#bdbdb8;pointer-events:none}
 .banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:500 13px var(--mono);letter-spacing:.08em;padding:6px 14px;background:#d6d6d3;color:#101010;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
-.banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}.banner[data-kind="sim"]{background:#b9a0d0;color:#140b1d}
+.banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}
 .nogl[hidden],.chip[hidden]{display:none}
 .nogl{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:#ddd;font:400 13px var(--mono)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font:400 11.5px var(--mono);color:var(--muted)}
@@ -60,8 +60,6 @@ h1,h2{margin:0;font-weight:500}
 .mk i{width:2px;height:9px;background:var(--fg);margin-top:2px}
 .mk.burnout{color:var(--thrust)}.mk.burnout i{background:var(--thrust)}.mk.apogee{color:var(--alpha)}.mk.apogee i{background:var(--alpha)}.mk.impact{color:var(--warn)}.mk.impact i{background:var(--warn)}
 .mk.impact{transform:translateX(-100%);align-items:flex-end}
-.mk.sim{color:var(--phi)}.mk.sim i{background:var(--phi)}
-.mk b{font-weight:400}.mk b.quiet{visibility:hidden}
 input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;cursor:pointer;display:block}
 input[type=range]::-webkit-slider-runnable-track{height:4px;background:linear-gradient(to right,var(--accent) var(--p,0%),var(--line) var(--p,0%))}
 input[type=range]::-moz-range-track{height:4px;background:var(--line)}
@@ -355,10 +353,8 @@ function fromTelemetry(j,conj,name){
     o.pos.push(P[0],P[1],P[2]); o.vel.push(Vv[0],Vv[1],Vv[2]); o.air.push(ar[0],ar[1],ar[2]);
     o.thrust.push(j.thrust&&j.thrust.length===n?L(j.thrust[i],j.thrust[i+1]):0);
     o.mass.push(j.mass&&j.mass.length===n?L(j.mass[i],j.mass[i+1]):0);
-    o.mach.push(j.mach&&j.mach.length===n?L(j.mach[i],j.mach[i+1]):isaMach(P[0],Math.hypot(ar[0],ar[1],ar[2])));
+    o.mach.push(isaMach(P[0],Math.hypot(ar[0],ar[1],ar[2])));
   }
-  simEvents=(j.events||[]).filter(function(e){ return e&&e.length===2&&!/^(apogee|impact|peak vertical velocity)$/i.test(e[0]); })
-    .map(function(e){ return {label:e[0].charAt(0).toUpperCase()+e[0].slice(1),t:e[1]-T0}; });
   return rowsToDs(o,name,false);
 }
 function getFrame(tt){
@@ -372,7 +368,7 @@ function getFrame(tt){
 /* ---------- state ---------- */
 var tNow=0, tMax=1, prevT=0, playing=false, rate=1, last=performance.now(), view='follow';
 var cam={az:0.62,azT:0.62,el:0.3,elT:0.3,dist:100,distT:100,tgt:new V3()}, wideC=new V3(), wideD=6000;
-var events=[], bars=[], apoIdx=0, simEvents=[];
+var events=[], bars=[], apoIdx=0;
 var vis={world:true,body:true,missile:true,vec:true,trail:true};
 
 function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p; return (n<=1?1:n<=1.5?1.5:n<=2?2:n<=3?3:n<=5?5:10)*p; }
@@ -390,9 +386,6 @@ function setDataset(d){
   events=[{k:'liftoff',label:'Liftoff',t:0,c:'--ok'}];
   if(bo>0) events.push({k:'burnout',label:'Burnout',t:bo*DT,c:'--thrust'});
   events.push({k:'apogee',label:'Apogee',t:apoIdx*DT,c:'--alpha',alt:maxA});
-  simEvents.forEach(function(e){ if(e.t>0&&e.t<tMax) events.push({k:'sim',label:e.label,t:e.t,c:'--phi'}); });
-  simEvents=[];
-  events.sort(function(a,b){return a.t-b.t});
   events.push({k:'impact',label:lastAlt<5?'Impact':'End of data',t:tMax,c:'--warn'});
   /* side bars */
   var cfg=[{k:'mach',l:'Mach',max:2.5,dp:2,c:'var(--air)'},{k:'spd',l:'Speed m/s',max:600,dp:0,c:'var(--vel)'},{k:'alt',l:'Alt ft',max:40000,dp:0,c:'var(--alpha)'}];
@@ -408,13 +401,9 @@ function setDataset(d){
   events.forEach(function(e){ var li=document.createElement('li'); li.style.setProperty('--c','var('+e.c+')');
     li.innerHTML='<i></i><span>'+e.label+'</span><b>'+fmt(e.t,1)+' s'+(e.alt!==undefined?' · '+fmt(e.alt*M2FT,0)+' ft':'')+'</b>'; ev.appendChild(li); e.li=li; });
   var mk=$('mks'); mk.innerHTML='';
-  var trackPx=Math.max(($('scrub').clientWidth||600)-16,100), lastPx=-1e9, impactPx=trackPx;
   events.forEach(function(e){ if(e.k==='liftoff') return; var s=document.createElement('span'); s.className='mk '+e.k;
-    var p=e.t/tMax, px=p*trackPx; if(e.k!=='impact') s.style.left='calc(8px + (100% - 16px) * '+p+')'; else s.style.right='0';
-    /* Crowded markers keep their tick; the name is in the tooltip and the events list */
-    var room=e.k==='impact'||(px>=40&&px-lastPx>=78&&impactPx-px>=78);
-    s.innerHTML='<b'+(room?'':' class="quiet"')+'>'+e.label.toUpperCase()+'</b><i></i>'; s.title=e.label+' · '+fmt(e.t,1)+' s';
-    if(room&&e.k!=='impact') lastPx=px; mk.appendChild(s); });
+    var p=e.t/tMax; if(e.k!=='impact') s.style.left='calc(8px + (100% - 16px) * '+p+')'; else s.style.right='0';
+    s.innerHTML=e.label.toUpperCase()+'<i></i>'; mk.appendChild(s); });
   var sc=$('scrub'); sc.max=tMax.toFixed(2);
   /* path dots */
   [ptsP,ptsF,ptsG].forEach(function(p){ if(p){G.trail.remove(p);p.geometry.dispose();} });
@@ -587,7 +576,6 @@ function tick(now){
       if(prevT<e.t&&tNow>=e.t-1e-6){
         if(e.k==='apogee') showBanner('apogee','APOGEE · '+fmt(e.alt*M2FT,0)+' ft · t = '+fmt(e.t,1)+' s',false);
         else if(e.k==='burnout') showBanner('burnout','BURNOUT · t = '+fmt(e.t,1)+' s',false);
-        else if(e.k==='sim') showBanner('sim',e.label.toUpperCase()+' · t = '+fmt(e.t,1)+' s',false);
         else { var sp=Math.hypot(F.vel.x,F.vel.y,F.vel.z); showBanner('impact',e.label.toUpperCase()+' · t = '+fmt(e.t,1)+' s · '+fmt(sp,0)+' m/s',true); }
       } });
     if(tNow>=tMax-1e-6) setPlaying(false);

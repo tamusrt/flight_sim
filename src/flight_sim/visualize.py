@@ -1,7 +1,6 @@
 """Log flight telemetry and write it into the 3D flight viewer."""
 
 import json
-import math
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -19,46 +18,34 @@ _HEAD = (
 
 
 class TelemetryLog:
-    """Collects one row per sample, in SI units, for the viewer."""
+    """Collects one row per accepted integrator step, in SI units."""
 
     def __init__(self, properties: RocketProperties, config: IntegrationConfiguration):
         self._properties = properties
         self._config = config
         self.rows: dict[str, list[Any]] = {
-            k: [] for k in ("t", "pos", "vel", "quat", "thrust", "mass", "mach")
+            k: [] for k in ("t", "pos", "vel", "quat", "thrust", "mass")
         }
         self.wind = [0.0, 0.0, 0.0]
-        # Named moments, such as parachute releases, as (name, time in s)
-        self.events: list[tuple[str, float]] = []
 
     def record(self, time_s: float, state: RocketState) -> None:
         """Append the state at ``time_s`` seconds after ignition."""
         pos = [float(x) for x in state.position.m_as("m")]
-        velocity = [float(x) for x in state.velocity.m_as("m/s")]
-        air = self._config.atmosphere.conditions(pos[0])
-        if not self.rows["t"]:
-            self.wind = [float(x) for x in air.wind]
         q = state.orientation
-        airspeed = math.dist(velocity, [float(x) for x in air.wind])
-        self.rows["t"].append(float(time_s))
+        if not self.rows["t"]:
+            self.wind = [
+                float(x) for x in self._config.atmosphere.conditions(pos[0]).wind
+            ]
+        self.rows["t"].append(time_s)
         self.rows["pos"].append(pos)
-        self.rows["vel"].append(velocity)
-        self.rows["quat"].append(
-            [float(q.q_w), float(q.q_x), float(q.q_y), float(q.q_z)]
-        )
+        self.rows["vel"].append([float(x) for x in state.velocity.m_as("m/s")])
+        self.rows["quat"].append([q.q_w, q.q_x, q.q_y, q.q_z])
         self.rows["thrust"].append(float(self._properties.engine.get_thrust(time_s)))
         self.rows["mass"].append(float(state.current_mass.m_as("kg")))
-        self.rows["mach"].append(airspeed / air.speed_of_sound)
 
     def to_json(self) -> str:
         """Telemetry in the format the viewer expects."""
-        return json.dumps(
-            {
-                **self.rows,
-                "wind": self.wind,
-                "events": [[name, float(time)] for name, time in self.events],
-            }
-        )
+        return json.dumps({**self.rows, "wind": self.wind})
 
 
 def write_viewer(

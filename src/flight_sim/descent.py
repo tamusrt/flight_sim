@@ -540,27 +540,6 @@ def simulate_descent(
     return DescentResult(times, states, deployments, landed)
 
 
-def parachute_diameter_for_descent_rate(
-    mass_kg: float,
-    descent_rate_m_s: float,
-    drag_coefficient: float,
-    air_density: float = 1.225,
-) -> float:
-    """Return the canopy diameter for a steady descent rate.
-
-    Args:
-        mass_kg (float): Mass hanging from the canopy, in kilograms.
-        descent_rate_m_s (float): Wanted steady descent speed in m/s.
-        drag_coefficient (float): Canopy drag coefficient.
-        air_density (float): Air density at which the rate applies, kg/m**3.
-
-    Returns:
-        float: Canopy diameter in metres.
-    """
-    drag_area = 2.0 * mass_kg * _STANDARD_GRAVITY / (air_density * descent_rate_m_s**2)
-    return math.sqrt(4.0 * drag_area / (drag_coefficient * math.pi))
-
-
 def _nose_along(start: Quaternion, nose: np.ndarray) -> Quaternion:
     """Return the attitude with the nose along a world direction.
 

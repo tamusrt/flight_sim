@@ -17,7 +17,6 @@ def test_viewer_page_embeds_the_logged_flight(
     state = get_default_state()
     log.record(0.0, state)
     log.record(0.5, state)
-    log.events = [("drogue release", 0.25)]
 
     page = write_viewer(log, tmp_path / "flight.html", open_browser=False)
 
@@ -28,5 +27,3 @@ def test_viewer_page_embeds_the_logged_flight(
     assert data["t"] == [0.0, 0.5]
     assert data["quat"][0] == [1.0, 0.0, 0.0, 0.0]
     assert len(data["pos"]) == len(data["vel"]) == len(data["thrust"]) == 2
-    assert data["mach"] == [0.0, 0.0]
-    assert data["events"] == [["drogue release", 0.25]]

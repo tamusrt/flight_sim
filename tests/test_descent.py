@@ -10,7 +10,6 @@ from flight_sim.descent import (
     Parachute,
     RecoverySystem,
     ReefedParachute,
-    parachute_diameter_for_descent_rate,
     simulate_descent,
 )
 from flight_sim.environment.atmosphere import (
@@ -82,7 +81,9 @@ def test_samples_are_evenly_spaced_and_carry_the_mass() -> None:
 
 def test_parachute_reaches_the_designed_descent_rate() -> None:
     """A canopy sized for 7.6 m/s lands at that speed in sea-level air."""
-    diameter = parachute_diameter_for_descent_rate(40.0, 7.6, 1.5)
+    # Drag equals weight at 7.6 m/s in sea-level air
+    drag_area = 2 * 40.0 * _G / (1.225 * 7.6**2)
+    diameter = math.sqrt(4 * drag_area / (1.5 * math.pi))
     recovery = RecoverySystem((Parachute("main", diameter, 1.5),))
     result = simulate_descent(0.0, _state(500.0), _sea_level(), recovery)
 
@@ -202,13 +203,6 @@ def test_spill_hole_reduces_the_canopy_area() -> None:
     """The drag area uses the disc less the vent."""
     vented = Parachute("main", 3.0, 2.0, spill_hole_diameter_m=0.5)
     assert vented.drag_area_m2 == pytest.approx(2.0 * math.pi * (9.0 - 0.25) / 4)
-
-
-def test_diameter_for_descent_rate_inverts_the_drag_equation() -> None:
-    """The sized canopy's drag balances the weight at the design speed."""
-    diameter = parachute_diameter_for_descent_rate(30.0, 6.0, 2.0, air_density=1.1)
-    drag_area = Parachute("main", diameter, 2.0).drag_area_m2
-    assert 0.5 * 1.1 * 6.0**2 * drag_area == pytest.approx(30.0 * _G)
 
 
 def test_instant_canopy_opens_at_release() -> None:
