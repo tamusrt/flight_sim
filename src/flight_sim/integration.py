@@ -83,7 +83,7 @@ class SimConfiguration(UnitChecked):
     # A step is accepted when the 4th and 5th order RKF45 estimates of every
     # state component differ by at most its absolute tolerance plus the
     # relative tolerance times its magnitude
-    relative_tolerance: float = 1e-7
+    relative_tolerance: float = 1e-6
     position_tolerance: Annotated[Scalar, "m"] = field(
         default_factory=lambda: scalar(1e-5, "m")
     )
