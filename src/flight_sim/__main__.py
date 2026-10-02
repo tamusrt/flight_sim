@@ -55,7 +55,7 @@ def get_default_properties() -> RocketProperties:
     )
 
 
-def main() -> None:
+def main() -> None:  # pylint: disable=too-many-statements
     """Main function to run entire flight"""
     properties = get_default_properties()
     rail = LaunchRail(
