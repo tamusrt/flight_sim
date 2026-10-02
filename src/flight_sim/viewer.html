@@ -781,8 +781,8 @@ function drawRecovery(sc,pos,cg,te,tq,land){
        end, theta'' = g d / (k^2 + d^2) sin(theta), d tail to CG, k its radius of gyration, starting with the
        spin the drift gives it, v d / (k^2 + d^2) */
     var d=VEH.length-cg, k2=VEH.length*VEH.length/12, th0=Math.asin(clamp(bX.dot(fd),-1,1)), om0=land.vh*d/(k2+d*d);
-    var th=fall(tl,th0,om0,d,k2), thF=fall(60,th0,om0,d,k2), sgn=thF>=0?1:-1;
-    tailG.copy(BC).addScaledVector(bX,-d*sc); tailG.x=0;
+    tailG.copy(BC).addScaledVector(bX,-d*sc); var tdp=tailDrop(tailG.x,tl,sc,land.v0); tailG.x=tdp[0];
+    var th=fall(tdp[1],th0,om0,d,k2), thF=fall(60,th0,om0,d,k2), sgn=thF>=0?1:-1;
     var lx=new V3(Math.cos(th),0,0).addScaledVector(fd,Math.sin(th)).normalize();
     var ly=new V3().copy(bY).addScaledVector(lx,-lx.dot(bY)); if(ly.lengthSq()<1e-6) ly.crossVectors(lx,upV); ly.normalize();
     bX.copy(lx); bY.copy(ly); bZ.crossVectors(lx,ly);
@@ -797,14 +797,18 @@ function drawRecovery(sc,pos,cg,te,tq,land){
     Cc.y=Cc0.y+(CcF.y-Cc0.y)*uch; Cc.z=Cc0.z+(CcF.z-Cc0.z)*uch; Cc.x=Cc0.x+(CcF.x-Cc0.x)*uc*uc;
     var dy=Cc.y-Cc0.y, dz=Cc.z-Cc0.z;
     /* nose: hanging tip-down below the confluence, it drops onto its tip and falls on its side */
-    var tip=new V3().copy(Nn).addScaledVector(xn,VEH.sep*sc), Tdrop=clamp(Math.sqrt(2*Math.max(tip.x,0)/(9.80665*sc)),0.25,2.0);
-    if(tl<Tdrop){ var dr=tip.x*(tl/Tdrop)*(tl/Tdrop); Nn.x-=dr; Nn.y+=dy; Nn.z+=dz; }
-    else {
+    /* nose: it hangs from the cord above the forward end of the body, so it can only come down onto that end as the body
+       topples (it never drops through it), and once the body is down it falls over on its side */
+    var tip=new V3().copy(Nn).addScaledVector(xn,VEH.sep*sc), tdn=tailDrop(tip.x,tl,sc,land.v0);
+    var tBody=tdp[2]+flatTime(th0,om0,d,k2), tNose=Math.max(tdn[2],tBody), nr=VEH.radius*0.6*sc;
+    if(tl<tNose){
+      var tipX=Math.max(tdn[0],A.x+nr); Nn.x-=Math.max(tip.x-tipX,0); Nn.y+=dy; Nn.z+=dz;
+    } else {
       var un0=w2.copy(xn).negate(), fdn=new V3(0,un0.y,un0.z);
       if(fdn.lengthSq()<0.01) fdn.crossVectors(upV,dw); fdn.normalize();
-      var thn=fall(tl-Tdrop,Math.max(Math.asin(clamp(un0.dot(fdn),-1,1)),0.05),0.6,VEH.sep*0.5,VEH.sep*VEH.sep/12);
+      var thn=fall(tl-tNose,Math.max(Math.asin(clamp(un0.dot(fdn),-1,1)),0.05),0.6,VEH.sep*0.5,VEH.sep*VEH.sep/12);
       var un=new V3(Math.cos(thn),0,0).addScaledVector(fdn,Math.sin(thn)).normalize();
-      tip.x=VEH.radius*0.6*sc*Math.sin(thn); tip.y+=dy; tip.z+=dz;
+      tip.x=nr*Math.sin(thn); tip.y+=dy; tip.z+=dz;
       Nn.copy(tip).addScaledVector(un,VEH.sep*sc); xn.copy(un).negate();
       yn.copy(upV).addScaledVector(xn,-xn.dot(upV)); if(yn.lengthSq()<1e-8) yn.copy(fdn); yn.normalize(); zn.crossVectors(xn,yn);
     }
@@ -849,6 +853,20 @@ function fall(tl,th0,om0,d,k2){
   return clamp(th,-Math.PI/2,Math.PI/2);
 }
 
+/* The tail does not jump to the ground when the drawn body touches down: it comes down from the height it was at,
+   with the speed it had (drawn to scale, so g is g*scale), and the body only starts to topple once the tail lands.
+   Returns [tail height, time since the tail landed]. */
+function tailDrop(h0,tl,sc,v0){
+  var h=Math.max(h0,0), g=9.80665, T=h>1e-6?(-v0+Math.sqrt(v0*v0+2*g*h/sc))/g:0;
+  return tl<T?[Math.max(h-sc*(v0*tl+0.5*g*tl*tl),0),0,T]:[0,tl-T,T];
+}
+
+/* how long after it lands a rod pivoting about its tail takes to fall to 80 degrees, so what hangs from it can follow */
+function flatTime(th0,om0,d,k2){
+  var lo=0, hi=8, i; for(i=0;i<14;i++){ var m=0.5*(lo+hi); if(Math.abs(fall(m,th0,om0,d,k2))<1.4) lo=m; else hi=m; }
+  return hi;
+}
+
 /* when the drawn body's tail reaches the ground: the drawing is scaled up, so this comes before the true touchdown */
 function touchdownT(sc){
   if(TD.sc===sc) return TD.t;
@@ -874,14 +892,16 @@ function draw(dtReal){
 
   /* drawn position: on the scaled rail the rocket rides the rail scaled too, easing back onto the true path after it leaves */
   /* ...fading out over the first 1.5 km of travel so the drawn rocket never slows or drops */
-  var sAlong=F.pos.dot(RAIL.dir), wr=1-smooth((sAlong-RAIL.length)/1500);
+  /* the fade follows the farthest the rocket has been: on the way down it must not fade the pad scaling back in */
+  var sAlong=F.pos.dot(RAIL.dir), apE=evt('apogee'); if(apE&&tq>=apE.t) sAlong=Math.max(sAlong,apE.alt);
+  var wr=1-smooth((sAlong-RAIL.length)/1500);
   off.copy(RAIL.dir).multiplyScalar(((VEH.length-RAIL.cg0)+0.15)*sc+clamp(sAlong,0,RAIL.length)*(sc-1)).multiplyScalar(wr);
   Pv.copy(F.pos).add(off); var pos=Pv;
   if(down){
     /* it falls toward its drift over the ground (the wind), or downwind when it has none */
     var wv=new V3(0,ds.wind[1],ds.wind[2]), dw=wv.lengthSq()>0.01?wv.normalize():new V3(0,1,0);
     var vh=Math.hypot(F.vel.y,F.vel.z), fd=vh>0.3?new V3(0,F.vel.y/vh,F.vel.z/vh):dw.clone();
-    land={tl:tNow-Ttd,wind:dw,fd:fd,vh:vh};
+    land={tl:tNow-Ttd,wind:dw,fd:fd,vh:vh,v0:Math.max(-F.vel.x,0)};
   }
 
   /* vehicle: one rigid body until separation, then nose section and aft body on their cords */
@@ -892,8 +912,9 @@ function draw(dtReal){
   } else {
     if(land){
       /* no canopy: it stands on its tail and falls over */
-      var d0=VEH.length-cg, k20=VEH.length*VEH.length/12, th=fall(land.tl,Math.asin(clamp(F.xb.dot(land.fd),-1,1)),land.vh*d0/(k20+d0*d0),d0,k20);
-      tailG.copy(Pv).addScaledVector(F.xb,-d0*sc); tailG.x=0;
+      var d0=VEH.length-cg, k20=VEH.length*VEH.length/12;
+      tailG.copy(Pv).addScaledVector(F.xb,-d0*sc); var tdq=tailDrop(tailG.x,land.tl,sc,land.v0); tailG.x=tdq[0];
+      var th=fall(tdq[1],Math.asin(clamp(F.xb.dot(land.fd),-1,1)),land.vh*d0/(k20+d0*d0),d0,k20);
       var lx=new V3(Math.cos(th),0,0).addScaledVector(land.fd,Math.sin(th)).normalize();
       F.yb.addScaledVector(lx,-lx.dot(F.yb)); if(F.yb.lengthSq()<1e-6) F.yb.crossVectors(lx,upV); F.yb.normalize();
       F.xb.copy(lx); F.zb.crossVectors(F.xb,F.yb);
