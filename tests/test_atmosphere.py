@@ -1,6 +1,5 @@
 """Atmosphere model tests."""
 
-import numpy as np
 import pytest
 
 from flight_sim.environment.atmosphere import (
@@ -84,16 +83,6 @@ def test_conditions_are_held_above_86_kilometres() -> None:
     assert model.conditions(200000.0) == ceiling
 
 
-def test_wind_is_passed_through() -> None:
-    """The configured wind is reported at every altitude."""
-    wind = np.array([5.0, -3.0, 1.0])
-    model = StandardAtmosphere1976(wind_m_s=wind)
-
-    assert np.array_equal(model.conditions(0.0).wind, wind)
-    assert np.array_equal(model.conditions(30000.0).wind, wind)
-    assert np.array_equal(StandardAtmosphere1976().conditions(0.0).wind, np.zeros(3))
-
-
 def test_vacuum_has_no_air_but_a_finite_speed_of_sound() -> None:
     """A vacuum reports zero density and pressure with a finite speed of sound."""
     conditions: AtmosphereConditions = VacuumAtmosphere().conditions(1000.0)
@@ -101,4 +90,3 @@ def test_vacuum_has_no_air_but_a_finite_speed_of_sound() -> None:
     assert conditions.air_density == 0.0
     assert conditions.pressure == 0.0
     assert conditions.speed_of_sound > 0.0
-    assert np.array_equal(conditions.wind, np.zeros(3))

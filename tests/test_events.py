@@ -6,6 +6,7 @@ import pytest
 from flight_sim.__main__ import get_default_state
 from flight_sim.environment.atmosphere import VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
+from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.events import (
     APOGEE,
     IMPACT,
@@ -13,7 +14,11 @@ from flight_sim.events import (
     peak_vertical_velocity,
     rail_exit,
 )
-from flight_sim.integration import IntegrationConfiguration, adaptive_step
+from flight_sim.integration import (
+    IntegrationConfiguration,
+    TruthConfiguration,
+    adaptive_step,
+)
 from flight_sim.units import scalar, vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
@@ -50,7 +55,9 @@ def test_adaptive_step_ends_on_apogee(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """A ballistic step that passes apogee is cut at apogee and reports it."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(9.81))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(9.81))
+    )
 
     state, dt_taken, _next_dt, hit = adaptive_step(
         0.0,
@@ -70,7 +77,9 @@ def test_adaptive_step_reports_no_event_when_none_is_crossed(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """A step that crosses nothing runs its full length and reports None."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(9.81))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(9.81))
+    )
 
     _state, dt_taken, _next_dt, hit = adaptive_step(
         0.0,
@@ -90,7 +99,9 @@ def test_peak_vertical_velocity_lands_where_acceleration_is_zero(
 ) -> None:
     """Stepping through the burn ends a step where vertical acceleration is zero."""
     config = IntegrationConfiguration(
-        gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere()
+        truth=TruthConfiguration(
+            gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere()
+        )
     )
     peak = peak_vertical_velocity(baseline_rocket_properties, config)
     state = _coasting_state(100.0)
@@ -115,8 +126,9 @@ def test_rail_exit_lands_where_the_rail_releases_the_rocket(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Stepping up the rail ends a step a rail length from the pad, off the rail."""
-    config = IntegrationConfiguration(rail_length=scalar(2.0, "m"))
-    exit_rail = rail_exit(config)
+    rail = LaunchRail(length=scalar(2.0, "m"))
+    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
+    exit_rail = rail_exit(rail)
     state = get_default_state()
 
     time = 0.0

@@ -41,6 +41,5 @@ class RocketState(UnitChecked):
     # Orientation
     orientation: Quaternion = field(default_factory=Quaternion)
 
-    # Held by the launch rail, which lets the rocket slide along its nose
-    # direction but not turn
+    # Held by the launch rail, which lets the rocket slide along it but not turn
     on_rail: bool = False

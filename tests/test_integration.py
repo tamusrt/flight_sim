@@ -7,12 +7,17 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.__main__ import get_default_state, main
+from flight_sim.__main__ import get_default_properties, get_default_state, main
 from flight_sim.environment.atmosphere import StandardAtmosphere1976, VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity, GravityModel, WGS84Gravity
+from flight_sim.environment.launch_rail import LaunchRail
+from flight_sim.environment.wind import UniformWind
 from flight_sim.events import IMPACT
 from flight_sim.integration import (
     IntegrationConfiguration,
+    SimConfiguration,
+    TruthConfiguration,
+    adaptive_step,
     derivative_computation,
     locate_event,
     step,
@@ -70,7 +75,9 @@ def test_step_zero_force_keeps_velocity_constant(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Tests that the step function keeps velocity constant"""
-    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
+    )
     state = _bare_state()
     next_state = step(0.0, state, baseline_rocket_properties, config, scalar(0.01, "s"))
     assert np.allclose(next_state.velocity.m_as("m/s"), np.zeros(3))
@@ -152,7 +159,7 @@ def test_step_adaptive_scaling_and_rejection(
         def magnitude(self, latitude_rad: float, altitude_m: float) -> float:
             return altitude_m**3
 
-    config = IntegrationConfiguration(gravity=_CubicGravity())
+    config = IntegrationConfiguration(truth=TruthConfiguration(gravity=_CubicGravity()))
 
     state = _bare_state()
     state.position = vector((10.0, 0.0, 0.0), "m")
@@ -183,8 +190,10 @@ def test_aero_loads_match_a_table_row(
     baseline_rocket_properties: RocketProperties, attitude: Quaternion
 ) -> None:
     """On a grid point the loads are the row's coefficients scaled by q*S and L."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
-    air = config.atmosphere.conditions(0.0)
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
+    )
+    air = config.truth.atmosphere.conditions(0.0)
     speed = 0.1 * air.speed_of_sound
     alpha = np.radians(5.0)
     to_world = body_to_world(attitude)
@@ -220,7 +229,9 @@ def test_step_angular_velocity_rotates_orientation(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """A constant body rate about X turns the orientation by rate * time."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
+    )
     state = _bare_state()
     state.angular_velocity = vector((np.pi / 2, 0.0, 0.0), "rad/s")
 
@@ -256,7 +267,9 @@ def test_torque_free_rotation_conserves_angular_momentum(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """With no torque, the world-frame angular momentum and spin energy hold."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
+    )
     state = _bare_state()
     state.inertia = vector((1.0, 2.0, 3.0), "kg*m**2")
     state.angular_velocity = vector((0.3, 1.0, 0.5), "rad/s")
@@ -280,7 +293,9 @@ def test_step_length_is_limited_by_the_attitude_error(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """A rocket turning in place still integrates its attitude accurately."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
+    )
     state = _bare_state()
     state.angular_velocity = vector((0.0, 0.5, 0.0), "rad/s")
 
@@ -319,36 +334,43 @@ def test_launch_elevation_sets_the_altitude_of_the_air_and_gravity(
             )
         )
 
-    high_pad = IntegrationConfiguration(launch_elevation=scalar(1400.0, "m"))
+    high_pad = IntegrationConfiguration(
+        truth=TruthConfiguration(launch_elevation=scalar(1400.0, "m"))
+    )
     assert rates(state, high_pad) == pytest.approx(rates(raised, _CONFIG))
     assert rates(state, high_pad) != pytest.approx(rates(state, _CONFIG))
 
 
-def _rail_state(tilt_deg: float) -> RocketState:
-    """Return the default rocket at rest on a rail tilted toward +Y."""
-    half_tilt = np.radians(tilt_deg) / 2
+_RAIL = LaunchRail(
+    length=scalar(5.0, "m"), elevation=scalar(80.0, "deg"), azimuth=scalar(90.0, "deg")
+)
+
+
+def _rail_state() -> RocketState:
+    """Return the default rocket at rest on the test rail."""
     state = get_default_state()
-    state.orientation = Quaternion(q_w=np.cos(half_tilt), q_z=np.sin(half_tilt))
+    state.orientation = _RAIL.orientation()
     return state
 
 
-def test_rail_guides_the_rocket_along_its_nose(
+def test_rail_guides_the_rocket_up_it(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
-    """On the rail the rocket slides along its nose without turning, despite wind."""
+    """On the rail the rocket slides up it without turning, despite a crosswind."""
     config = IntegrationConfiguration(
-        atmosphere=StandardAtmosphere1976(wind_m_s=np.array([0.0, 0.0, 10.0])),
-        rail_length=scalar(5.0, "m"),
+        truth=TruthConfiguration(
+            wind=UniformWind(speed=scalar(10.0, "m/s")), launch_rail=_RAIL
+        )
     )
-    state = _rail_state(10.0)
-    nose = body_to_world(state.orientation)[:, 0]
+    state = _rail_state()
+    rail = _RAIL.direction()
 
     next_state = step(0.0, state, baseline_rocket_properties, config, scalar(0.2, "s"))
 
     position = next_state.position.m_as("m")
     assert next_state.on_rail
-    assert float(position @ nose) > 0.0
-    assert np.cross(nose, position) == pytest.approx(np.zeros(3), abs=1e-12)
+    assert float(position @ rail) > 0.0
+    assert np.cross(rail, position) == pytest.approx(np.zeros(3), abs=1e-12)
     assert next_state.angular_velocity.m_as("rad/s") == pytest.approx(np.zeros(3))
     assert next_state.orientation == state.orientation
 
@@ -357,12 +379,12 @@ def test_rail_holds_an_unpowered_rocket_on_the_pad(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Without thrust, gravity cannot push the rocket down through the pad."""
-    config = IntegrationConfiguration(rail_length=scalar(5.0, "m"))
+    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=_RAIL))
     after_burnout = 100.0
 
     next_state = step(
         after_burnout,
-        _rail_state(10.0),
+        _rail_state(),
         baseline_rocket_properties,
         config,
         scalar(1.0, "s"),
@@ -371,6 +393,31 @@ def test_rail_holds_an_unpowered_rocket_on_the_pad(
     assert next_state.on_rail
     assert next_state.position.m_as("m") == pytest.approx(np.zeros(3))
     assert next_state.velocity.m_as("m/s") == pytest.approx(np.zeros(3))
+
+
+def test_default_rocket_turns_over_and_lands_nose_first() -> None:
+    """With the estimated aero, a tilted launch falls nose-first after apogee."""
+    rail = LaunchRail(length=scalar(17.0, "ft"), elevation=scalar(85.0, "deg"))
+    properties = get_default_properties()
+    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
+    state = get_default_state()
+    state.orientation = rail.orientation()
+
+    time = 0.0
+    dt = scalar(0.01, "s")
+    hit = None
+    while hit is not IMPACT:
+        state, dt_taken, dt, hit = adaptive_step(
+            time, state, properties, config, dt, events=(IMPACT,)
+        )
+        time += float(dt_taken.m_as("s"))
+        assert time < 100.0
+
+    nose = body_to_world(state.orientation)[:, 0]
+    velocity = state.velocity.m_as("m/s")
+    angle_of_attack = np.arccos(nose @ velocity / np.linalg.norm(velocity))
+    assert velocity[0] < 0.0
+    assert np.degrees(angle_of_attack) < 5.0
 
 
 def test_six_dof_aerodynamic_response(
@@ -432,7 +479,9 @@ def test_locate_event_finds_ballistic_apogee(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """A drag-free coast peaks at the time and height the closed form gives."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(9.81))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(9.81))
+    )
     start = _bare_state()
     start.velocity = vector((50.0, 0.0, 0.0), "m/s")
     dt = scalar(10.0, "s")
@@ -458,7 +507,9 @@ def test_step_warns_at_minimum_step_length(
 ) -> None:
     """A step whose error never meets tolerance is accepted at the minimum length."""
     config = IntegrationConfiguration(
-        position_tolerance=scalar(1e-7, "m"), min_time_step=scalar(1.0, "ns")
+        sim=SimConfiguration(
+            position_tolerance=scalar(1e-7, "m"), min_time_step=scalar(1.0, "ns")
+        )
     )
 
     def over_tolerance(
@@ -500,7 +551,9 @@ def test_configured_atmosphere_is_used(
 ) -> None:
     """In a vacuum atmosphere a coasting rocket feels no aerodynamic force."""
     config = IntegrationConfiguration(
-        atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(0.0)
+        truth=TruthConfiguration(
+            atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(0.0)
+        )
     )
     state = _bare_state()
     state.current_mass = scalar(20.0, "kg")
@@ -517,7 +570,9 @@ def test_configured_launch_latitude_sets_gravity(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Gravity follows the configured latitude through the default WGS84 model."""
-    config = IntegrationConfiguration(launch_latitude=scalar(90.0, "deg"))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(launch_latitude=scalar(90.0, "deg"))
+    )
 
     next_state = step(
         0.0, _bare_state(), baseline_rocket_properties, config, scalar(1.0, "s")
@@ -538,14 +593,21 @@ def test_uniform_wind_loads_a_rocket_at_rest(
     coasting = 100.0
 
     still_air = IntegrationConfiguration(
-        atmosphere=StandardAtmosphere1976(), gravity=ConstantGravity(0.0)
+        truth=TruthConfiguration(
+            atmosphere=StandardAtmosphere1976(), gravity=ConstantGravity(0.0)
+        )
     )
     in_still_air = derivative_computation(coasting, state, properties, still_air)
     assert in_still_air.acceleration.m_as("m/s**2") == pytest.approx(np.zeros(3))
 
+    # A west wind, blowing toward +Y
     windy = IntegrationConfiguration(
-        atmosphere=StandardAtmosphere1976(wind_m_s=np.array([0.0, 20.0, 0.0])),
-        gravity=ConstantGravity(0.0),
+        truth=TruthConfiguration(
+            wind=UniformWind(
+                speed=scalar(20.0, "m/s"), from_azimuth=scalar(270.0, "deg")
+            ),
+            gravity=ConstantGravity(0.0),
+        )
     )
     in_wind = derivative_computation(coasting, state, properties, windy)
     acceleration = in_wind.acceleration.m_as("m/s**2")
@@ -562,7 +624,9 @@ def test_table_loads_are_symmetric_about_the_nose(
     crossflow_direction: tuple[float, float, float],
 ) -> None:
     """The same alpha gives the same loads whichever way the crossflow points."""
-    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
+    )
     nose = np.array([1.0, 0.0, 0.0])
     speed, alpha_tot = 150.0, np.radians(5.0)
     coasting = 100.0
@@ -601,4 +665,4 @@ def test_table_loads_are_symmetric_about_the_nose(
 def test_configuration_rejects_wrong_units() -> None:
     """A tolerance that is not a length is rejected on construction."""
     with pytest.raises(DimensionalityError, match="position_tolerance"):
-        IntegrationConfiguration(position_tolerance=scalar(1.0, "s"))
+        SimConfiguration(position_tolerance=scalar(1.0, "s"))

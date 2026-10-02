@@ -1,12 +1,10 @@
-"""Atmosphere models giving the air conditions and wind at an altitude."""
+"""Atmosphere models giving the air conditions at an altitude."""
 
 import bisect
 import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import NamedTuple
-
-import numpy as np
 
 
 class AtmosphereConditions(NamedTuple):
@@ -16,7 +14,6 @@ class AtmosphereConditions(NamedTuple):
     pressure: float  # Pa
     air_density: float  # kg/m**3
     speed_of_sound: float  # m/s
-    wind: np.ndarray  # m/s, world frame
 
 
 class AtmosphereModel(ABC):
@@ -30,8 +27,8 @@ class AtmosphereModel(ABC):
             altitude_m (float): Geometric altitude in metres.
 
         Returns:
-            AtmosphereConditions: Temperature, pressure, density, speed of
-                sound and wind at that altitude.
+            AtmosphereConditions: Temperature, pressure, density and speed
+                of sound at that altitude.
         """
 
 
@@ -113,12 +110,8 @@ _LAYER_BASE_TEMPERATURE_K, _LAYER_BASE_PRESSURE_PA = _layer_bases()
 class StandardAtmosphere1976(AtmosphereModel):
     """US Standard Atmosphere 1976 up to 86 km geometric altitude.
 
-    Conditions are held at their values at the ends of that range. The wind
-    is uniform.
+    Conditions are held at their values at the ends of that range.
     """
-
-    # Wind in the world frame in m/s
-    wind_m_s: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
     def conditions(self, altitude_m: float) -> AtmosphereConditions:
         """Return the air conditions at a geometric altitude in metres."""
@@ -143,7 +136,6 @@ class StandardAtmosphere1976(AtmosphereModel):
             speed_of_sound=math.sqrt(
                 _HEAT_CAPACITY_RATIO * _AIR_GAS_CONSTANT * temperature
             ),
-            wind=self.wind_m_s,
         )
 
 
@@ -161,5 +153,4 @@ class VacuumAtmosphere(AtmosphereModel):
             pressure=0.0,
             air_density=0.0,
             speed_of_sound=self.speed_of_sound_m_s,
-            wind=np.zeros(3),
         )

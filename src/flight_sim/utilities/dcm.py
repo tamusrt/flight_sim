@@ -1,7 +1,8 @@
 """Direction cosine matrices between the various coordinate frames.
 
 World frame: fixed to the pad, +X up (height above the pad is the X
-coordinate and gravity acts along -X), Y and Z horizontal, right-handed. 
+coordinate and gravity acts along -X), +Y east, +Z north. A direction in it is
+given by its elevation above the horizon and its azimuth, clockwise from north.
 
 Body frame: +X out the nose, Y and Z transverse, right-handed, with its
 origin at the nose tip.
@@ -11,7 +12,7 @@ its X-Z plane with the crossflow along its +Z axis; the aerodynamic roll
 angle ``phi_a`` is measured from body +Z toward body +Y to the crossflow,
 and the total angle of attack ``alpha_tot`` is the angle from the X axis
 to the airspeed. Aerodynamic coefficients are indexed by ``alpha_tot``
-and ``phi_a``. Reference (``phi_a`` is its eq. 2): 
+and ``phi_a``. Reference (``phi_a`` is its eq. 2):
 https://ntrs.nasa.gov/api/citations/20130003336/downloads/20130003336.pdf
 
 r3f matrices are passive, taking the components of a vector from one frame
@@ -24,6 +25,26 @@ import numpy as np
 import r3f
 
 from flight_sim.utilities.quaternion import Quaternion
+
+
+def world_direction(elevation_rad: float, azimuth_rad: float) -> np.ndarray:
+    """Return the world-frame unit vector at an elevation and azimuth.
+
+    Args:
+        elevation_rad (float): Angle above the horizon in radians.
+        azimuth_rad (float): Angle clockwise from north in radians.
+
+    Returns:
+        np.ndarray: The (up, east, north) components.
+    """
+    horizontal = math.cos(elevation_rad)
+    return np.array(
+        [
+            math.sin(elevation_rad),
+            horizontal * math.sin(azimuth_rad),
+            horizontal * math.cos(azimuth_rad),
+        ]
+    )
 
 
 def world_to_body(orientation: Quaternion) -> np.ndarray:

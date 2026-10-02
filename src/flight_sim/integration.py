@@ -18,6 +18,8 @@ from flight_sim.environment.atmosphere import (
     StandardAtmosphere1976,
 )
 from flight_sim.environment.gravity import GravityModel, WGS84Gravity
+from flight_sim.environment.launch_rail import LaunchRail
+from flight_sim.environment.wind import UniformWind, WindModel
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
 from flight_sim.utilities.dcm import aero_angles, body_to_world
 from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_rates
@@ -52,10 +54,12 @@ _RKF_4TH_ORDER = np.array([25 / 216, 0.0, 1408 / 2565, 2197 / 4104, -1 / 5, 0.0]
 
 
 @dataclass
-class IntegrationConfiguration(UnitChecked):
-    """Environment models and settings the integrator holds fixed for a flight."""
+class TruthConfiguration(UnitChecked):
+    """Physical world the rocket flies through: environment and launch site."""
 
     atmosphere: AtmosphereModel = field(default_factory=StandardAtmosphere1976)
+
+    wind: WindModel = field(default_factory=UniformWind)
 
     gravity: GravityModel = field(default_factory=WGS84Gravity)
 
@@ -68,10 +72,13 @@ class IntegrationConfiguration(UnitChecked):
         default_factory=lambda: scalar(0.0, "m")
     )
 
-    # Distance from the pad over which the rail holds a rocket on it
-    rail_length: Annotated[Scalar, "m"] = field(
-        default_factory=lambda: scalar(0.0, "m")
-    )
+    # Rail holding a rocket whose state is on it
+    launch_rail: LaunchRail | None = None
+
+
+@dataclass
+class SimConfiguration(UnitChecked):
+    """Numerical settings of the integrator and the event search."""
 
     # A step is accepted when the 4th and 5th order RKF45 estimates of every
     # state component differ by at most its absolute tolerance plus the
@@ -108,6 +115,14 @@ class IntegrationConfiguration(UnitChecked):
 
 
 @dataclass
+class IntegrationConfiguration:
+    """Truth models and sim settings the integrator holds fixed for a flight."""
+
+    truth: TruthConfiguration = field(default_factory=TruthConfiguration)
+    sim: SimConfiguration = field(default_factory=SimConfiguration)
+
+
+@dataclass
 class StateDerivative(UnitChecked):
     """Rate of change of a RocketState with respect to time."""
 
@@ -135,10 +150,12 @@ class _StepInputs(NamedTuple):
     reference_length: float  # m
     properties: RocketProperties
     atmosphere: Callable[[float], AtmosphereConditions]  # From the altitude in m
+    wind: Callable[[float], np.ndarray]  # From the altitude in m
     gravity: Callable[[float, float], float]  # From the latitude in rad, altitude in m
     latitude_rad: float
     elevation_m: float
     rail_length_m: float
+    rail_direction: np.ndarray  # World frame, up the rail
     on_rail: bool
     absolute_tolerance: np.ndarray  # One per state component, SI units
     relative_tolerance: float
@@ -152,30 +169,34 @@ def _step_inputs(
 ) -> _StepInputs:
     """Collect the constants of one step from the state, properties and config."""
     table = properties.aero_table
+    truth, sim = config.truth, config.sim
+    rail = truth.launch_rail
     return _StepInputs(
         inertia=state.inertia.m_as("kg*m**2"),
         lever_arm_body=table.reference_point.m_as("m") - state.cg_location.m_as("m"),
         reference_area=float(table.reference_area.m_as("m**2")),
         reference_length=float(table.reference_length.m_as("m")),
         properties=properties,
-        atmosphere=config.atmosphere.conditions,
-        gravity=config.gravity.magnitude,
-        latitude_rad=float(config.launch_latitude.m_as("rad")),
-        elevation_m=float(config.launch_elevation.m_as("m")),
-        rail_length_m=float(config.rail_length.m_as("m")),
+        atmosphere=truth.atmosphere.conditions,
+        wind=truth.wind.velocity,
+        gravity=truth.gravity.magnitude,
+        latitude_rad=float(truth.launch_latitude.m_as("rad")),
+        elevation_m=float(truth.launch_elevation.m_as("m")),
+        rail_length_m=float(rail.length.m_as("m")) if rail else 0.0,
+        rail_direction=rail.direction() if rail else np.zeros(3),
         on_rail=state.on_rail,
         absolute_tolerance=np.repeat(
             [
-                float(config.position_tolerance.m_as("m")),
-                float(config.velocity_tolerance.m_as("m/s")),
-                float(config.angular_velocity_tolerance.m_as("rad/s")),
-                config.orientation_tolerance,
-                float(config.mass_tolerance.m_as("kg")),
+                float(sim.position_tolerance.m_as("m")),
+                float(sim.velocity_tolerance.m_as("m/s")),
+                float(sim.angular_velocity_tolerance.m_as("rad/s")),
+                sim.orientation_tolerance,
+                float(sim.mass_tolerance.m_as("kg")),
             ],
             [3, 3, 3, 4, 1],
         ),
-        relative_tolerance=config.relative_tolerance,
-        min_dt_s=float(config.min_time_step.m_as("s")),
+        relative_tolerance=sim.relative_tolerance,
+        min_dt_s=float(sim.min_time_step.m_as("s")),
     )
 
 
@@ -275,7 +296,7 @@ def _aero_loads(
         tuple[np.ndarray, np.ndarray]: Force in N and torque in N*m.
     """
     conditions = inputs.atmosphere(altitude)
-    airspeed_body = to_body @ (velocity - conditions.wind)
+    airspeed_body = to_body @ (velocity - inputs.wind(altitude))
     speed = math.sqrt(float(airspeed_body @ airspeed_body))
     alpha, phi = aero_angles(airspeed_body)
     coefficients = inputs.properties.aero_table(
@@ -333,7 +354,7 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
 
     if _on_rail(values, inputs):
         # The rail cancels all but the push along it, and the pad any push into it
-        rail = to_world[:, 0]
+        rail = inputs.rail_direction
         along_rail = float(acceleration @ rail)
         if float(values[_POSITION] @ rail) <= 0.0:
             along_rail = max(along_rail, 0.0)
@@ -361,7 +382,7 @@ def derivative_computation(
         time (float): Time since ignition in seconds, for the thrust curve.
         state (RocketState): Current state of the vehicle.
         properties (RocketProperties): Aerodynamic and motor properties.
-        config (IntegrationConfiguration): Environment models.
+        config (IntegrationConfiguration): Truth models.
 
     Returns:
         StateDerivative: Rates of change to integrate over the next step.
@@ -484,7 +505,7 @@ def adaptive_step(
         time (float): Time since ignition in seconds, for the thrust curve.
         state (RocketState): Current state of the vehicle.
         properties (RocketProperties): Aerodynamic and motor properties.
-        config (IntegrationConfiguration): Environment models and tolerances.
+        config (IntegrationConfiguration): Truth models and sim settings.
         dt (Scalar): Step length to try, in any unit of time.
         events (Sequence[FlightEvent]): Events to land on, checked in order.
 
@@ -528,7 +549,7 @@ def step(
         time (float): Time since ignition in seconds, for the thrust curve.
         state (RocketState): Current state of the vehicle.
         properties (RocketProperties): Aerodynamic and motor properties.
-        config (IntegrationConfiguration): Environment models and tolerances.
+        config (IntegrationConfiguration): Truth models and sim settings.
         dt (Scalar): Length of the step, in any unit of time.
 
     Returns:
@@ -574,7 +595,7 @@ def locate_event(
         end (RocketState): State at the end of the step, where ``event`` is
             zero or negative.
         properties (RocketProperties): Aerodynamic and motor properties.
-        config (IntegrationConfiguration): Environment models and tolerances.
+        config (IntegrationConfiguration): Truth models and sim settings.
         dt (Scalar): Length of the step from ``start`` to ``end``.
         event (Callable[[float, RocketState], float]): Quantity, given the
             time in seconds and the state, whose crossing from positive to
@@ -589,9 +610,9 @@ def locate_event(
     high_value = event(time + high_time, end)
     high_state = end
     last_moved = 0
-    time_tolerance = float(config.event_time_tolerance.m_as("s"))
+    time_tolerance = float(config.sim.event_time_tolerance.m_as("s"))
 
-    for _ in range(config.max_event_iterations):
+    for _ in range(config.sim.max_event_iterations):
         if high_time - low_time <= time_tolerance:
             break
         trial_time = (low_time * high_value - high_time * low_value) / (

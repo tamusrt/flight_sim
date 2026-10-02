@@ -1,1 +1,1 @@
-"""Environment models: atmosphere and gravity"""
+"""Environment models: atmosphere, gravity, wind and the launch rail"""

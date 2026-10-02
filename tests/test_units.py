@@ -9,7 +9,11 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.integration import IntegrationConfiguration, StateDerivative
+from flight_sim.integration import (
+    SimConfiguration,
+    StateDerivative,
+    TruthConfiguration,
+)
 from flight_sim.units import Scalar, UnitChecked, scalar, vector, zero_vector
 from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.utilities.quaternion import Quaternion
@@ -54,8 +58,12 @@ def test_quantities_convert_between_units() -> None:
             "RocketState.inertia",
         ),
         (
-            lambda: IntegrationConfiguration(position_tolerance=scalar(1.0, "s")),
-            "IntegrationConfiguration.position_tolerance",
+            lambda: SimConfiguration(position_tolerance=scalar(1.0, "s")),
+            "SimConfiguration.position_tolerance",
+        ),
+        (
+            lambda: TruthConfiguration(launch_elevation=scalar(1.0, "s")),
+            "TruthConfiguration.launch_elevation",
         ),
         (
             lambda: AeroTable(
