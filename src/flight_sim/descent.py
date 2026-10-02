@@ -31,6 +31,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 import r3f
 
+from flight_sim.environment.atmosphere import AtmosphereConditions
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.units import vector, zero_vector
 from flight_sim.utilities.dcm import world_to_body
@@ -297,6 +298,12 @@ class _Descent:
     latitude_rad: float
     openings: list[_Opening] = field(default_factory=list)
 
+    def air(self, height_m: float) -> tuple[AtmosphereConditions, np.ndarray]:
+        """Air conditions and wind at a height above the pad, in m."""
+        truth = self.config.truth
+        altitude = float(truth.launch_elevation.m_as("m")) + height_m
+        return truth.atmosphere.conditions(altitude), truth.wind.velocity(altitude)
+
     def drag_area(self, air_distance_m: float) -> float:
         """Total drag coefficient times area at a distance through the air."""
         return self.recovery.body_drag_area_m2 + sum(
@@ -306,8 +313,8 @@ class _Descent:
 
     def drag_acceleration(self, y: np.ndarray) -> np.ndarray:
         """Drag force over mass in the world frame, in m/s**2."""
-        air = self.config.atmosphere.conditions(float(y[0]))
-        relative = y[3:6] - air.wind
+        air, wind = self.air(float(y[0]))
+        relative = y[3:6] - wind
         speed = float(np.linalg.norm(relative))
         scale = 0.5 * air.air_density * speed * self.drag_area(float(y[6]))
         result: np.ndarray = -scale * relative / self.mass_kg
@@ -316,9 +323,12 @@ class _Descent:
     def derivative(self, y: np.ndarray) -> np.ndarray:
         """Rate of change of [position, velocity, distance through the air]."""
         acceleration = self.drag_acceleration(y)
-        acceleration[0] -= self.config.gravity.magnitude(self.latitude_rad, float(y[0]))
-        air = self.config.atmosphere.conditions(float(y[0]))
-        airspeed = float(np.linalg.norm(y[3:6] - air.wind))
+        truth = self.config.truth
+        acceleration[0] -= truth.gravity.magnitude(
+            self.latitude_rad, float(truth.launch_elevation.m_as("m")) + float(y[0])
+        )
+        air, wind = self.air(float(y[0]))
+        airspeed = float(np.linalg.norm(y[3:6] - wind))
         return np.concatenate((y[3:6], acceleration, [airspeed]))
 
     def rk4(self, y: np.ndarray, h: float) -> np.ndarray:
@@ -336,22 +346,22 @@ class _Descent:
         That time is ``m / (rho * |v_air| * Cd * A)``; RK4 is accurate well
         inside it, which keeps the opening of a large canopy resolved.
         """
-        air = self.config.atmosphere.conditions(float(y[0]))
-        speed = float(np.linalg.norm(y[3:6] - air.wind))
+        air, wind = self.air(float(y[0]))
+        speed = float(np.linalg.norm(y[3:6] - wind))
         area = self.drag_area(float(y[6]) + speed * h)
         rate = air.air_density * speed * area / self.mass_kg
         return h if rate <= 0.0 else min(h, 0.1 / rate)
 
     def release(self, stage: DragStage, elapsed_s: float, y: np.ndarray) -> None:
         """Start a canopy opening at a time since apogee and a state."""
-        air = self.config.atmosphere.conditions(float(y[0]))
+        air, wind = self.air(float(y[0]))
         self.openings.append(
             _Opening(
                 stage=stage,
                 time_s=elapsed_s,
                 air_distance_m=float(y[6]),
                 altitude_m=float(y[0]),
-                airspeed_m_s=float(np.linalg.norm(y[3:6] - air.wind)),
+                airspeed_m_s=float(np.linalg.norm(y[3:6] - wind)),
             )
         )
         self.after_step(elapsed_s, y)
@@ -359,8 +369,8 @@ class _Descent:
     def after_step(self, elapsed_s: float, y: np.ndarray) -> None:
         """Note full inflations and track each opening's peak load, in g."""
         load = float(np.linalg.norm(self.drag_acceleration(y))) / _STANDARD_GRAVITY
-        air = self.config.atmosphere.conditions(float(y[0]))
-        airspeed = float(np.linalg.norm(y[3:6] - air.wind))
+        air, wind = self.air(float(y[0]))
+        airspeed = float(np.linalg.norm(y[3:6] - wind))
         for opening in self.openings:
             if opening.inflated_s is None and opening.open_fraction(y[6]) >= 1.0:
                 # Back off the distance travelled past full inflation
@@ -426,8 +436,8 @@ class _Descent:
         start = self.apogee_state.orientation
         if not self.openings:
             return start
-        air = self.config.atmosphere.conditions(float(y[0]))
-        airflow = air.wind - y[3:6]  # Air moving past the rocket
+        air, wind = self.air(float(y[0]))
+        airflow = wind - y[3:6]  # Air moving past the rocket
         speed = float(np.linalg.norm(airflow))
         nose = airflow / speed if speed > 1e-6 else np.array([1.0, 0.0, 0.0])
         progress = (elapsed_s - self.openings[0].time_s) / _TURN_TO_HANG_S
@@ -468,7 +478,7 @@ def simulate_descent(
         config=config,
         recovery=recovery,
         mass_kg=float(apogee_state.current_mass.m_as("kg")),
-        latitude_rad=float(config.launch_latitude.m_as("rad")),
+        latitude_rad=float(config.truth.launch_latitude.m_as("rad")),
     )
     # Position and velocity in the world frame, then distance through the air
     y = np.concatenate(
