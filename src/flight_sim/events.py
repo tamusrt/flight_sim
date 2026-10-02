@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import numpy as np
+
 from flight_sim.integration import IntegrationConfiguration, derivative_computation
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
@@ -51,6 +53,24 @@ APOGEE = FlightEvent(
 
 # Altitude falls through zero
 IMPACT = FlightEvent("impact", lambda _time, state: float(state.position.m_as("m")[0]))
+
+
+def rail_exit(config: IntegrationConfiguration) -> FlightEvent:
+    """Build the event at which the rocket is a rail length from the pad.
+
+    Args:
+        config (IntegrationConfiguration): Configuration giving the rail length.
+
+    Returns:
+        FlightEvent: The event, named "rail exit".
+    """
+    rail_length = float(config.rail_length.m_as("m"))
+    return FlightEvent(
+        "rail exit",
+        lambda _time, state: (
+            rail_length - float(np.linalg.norm(state.position.m_as("m")))
+        ),
+    )
 
 
 def peak_vertical_velocity(

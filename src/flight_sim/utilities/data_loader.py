@@ -1,10 +1,15 @@
 """Functions for loading aerodynamic CSV data."""
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
+from typing import Annotated, Literal
 
 import numpy as np
 import pandas as pd  # type: ignore
+
+from flight_sim.units import Scalar, UnitChecked, Vector
+from flight_sim.utilities.dcm import missile_to_body
 
 
 @dataclass(frozen=True)
@@ -28,34 +33,33 @@ _AERO_COLUMNS: tuple[str, ...] = tuple(
 )
 
 
-class AeroTable:
-    """Trilinear lookup of body-frame coefficients over Mach, alpha_tot and phi_a.
+@dataclass
+class AeroTable(UnitChecked):
+    """Trilinear lookup of aerodynamic coefficients over Mach, alpha_tot and phi_a.
 
-    The angles are defined in ``flight_sim.utilities.dcm`` and given in
-    degrees; phi is wrapped into [0, 360). Outside the grid, each coefficient
-    is extrapolated linearly from the nearest edge cell.
+    The frames and angles are defined in ``flight_sim.utilities.dcm``, with the
+    angles in degrees; phi is wrapped into [0, 360). Outside the grid, each
+    coefficient is extrapolated linearly from the nearest edge cell.
     """
 
-    def __init__(
-        self,
-        mach_axis: np.ndarray,
-        alpha_axis: np.ndarray,
-        phi_axis: np.ndarray,
-        values: np.ndarray,
-    ) -> None:
-        """Store the grid axes and the coefficient values on that grid.
+    mach_axis: np.ndarray  # Strictly increasing, at least two values
+    alpha_axis: np.ndarray  # Degrees, strictly increasing, at least two
+    phi_axis: np.ndarray  # Degrees, strictly increasing, at least two
 
-        Args:
-            mach_axis (np.ndarray): Strictly increasing, at least two values.
-            alpha_axis (np.ndarray): Degrees, strictly increasing, at least two.
-            phi_axis (np.ndarray): Degrees, strictly increasing, at least two.
-            values (np.ndarray): Shape (len(mach_axis), len(alpha_axis),
-                len(phi_axis), 6), last axis in ``AeroCoefficients`` field order.
-        """
-        self.mach_axis = mach_axis
-        self.alpha_axis = alpha_axis
-        self.phi_axis = phi_axis
-        self.values = values
+    # Shape (len(mach_axis), len(alpha_axis), len(phi_axis), 6), last axis in
+    # AeroCoefficients field order
+    values: np.ndarray
+
+    # Forces are normalized by the reference area, moments also by the length
+    reference_area: Annotated[Scalar, "m**2"]
+    reference_length: Annotated[Scalar, "m"]
+
+    # Point the moments are taken about, from the nose tip in body axes
+    reference_point: Annotated[Vector, "m"]
+
+    # Axes the table's components are along; missile-frame components are
+    # rotated into body axes after interpolation
+    frame: Literal["body", "missile"] = "body"
 
     def __call__(self, mach: float, alpha: float, phi: float) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.
@@ -66,7 +70,7 @@ class AeroTable:
             phi (float): Aerodynamic roll angle in degrees.
 
         Returns:
-            AeroCoefficients: The interpolated coefficients.
+            AeroCoefficients: The interpolated coefficients in body axes.
         """
         phi = phi % 360.0
         i = _cell_index(self.mach_axis, mach)
@@ -83,9 +87,13 @@ class AeroTable:
         # Collapse the cell along phi, then alpha, then Mach
         at_phi = cell[:, :, 0] + t_phi * (cell[:, :, 1] - cell[:, :, 0])
         at_alpha = at_phi[:, 0] + t_alpha * (at_phi[:, 1] - at_phi[:, 0])
-        return AeroCoefficients(
-            *(at_alpha[0] + t_mach * (at_alpha[1] - at_alpha[0])).tolist()
-        )
+        coefficients = at_alpha[0] + t_mach * (at_alpha[1] - at_alpha[0])
+        if self.frame == "missile":
+            to_body = missile_to_body(math.radians(phi))
+            coefficients = np.concatenate(
+                (to_body @ coefficients[:3], to_body @ coefficients[3:])
+            )
+        return AeroCoefficients(*coefficients.tolist())
 
 
 def _cell_index(axis: np.ndarray, point: float) -> int:
@@ -97,12 +105,26 @@ def _cell_index(axis: np.ndarray, point: float) -> int:
     return min(max(index, 0), len(axis) - 2)
 
 
-def aero_table_from_csv(filepath: str) -> AeroTable:
+def aero_table_from_csv(
+    filepath: str,
+    *,
+    reference_area: Scalar,
+    reference_length: Scalar,
+    reference_point: Vector,
+    frame: Literal["body", "missile"] = "body",
+) -> AeroTable:
     """Read a flight sim CSV and build one lookup covering every coefficient.
 
     Args:
         filepath (str): CSV with "Mach", "Alpha" and "Phi" columns plus one
-            column per ``AeroCoefficients`` field.
+            column per ``AeroCoefficients`` field, with components along the
+            axes of ``frame``.
+        reference_area (Scalar): Area the coefficients are normalized by.
+        reference_length (Scalar): Length the moments are also normalized by.
+        reference_point (Vector): Point the moments are taken about, from the
+            nose tip in body axes.
+        frame (Literal["body", "missile"], optional): Axes of the CSV's
+            components. Defaults to "body".
 
     Returns:
         AeroTable: Lookup over the CSV's grid.
@@ -124,7 +146,16 @@ def aero_table_from_csv(filepath: str) -> AeroTable:
         ],
         axis=-1,
     )
-    return AeroTable(mach_axis, alpha_axis, phi_axis, values)
+    return AeroTable(
+        mach_axis,
+        alpha_axis,
+        phi_axis,
+        values,
+        reference_area=reference_area,
+        reference_length=reference_length,
+        reference_point=reference_point,
+        frame=frame,
+    )
 
 
 def time_interpolator_from_csv(

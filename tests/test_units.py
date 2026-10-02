@@ -11,6 +11,7 @@ from pint import DimensionalityError
 
 from flight_sim.integration import IntegrationConfiguration, StateDerivative
 from flight_sim.units import Scalar, UnitChecked, scalar, vector, zero_vector
+from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_state import RocketState
 
@@ -57,6 +58,18 @@ def test_quantities_convert_between_units() -> None:
             "IntegrationConfiguration.position_tolerance",
         ),
         (
+            lambda: AeroTable(
+                np.zeros(2),
+                np.zeros(2),
+                np.zeros(2),
+                np.zeros((2, 2, 2, 6)),
+                reference_area=scalar(1.0, "m"),
+                reference_length=scalar(1.0, "m"),
+                reference_point=zero_vector("m"),
+            ),
+            "AeroTable.reference_area",
+        ),
+        (
             lambda: StateDerivative(
                 velocity=zero_vector("m/s"),
                 acceleration=zero_vector("m/s"),
@@ -97,7 +110,6 @@ def test_defaults_carry_expected_units() -> None:
     assert state.position.check("[length]")
     assert state.velocity.check("[length] / [time]")
     assert state.angular_velocity.check("1 / [time]")
-    assert state.reference_point.check("[length]")
 
 
 @dataclass

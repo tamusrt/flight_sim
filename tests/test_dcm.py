@@ -48,14 +48,14 @@ def test_body_to_world_ignores_quaternion_length() -> None:
 
 
 def test_missile_to_body_columns_are_the_missile_axes_rolled_about_x() -> None:
-    """The columns are X, then Y and Z rolled about the nose by phi_a."""
+    """The columns are X, then Y and Z turned about the nose so Z sits at phi_a."""
     phi_a = math.radians(30.0)
     matrix = missile_to_body(phi_a)
     x_missile, y_missile, z_missile = matrix.T
 
     assert x_missile == pytest.approx([1.0, 0.0, 0.0])
-    assert y_missile == pytest.approx([0.0, math.cos(phi_a), math.sin(phi_a)])
-    assert z_missile == pytest.approx([0.0, -math.sin(phi_a), math.cos(phi_a)])
+    assert y_missile == pytest.approx([0.0, math.cos(phi_a), -math.sin(phi_a)])
+    assert z_missile == pytest.approx([0.0, math.sin(phi_a), math.cos(phi_a)])
     assert np.linalg.det(matrix) == pytest.approx(1.0)
 
 
@@ -93,9 +93,9 @@ def test_aero_angles_lay_the_airspeed_in_the_missile_frame_x_z_plane(
         ((100.0, 0.0, 0.0), 0.0, 0.0),
         ((-100.0, 0.0, 0.0), 180.0, 0.0),
         ((100.0, 0.0, 100.0), 45.0, 0.0),
-        ((0.0, -3.0, 0.0), 90.0, 90.0),
+        ((0.0, -3.0, 0.0), 90.0, 270.0),
         ((1.0, 0.0, -1.0), 45.0, 180.0),
-        ((100.0, 100.0, 0.0), 45.0, 270.0),
+        ((100.0, 100.0, 0.0), 45.0, 90.0),
         ((0.0, 0.0, 0.0), 0.0, 0.0),
     ],
 )
@@ -104,7 +104,7 @@ def test_aero_angles_follow_the_crossflow_direction(
     expected_alpha_deg: float,
     expected_phi_deg: float,
 ) -> None:
-    """Alpha is the angle from the nose; phi_a rolls missile +Z onto the crossflow."""
+    """Alpha is the angle from the nose; phi_a runs from body +Z toward +Y."""
     alpha_tot, phi_a = aero_angles(np.array(airspeed))
 
     assert math.degrees(alpha_tot) == pytest.approx(expected_alpha_deg)
@@ -113,6 +113,6 @@ def test_aero_angles_follow_the_crossflow_direction(
 
 def test_aero_angles_phi_stays_below_a_full_turn() -> None:
     """A crossflow a rounding error off +Z reports phi_a as 0, not 2 pi."""
-    _alpha_tot, phi_a = aero_angles(np.array([1.0, 1e-300, 1.0]))
+    _alpha_tot, phi_a = aero_angles(np.array([1.0, -1e-300, 1.0]))
 
     assert 0.0 <= phi_a < math.tau

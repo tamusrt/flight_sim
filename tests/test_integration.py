@@ -1,5 +1,6 @@
 """Integration kernel tests."""
 
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -17,7 +18,8 @@ from flight_sim.integration import (
     step,
 )
 from flight_sim.units import scalar, vector
-from flight_sim.utilities.data_loader import AeroCoefficients
+from flight_sim.utilities.dcm import body_to_world
+from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
@@ -174,22 +176,44 @@ def test_step_triggers_aerodynamic_calculations(
     assert next_state is not None
 
 
-def test_step_pitch_moment_induces_angular_velocity(
-    baseline_rocket_properties: RocketProperties,
+@pytest.mark.parametrize(
+    "attitude", [Quaternion(), Quaternion(q_w=0.5, q_x=-0.5, q_y=0.5, q_z=0.5)]
+)
+def test_aero_loads_match_a_table_row(
+    baseline_rocket_properties: RocketProperties, attitude: Quaternion
 ) -> None:
-    """Test that a non-zero Angle of Attack creates a pitch restoring rotation."""
+    """On a grid point the loads are the row's coefficients scaled by q*S and L."""
+    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    air = config.atmosphere.conditions(0.0)
+    speed = 0.1 * air.speed_of_sound
+    alpha = np.radians(5.0)
+    to_world = body_to_world(attitude)
+
     state = _bare_state()
-    state.velocity = vector((200.0, 50.0, 0.0), "m/s")
     state.current_mass = scalar(20.0, "kg")
+    state.orientation = attitude
+    # Mach 0.1, alpha 5 degrees, crossflow along body +Z so phi_a is 0
+    state.velocity = vector(
+        to_world @ (speed * np.array([np.cos(alpha), 0.0, np.sin(alpha)])), "m/s"
+    )
+    coasting = 100.0
 
-    next_state = step(0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.1, "s"))
+    derivative = derivative_computation(
+        coasting, state, baseline_rocket_properties, config
+    )
 
-    angular_vel = next_state.angular_velocity.m_as("rad/s")
-
-    # X and Y carry only rounding residue from 270 degrees landing off its grid line
-    assert angular_vel[0] == pytest.approx(0.0, abs=1e-12)  # No roll about the nose
-    assert angular_vel[1] == pytest.approx(0.0, abs=1e-12)  # No torque out of XY
-    assert abs(angular_vel[2]) > 0.0  # Pitch rotation successfully applied!
+    force_scale = 0.5 * air.air_density * speed**2 * 0.0182414692
+    force = force_scale * np.array([-0.6, 0.0, -0.1])
+    lever_arm = np.array([2.5, 0.0, 0.0])  # Nose-tip reference point from the CG
+    torque = force_scale * 0.1524 * np.array([0.0, -2.0, 0.0]) + np.cross(
+        lever_arm, force
+    )
+    assert derivative.acceleration.m_as("m/s**2") == pytest.approx(
+        to_world @ force / 20.0
+    )
+    assert derivative.angular_acceleration.m_as("rad/s**2") == pytest.approx(
+        torque / np.array([0.1, 2.5, 2.5])
+    )
 
 
 def test_step_angular_velocity_rotates_orientation(
@@ -228,30 +252,125 @@ def test_step_keeps_orientation_normalized(
     assert orientation.q_w != 1.0  # Orientation actually moved off the pad attitude
 
 
-def test_step_dynamic_cg_moment_transfer(
+def test_torque_free_rotation_conserves_angular_momentum(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
-    """A shifted CG induces a pitch moment at a non-zero alpha."""
-    baseline_rocket_properties.reference_point = vector((0.0, 0.0, 0.0), "m")
-
+    """With no torque, the world-frame angular momentum and spin energy hold."""
+    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
     state = _bare_state()
-    state.cg_location = vector((-2.7432, 0.0, 0.0), "m")
+    state.inertia = vector((1.0, 2.0, 3.0), "kg*m**2")
+    state.angular_velocity = vector((0.3, 1.0, 0.5), "rad/s")
 
+    def momentum_and_energy(spinning: RocketState) -> tuple[np.ndarray, float]:
+        """Return the world-frame angular momentum and the rotational energy."""
+        inertia = spinning.inertia.m_as("kg*m**2")
+        rate = spinning.angular_velocity.m_as("rad/s")
+        momentum = body_to_world(spinning.orientation) @ (inertia * rate)
+        return momentum, 0.5 * float(rate @ (inertia * rate))
+
+    next_state = step(0.0, state, baseline_rocket_properties, config, scalar(5.0, "s"))
+
+    momentum, energy = momentum_and_energy(state)
+    next_momentum, next_energy = momentum_and_energy(next_state)
+    assert next_momentum == pytest.approx(momentum, rel=1e-5)
+    assert next_energy == pytest.approx(energy, rel=1e-5)
+
+
+def test_step_length_is_limited_by_the_attitude_error(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A rocket turning in place still integrates its attitude accurately."""
+    config = IntegrationConfiguration(gravity=ConstantGravity(0.0))
+    state = _bare_state()
+    state.angular_velocity = vector((0.0, 0.5, 0.0), "rad/s")
+
+    next_state = step(0.0, state, baseline_rocket_properties, config, scalar(10.0, "s"))
+
+    half_angle = 0.5 * 10.0 / 2
+    orientation = next_state.orientation
+    assert [
+        orientation.q_w,
+        orientation.q_x,
+        orientation.q_y,
+        orientation.q_z,
+    ] == pytest.approx([np.cos(half_angle), 0.0, np.sin(half_angle), 0.0], abs=1e-6)
+
+
+def test_launch_elevation_sets_the_altitude_of_the_air_and_gravity(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A rocket h above a pad at elevation e flies as if h + e above sea level."""
+    state = _bare_state()
     state.current_mass = scalar(20.0, "kg")
-    state.inertia = vector((0.1, 2.5, 2.5), "kg*m**2")
+    state.velocity = vector((200.0, 30.0, 0.0), "m/s")
+    state.position = vector((100.0, 0.0, 0.0), "m")
+    raised = replace(state, position=vector((1500.0, 0.0, 0.0), "m"))
+    coasting = 100.0
 
-    state.velocity = vector((150.0, 20.0, 0.0), "m/s")
-    state.angular_velocity = vector((0.0, 0.0, 0.0), "rad/s")
+    def rates(rocket: RocketState, config: IntegrationConfiguration) -> np.ndarray:
+        """Return the linear and angular accelerations side by side."""
+        derivative = derivative_computation(
+            coasting, rocket, baseline_rocket_properties, config
+        )
+        return np.concatenate(
+            (
+                derivative.acceleration.m_as("m/s**2"),
+                derivative.angular_acceleration.m_as("rad/s**2"),
+            )
+        )
 
-    next_state = step(0.0, state, baseline_rocket_properties, _CONFIG, scalar(0.1, "s"))
+    high_pad = IntegrationConfiguration(launch_elevation=scalar(1400.0, "m"))
+    assert rates(state, high_pad) == pytest.approx(rates(raised, _CONFIG))
+    assert rates(state, high_pad) != pytest.approx(rates(state, _CONFIG))
 
-    angular_vel = next_state.angular_velocity.m_as("rad/s")
 
-    assert abs(angular_vel[2]) > 0.0
+def _rail_state(tilt_deg: float) -> RocketState:
+    """Return the default rocket at rest on a rail tilted toward +Y."""
+    half_tilt = np.radians(tilt_deg) / 2
+    state = get_default_state()
+    state.orientation = Quaternion(q_w=np.cos(half_tilt), q_z=np.sin(half_tilt))
+    return state
 
-    # X and Y carry only rounding residue from 270 degrees landing off its grid line
-    assert angular_vel[0] == pytest.approx(0.0, abs=1e-12)
-    assert angular_vel[1] == pytest.approx(0.0, abs=1e-12)
+
+def test_rail_guides_the_rocket_along_its_nose(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """On the rail the rocket slides along its nose without turning, despite wind."""
+    config = IntegrationConfiguration(
+        atmosphere=StandardAtmosphere1976(wind_m_s=np.array([0.0, 0.0, 10.0])),
+        rail_length=scalar(5.0, "m"),
+    )
+    state = _rail_state(10.0)
+    nose = body_to_world(state.orientation)[:, 0]
+
+    next_state = step(0.0, state, baseline_rocket_properties, config, scalar(0.2, "s"))
+
+    position = next_state.position.m_as("m")
+    assert next_state.on_rail
+    assert float(position @ nose) > 0.0
+    assert np.cross(nose, position) == pytest.approx(np.zeros(3), abs=1e-12)
+    assert next_state.angular_velocity.m_as("rad/s") == pytest.approx(np.zeros(3))
+    assert next_state.orientation == state.orientation
+
+
+def test_rail_holds_an_unpowered_rocket_on_the_pad(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Without thrust, gravity cannot push the rocket down through the pad."""
+    config = IntegrationConfiguration(rail_length=scalar(5.0, "m"))
+    after_burnout = 100.0
+
+    next_state = step(
+        after_burnout,
+        _rail_state(10.0),
+        baseline_rocket_properties,
+        config,
+        scalar(1.0, "s"),
+    )
+
+    assert next_state.on_rail
+    assert next_state.position.m_as("m") == pytest.approx(np.zeros(3))
+    assert next_state.velocity.m_as("m/s") == pytest.approx(np.zeros(3))
 
 
 def test_six_dof_aerodynamic_response(
@@ -259,9 +378,7 @@ def test_six_dof_aerodynamic_response(
 ) -> None:
     """Verify that all six coefficients drive every axis."""
 
-    baseline_rocket_properties.aero_coefficients = MagicMock(
-        return_value=AeroCoefficients(cx=1.0, cy=1.0, cz=1.0, cmx=1.0, cmy=1.0, cmz=1.0)
-    )
+    baseline_rocket_properties.aero_table.values[:] = 1.0
 
     baseline_rocket_properties.engine = MagicMock(
         get_thrust=MagicMock(return_value=0.0),
@@ -293,9 +410,7 @@ def test_aerodynamics_finite_at_zero_and_reversed_angle_of_attack(
     baseline_rocket_properties: RocketProperties, vertical_velocity: float
 ) -> None:
     """A vertical rocket flying nose-first or tail-first gets finite loads."""
-    baseline_rocket_properties.aero_coefficients = MagicMock(
-        return_value=AeroCoefficients(cx=1.0, cy=1.0, cz=1.0, cmx=1.0, cmy=1.0, cmz=1.0)
-    )
+    baseline_rocket_properties.aero_table.values[:] = 1.0
     baseline_rocket_properties.engine = MagicMock(
         get_thrust=MagicMock(return_value=0.0),
         get_mass_flow=MagicMock(return_value=0.0),
@@ -471,9 +586,10 @@ def test_table_loads_are_symmetric_about_the_nose(
     reference_linear, reference_angular = loads(np.array([0.0, 1.0, 0.0]))
     linear, angular = loads(crossflow)
 
-    # The +Y loads rotated with the crossflow
-    assert abs(reference_linear[1]) > 0.0
-    assert abs(reference_angular[2]) > 0.0
+    # The side force opposes the +Y crossflow and the stable rocket turns into
+    # it, and these loads rotate with the crossflow
+    assert reference_linear[1] < 0.0
+    assert reference_angular[2] > 0.0
     assert linear == pytest.approx(
         reference_linear[0] * nose + reference_linear[1] * crossflow, abs=1e-9
     )

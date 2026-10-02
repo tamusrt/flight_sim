@@ -1,10 +1,18 @@
 """Flight event tests."""
 
+import numpy as np
 import pytest
 
+from flight_sim.__main__ import get_default_state
 from flight_sim.environment.atmosphere import VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
-from flight_sim.events import APOGEE, IMPACT, FlightEvent, peak_vertical_velocity
+from flight_sim.events import (
+    APOGEE,
+    IMPACT,
+    FlightEvent,
+    peak_vertical_velocity,
+    rail_exit,
+)
 from flight_sim.integration import IntegrationConfiguration, adaptive_step
 from flight_sim.units import scalar, vector
 from flight_sim.vehicle.rocket_properties import RocketProperties
@@ -101,6 +109,29 @@ def test_peak_vertical_velocity_lands_where_acceleration_is_zero(
 
     assert hit is peak
     assert peak.value(time, state) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_rail_exit_lands_where_the_rail_releases_the_rocket(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Stepping up the rail ends a step a rail length from the pad, off the rail."""
+    config = IntegrationConfiguration(rail_length=scalar(2.0, "m"))
+    exit_rail = rail_exit(config)
+    state = get_default_state()
+
+    time = 0.0
+    dt = scalar(0.1, "s")
+    hit = None
+    while hit is None:
+        state, dt_taken, dt, hit = adaptive_step(
+            time, state, baseline_rocket_properties, config, dt, events=(exit_rail,)
+        )
+        time += float(dt_taken.m_as("s"))
+        assert time < 1.0
+
+    assert hit is exit_rail
+    assert np.linalg.norm(state.position.m_as("m")) == pytest.approx(2.0)
+    assert not state.on_rail
 
 
 def test_flight_event_is_immutable() -> None:

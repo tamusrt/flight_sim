@@ -63,10 +63,32 @@ class IntegrationConfiguration(UnitChecked):
         default_factory=lambda: scalar(0.0, "deg")
     )
 
-    # Largest position disagreement between the 4th and 5th order RKF45
-    # estimates that a step may have and still be accepted
+    # Height of the pad above sea level
+    launch_elevation: Annotated[Scalar, "m"] = field(
+        default_factory=lambda: scalar(0.0, "m")
+    )
+
+    # Distance from the pad over which the rail holds a rocket on it
+    rail_length: Annotated[Scalar, "m"] = field(
+        default_factory=lambda: scalar(0.0, "m")
+    )
+
+    # A step is accepted when the 4th and 5th order RKF45 estimates of every
+    # state component differ by at most its absolute tolerance plus the
+    # relative tolerance times its magnitude
+    relative_tolerance: float = 1e-7
     position_tolerance: Annotated[Scalar, "m"] = field(
-        default_factory=lambda: scalar(1e-7, "m")
+        default_factory=lambda: scalar(1e-5, "m")
+    )
+    velocity_tolerance: Annotated[Scalar, "m/s"] = field(
+        default_factory=lambda: scalar(1e-5, "m/s")
+    )
+    angular_velocity_tolerance: Annotated[Scalar, "rad/s"] = field(
+        default_factory=lambda: scalar(1e-6, "rad/s")
+    )
+    orientation_tolerance: float = 1e-7
+    mass_tolerance: Annotated[Scalar, "kg"] = field(
+        default_factory=lambda: scalar(1e-6, "kg")
     )
 
     # Shortest step the integrator takes. A step this short is accepted
@@ -115,7 +137,11 @@ class _StepInputs(NamedTuple):
     atmosphere: Callable[[float], AtmosphereConditions]  # From the altitude in m
     gravity: Callable[[float, float], float]  # From the latitude in rad, altitude in m
     latitude_rad: float
-    tolerance_m: float
+    elevation_m: float
+    rail_length_m: float
+    on_rail: bool
+    absolute_tolerance: np.ndarray  # One per state component, SI units
+    relative_tolerance: float
     min_dt_s: float
 
 
@@ -125,19 +151,38 @@ def _step_inputs(
     config: IntegrationConfiguration,
 ) -> _StepInputs:
     """Collect the constants of one step from the state, properties and config."""
+    table = properties.aero_table
     return _StepInputs(
         inertia=state.inertia.m_as("kg*m**2"),
-        lever_arm_body=properties.reference_point.m_as("m")
-        - state.cg_location.m_as("m"),
-        reference_area=float(properties.reference_area.m_as("m**2")),
-        reference_length=float(properties.reference_length.m_as("m")),
+        lever_arm_body=table.reference_point.m_as("m") - state.cg_location.m_as("m"),
+        reference_area=float(table.reference_area.m_as("m**2")),
+        reference_length=float(table.reference_length.m_as("m")),
         properties=properties,
         atmosphere=config.atmosphere.conditions,
         gravity=config.gravity.magnitude,
         latitude_rad=float(config.launch_latitude.m_as("rad")),
-        tolerance_m=float(config.position_tolerance.m_as("m")),
+        elevation_m=float(config.launch_elevation.m_as("m")),
+        rail_length_m=float(config.rail_length.m_as("m")),
+        on_rail=state.on_rail,
+        absolute_tolerance=np.repeat(
+            [
+                float(config.position_tolerance.m_as("m")),
+                float(config.velocity_tolerance.m_as("m/s")),
+                float(config.angular_velocity_tolerance.m_as("rad/s")),
+                config.orientation_tolerance,
+                float(config.mass_tolerance.m_as("kg")),
+            ],
+            [3, 3, 3, 4, 1],
+        ),
+        relative_tolerance=config.relative_tolerance,
         min_dt_s=float(config.min_time_step.m_as("s")),
     )
+
+
+def _on_rail(values: np.ndarray, inputs: _StepInputs) -> bool:
+    """Return whether the rail still holds a rocket in the given state."""
+    distance_from_pad = float(np.linalg.norm(values[_POSITION]))
+    return inputs.on_rail and distance_from_pad < inputs.rail_length_m
 
 
 def _pack(state: RocketState) -> np.ndarray:
@@ -159,13 +204,17 @@ def _pack(state: RocketState) -> np.ndarray:
     )
 
 
-def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
+def _unpack(
+    values: np.ndarray, template: RocketState, inputs: _StepInputs
+) -> RocketState:
     """Rebuild a RocketState from an SI array.
 
     Args:
         values (np.ndarray): Integrated fields in the layout ``_pack`` produces.
         template (RocketState): State supplying the fields the integrator
-            holds constant: inertia, CG location, and reference point.
+            holds constant: inertia and CG location.
+        inputs (_StepInputs): Constants of the step, which decide whether
+            the rail still holds the rocket.
 
     Returns:
         RocketState: The integrated fields combined with the template's
@@ -179,8 +228,8 @@ def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
         orientation=Quaternion(q_w=q_w, q_x=q_x, q_y=q_y, q_z=q_z),
         current_mass=scalar(float(values[_MASS]), "kg"),
         inertia=template.inertia,
-        reference_point=template.reference_point,
         cg_location=template.cg_location,
+        on_rail=_on_rail(values, inputs),
     )
 
 
@@ -218,7 +267,7 @@ def _aero_loads(
 
     Args:
         velocity (np.ndarray): Velocity in the world frame in m/s.
-        altitude (float): Altitude in metres.
+        altitude (float): Altitude above sea level in metres.
         to_body (np.ndarray): World-to-body rotation matrix.
         inputs (_StepInputs): Constants of the step.
 
@@ -229,7 +278,7 @@ def _aero_loads(
     airspeed_body = to_body @ (velocity - conditions.wind)
     speed = math.sqrt(float(airspeed_body @ airspeed_body))
     alpha, phi = aero_angles(airspeed_body)
-    coefficients = inputs.properties.aero_coefficients(
+    coefficients = inputs.properties.aero_table(
         speed / conditions.speed_of_sound, math.degrees(alpha), math.degrees(phi)
     )
 
@@ -256,8 +305,9 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     Returns:
         np.ndarray: Rate of change of each element of ``values``.
     """
-    altitude = float(values[_POSITION][0])
+    altitude = inputs.elevation_m + float(values[_POSITION][0])
     velocity = values[_VELOCITY]
+    angular_velocity = values[_ANGULAR_VELOCITY]
     mass = float(values[_MASS])
     orientation: tuple[float, float, float, float] = tuple(
         values[_ORIENTATION].tolist()
@@ -271,17 +321,30 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     )
     acceleration += thrust_acceleration
 
-    angular_acceleration = np.zeros(3)
+    body_torque = np.zeros(3)
     if mass > 0:
         force_body, body_torque = _aero_loads(velocity, altitude, to_world.T, inputs)
         acceleration += (to_world @ force_body) / mass
-        angular_acceleration = body_torque / inputs.inertia
+
+    # Euler's equations about the principal axes
+    angular_acceleration = (
+        body_torque - cross(angular_velocity, inputs.inertia * angular_velocity)
+    ) / inputs.inertia
+
+    if _on_rail(values, inputs):
+        # The rail cancels all but the push along it, and the pad any push into it
+        rail = to_world[:, 0]
+        along_rail = float(acceleration @ rail)
+        if float(values[_POSITION] @ rail) <= 0.0:
+            along_rail = max(along_rail, 0.0)
+        acceleration = along_rail * rail
+        angular_acceleration = np.zeros(3)
 
     rates = np.empty(_STATE_SIZE)
     rates[_POSITION] = velocity
     rates[_VELOCITY] = acceleration
     rates[_ANGULAR_VELOCITY] = angular_acceleration
-    rates[_ORIENTATION] = quaternion_rates(*orientation, values[_ANGULAR_VELOCITY])
+    rates[_ORIENTATION] = quaternion_rates(*orientation, angular_velocity)
     rates[_MASS] = mass_flow_rate
     return rates
 
@@ -369,11 +432,14 @@ def _adaptive_step(
         # Look into future with 4th and 5th order RKF45 steps
         values_5th, values_4th = rkf45_step(time, values, dt, inputs)
 
-        # Difference between the two position estimates, in metres
-        position_difference = values_5th[_POSITION] - values_4th[_POSITION]
-        error = math.sqrt(float(position_difference @ position_difference))
+        # Largest difference between the two estimates, in units of its
+        # component's tolerance
+        tolerance = inputs.absolute_tolerance + inputs.relative_tolerance * np.maximum(
+            np.abs(values), np.abs(values_5th)
+        )
+        error = float(np.max(np.abs(values_5th - values_4th) / tolerance))
 
-        if error <= inputs.tolerance_m:
+        if error <= 1.0:
             break
         if not math.isfinite(error):
             raise FloatingPointError(
@@ -381,26 +447,20 @@ def _adaptive_step(
             )
         if dt <= inputs.min_dt_s:
             warnings.warn(
-                f"Accepted a step at t = {time} s with position error {error:.3g} m"
-                f" over the {inputs.tolerance_m} m tolerance at the minimum step"
-                f" length of {inputs.min_dt_s} s",
+                f"Accepted a step at t = {time} s with error {error:.3g} times the"
+                f" tolerance at the minimum step length of {inputs.min_dt_s} s",
                 RuntimeWarning,
                 stacklevel=2,
             )
             break
-        dt = max(
-            dt * max(0.9 * (inputs.tolerance_m / error) ** 0.2, 0.1), inputs.min_dt_s
-        )
+        dt = max(dt * max(0.9 * error**-0.2, 0.1), inputs.min_dt_s)
 
     # Keep the orientation a unit quaternion
     orientation = values_5th[_ORIENTATION]
     values_5th[_ORIENTATION] = orientation / math.sqrt(float(orientation @ orientation))
 
-    if error > 0:
-        next_dt = dt * min(0.9 * (inputs.tolerance_m / error) ** 0.2, 1.5)
-    else:
-        next_dt = dt * 1.5
-    return values_5th, dt, max(next_dt, inputs.min_dt_s)
+    growth = min(0.9 * error**-0.2, 1.5) if error > 0 else 1.5
+    return values_5th, dt, max(dt * growth, inputs.min_dt_s)
 
 
 def adaptive_step(
@@ -414,11 +474,11 @@ def adaptive_step(
 ) -> tuple[RocketState, Scalar, Scalar, "FlightEvent | None"]:
     """Advance the rocket state by one step whose length the error sets.
 
-    The step is ``dt`` or shorter: RKF45 shrinks it until the position error
-    is within tolerance, and the step ends exactly at the first of ``events``
-    it crosses. Pass the returned next step length back in on the following
-    call so step lengths adapt to the flight. Inertia and CG location are
-    held constant across the step.
+    The step is ``dt`` or shorter: RKF45 shrinks it until the error in every
+    state component is within tolerance, and the step ends exactly at the
+    first of ``events`` it crosses. Pass the returned next step length back
+    in on the following call so step lengths adapt to the flight. Inertia
+    and CG location are held constant across the step.
 
     Args:
         time (float): Time since ignition in seconds, for the thrust curve.
@@ -433,13 +493,11 @@ def adaptive_step(
             the length of the step taken, the step length to try next, and
             the event the step ended on, if any.
     """
+    inputs = _step_inputs(state, properties, config)
     values, dt_taken, next_dt = _adaptive_step(
-        time,
-        _pack(state),
-        float(dt.m_as("s")),
-        _step_inputs(state, properties, config),
+        time, _pack(state), float(dt.m_as("s")), inputs
     )
-    next_state = _unpack(values, state)
+    next_state = _unpack(values, state, inputs)
     for event in events:
         if event.crossed(time, state, time + dt_taken, next_state):
             next_state, dt_to_event = locate_event(
@@ -492,7 +550,7 @@ def step(
         )
         time_simulated += dt_taken
 
-    return _unpack(current_values, state)
+    return _unpack(current_values, state, inputs)
 
 
 def locate_event(

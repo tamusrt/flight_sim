@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from flight_sim.units import Scalar, UnitChecked, Vector, vector, zero_vector
+from flight_sim.units import Scalar, UnitChecked, Vector, zero_vector
 from flight_sim.utilities.quaternion import Quaternion
 
 
@@ -22,7 +22,7 @@ class RocketState(UnitChecked):
     # Diagonal inertia (I_xx, I_yy, I_zz) in body axes
     inertia: Annotated[Vector, "kg*m**2"]
 
-    # Center of gravity from the nose tip, body axes
+    # Center of gravity from the nose tip in body axes, so aft is -X
     cg_location: Annotated[Vector, "m"]
 
     # Position Coordinates
@@ -41,7 +41,6 @@ class RocketState(UnitChecked):
     # Orientation
     orientation: Quaternion = field(default_factory=Quaternion)
 
-    # Moment reference point of the aerodynamic table, from the nose tip
-    reference_point: Annotated[Vector, "m"] = field(
-        default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
-    )
+    # Held by the launch rail, which lets the rocket slide along its nose
+    # direction but not turn
+    on_rail: bool = False

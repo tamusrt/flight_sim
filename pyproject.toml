@@ -42,8 +42,9 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 # The integrator's public functions take the time, state, vehicle,
 # configuration and step
 max-args = 7
-# State and property dataclasses hold one field per physical quantity
-max-attributes = 12
+# Configuration, state and property dataclasses hold one field per setting
+# or physical quantity
+max-attributes = 14
 # Numerical routines carry many intermediate quantities
 max-locals = 20
 

@@ -5,9 +5,16 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd  # type: ignore[import-untyped]
 
-from flight_sim.events import APOGEE, IMPACT, FlightEvent, peak_vertical_velocity
+from flight_sim.events import (
+    APOGEE,
+    IMPACT,
+    FlightEvent,
+    peak_vertical_velocity,
+    rail_exit,
+)
 from flight_sim.integration import IntegrationConfiguration, adaptive_step
-from flight_sim.units import scalar, vector
+from flight_sim.units import scalar, vector, zero_vector
+from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
@@ -23,21 +30,35 @@ def get_default_state() -> RocketState:
         cg_location=vector((-1.5, 0.0, 0.0), "m"),
         angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
         orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
+        on_rail=True,
+    )
+
+
+def get_default_properties() -> RocketProperties:
+    """Build the standard aerodynamic and motor properties for Sol Invictus."""
+    return RocketProperties(
+        aero_table=aero_table_from_csv(
+            "tests/test_data/standard_aero.csv",
+            reference_area=scalar(0.0182414692, "m**2"),
+            reference_length=scalar(0.1524, "m"),
+            reference_point=zero_vector("m"),
+        ),
+        motor_file_path="tests/test_data/standard_motor.csv",
+        propellant_mass=5.0,
     )
 
 
 def main() -> None:
     """Main function to run entire flight"""
-    properties = RocketProperties(
-        aero_file_path="tests/test_data/standard_aero.csv",
-        motor_file_path="tests/test_data/standard_motor.csv",
-        propellant_mass=5.0,
-        reference_area=scalar(0.0182414692, "m**2"),
-        reference_length=scalar(0.1524, "m"),
-    )
+    properties = get_default_properties()
     state = get_default_state()
-    config = IntegrationConfiguration()
-    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
+    config = IntegrationConfiguration(rail_length=scalar(17.0, "ft"))
+    events = (
+        rail_exit(config),
+        peak_vertical_velocity(properties, config),
+        APOGEE,
+        IMPACT,
+    )
 
     dt = scalar(0.01, "s")  # First step length to try
     current_time = 0.0
