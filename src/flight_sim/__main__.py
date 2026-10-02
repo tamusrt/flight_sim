@@ -17,7 +17,7 @@ import math
 import os
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -40,10 +40,18 @@ from flight_sim.events import (
     peak_vertical_velocity,
     rail_exit,
 )
+from flight_sim.flight_computer import FlightComputer
 from flight_sim.integration import (
     IntegrationConfiguration,
     TruthConfiguration,
     adaptive_step,
+)
+from flight_sim.recovery_extension import EJECTION_CHARGE, FLIGHT_COMPUTER
+from flight_sim.recovery_systems import (
+    BlackPowderCharge,
+    DualDeploy,
+    RecoveryScheme,
+    ReefedSingleSeparation,
 )
 from flight_sim.units import scalar, vector, zero_vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
@@ -123,7 +131,7 @@ RECOVERY = RecoverySystem(
 
 
 @dataclass(frozen=True)
-class RocketProfile:
+class RocketProfile:  # pylint: disable=too-many-instance-attributes
     """Everything that changes from one rocket to the next.
 
     The launch site, wind, atmosphere and latitude are shared, since both
@@ -139,9 +147,17 @@ class RocketProfile:
     reference_length_m: float
     fins: TrapezoidFinSet
     rail: LaunchRail
-    recovery: RecoverySystem
+    scheme: RecoveryScheme
     # Logged flight to compare against in the viewer, if there is one
     flight_data: str | None = None
+    # The day's conditions; Sol Invictus's by default
+    wind: UniformWind = field(default_factory=lambda: WIND)
+    pad_temperature_k: float = PAD_TEMPERATURE_K
+
+    @property
+    def recovery(self) -> RecoverySystem:
+        """The canopies of the recovery scheme."""
+        return self.scheme.recovery
 
 
 INVICTUS = RocketProfile(
@@ -154,7 +170,7 @@ INVICTUS = RocketProfile(
     reference_length_m=0.1524,
     fins=FINS,
     rail=LAUNCH_RAIL,
-    recovery=RECOVERY,
+    scheme=ReefedSingleSeparation(RECOVERY, FLIGHT_COMPUTER, EJECTION_CHARGE),
 )
 
 # Morpheus, flown at IREC 2025 on a Cesaroni Pro98 O3400. Mass, CG and
@@ -163,10 +179,36 @@ INVICTUS = RocketProfile(
 # place of its Loki motor; the drop between the two masses is the 11.272 kg
 # of propellant in the .eng header. The body is 5.074 in across, and the fins
 # are the RASAero ones. The rail is 17 ft, tilted the 7.1 degrees from
-# vertical that the flight computer logged. The fin misalignment is the same
-# assumed defect as above. Recovery is the file's 36 in drogue at apogee and
-# Iris Compact 96 in main at 1200 ft, with the drogue's drag coefficient left
-# at OpenRocket's automatic 0.8.
+# vertical that the flight computer logged; with it the sim leaves the rail at
+# 127 ft/s against the 128 ft/s of SRT12's own prediction (IREC FRR). The
+# fin misalignment is the same assumed defect as above. The day is SRT12's
+# "likely conditions by IREC": 12 mph wind and 91 F.
+#
+# Recovery follows SRT12's recovery slides and sheets, as dual deploy on two
+# separations (Morpheus IREC FRR, 8_recovery):
+# * Drogue: Top Flight 36 in thin mill, Cd 0.8. Main: Fruity Chutes Iris
+#   Ultra Compact 96 in, Cd 2.2.
+# * Blue Raven programmed (deploy settings, June 2025): apogee channel
+#   after 1.0 s, main channel below 1500 ft AGL after 1.0 s.
+# * Charges of ffffg black powder in 4.8 in bays: 2 g drogue in 8.5 in of
+#   bay, 3.5 g main in 16 in (the charge sizing sheet's lengths). The FRR's
+#   backups (3 g and 4.75 g) are not flown. Pins are 4-40 nylon, four at each
+#   joint (the sheet's count at the main; the drogue joint's is assumed), at
+#   the middle of the sheet's 49.8 to 72.7 lbf.
+# * The drogue joint is between the forward body and the fin can, with 35 ft
+#   of cord; the main leaves with the nose cone, on 30 ft of cord. Section
+#   masses are OpenRocket's: 6.28 kg forward of the joint, of which the nose
+#   cone with its main is 1.52 kg, so 11.35 kg of fin can at burnout. Their
+#   drag areas are assumed, as for Sol Invictus.
+# The drogue and the main fall as one point mass; the separate sections'
+# swing is not modelled.
+_IN_TO_M = 0.0254
+_MORPHEUS_BAY_DIAMETER_M = 4.8 * _IN_TO_M
+_NYLON_4_40_PIN_N = 61.3 * 4.448222
+_MORPHEUS_SHOCK_CORD_SHOULDER_M = 0.254  # Fin can's shoulder at the drogue joint
+_MORPHEUS_NOSE_SHOULDER_M = 0.165  # Nose cone's shoulder
+_MORPHEUS_NOSE_CONE_KG = 1.52
+_MORPHEUS_FIN_CAN_KG = 17.630 - 6.275
 MORPHEUS_FLIGHT_DATA = (
     r"G:\Shared drives\TAMU-SRT\srt_general\9_flight_data\Morpheus"
     r"\06132025_irec\SRT_BJAY LR_06-13-2025_08_26_21.csv"
@@ -201,19 +243,53 @@ MORPHEUS = RocketProfile(
         elevation=scalar(90.0 - 7.1, "deg"),
         azimuth=scalar(270.0, "deg"),
     ),
-    recovery=RecoverySystem(
-        parachutes=(
-            Parachute("drogue", diameter_m=36 * 0.0254, drag_coefficient=0.8),
-            Parachute(
-                "main",
-                diameter_m=96 * 0.0254,
-                drag_coefficient=2.2,
-                deploy_altitude_m=365.76,
+    scheme=DualDeploy(
+        recovery=RecoverySystem(
+            parachutes=(
+                Parachute("drogue", diameter_m=36 * _IN_TO_M, drag_coefficient=0.8),
+                Parachute(
+                    "main",
+                    diameter_m=96 * _IN_TO_M,
+                    drag_coefficient=2.2,
+                    deploy_altitude_m=1500.0 * FT_TO_M,
+                ),
             ),
+            body_drag_area_m2=0.55 * MORPHEUS_REFERENCE_AREA_M2,
         ),
-        body_drag_area_m2=0.55 * MORPHEUS_REFERENCE_AREA_M2,
+        computer=FlightComputer(apogee_delay_s=1.0, main_altitude_m=1500.0 * FT_TO_M),
+        apogee_charge=BlackPowderCharge(
+            grams=2.0,
+            bay_diameter_m=_MORPHEUS_BAY_DIAMETER_M,
+            bay_length_m=8.5 * _IN_TO_M,
+        ).ejection(
+            stroke_m=_MORPHEUS_SHOCK_CORD_SHOULDER_M,
+            shear_pins=4,
+            pin_strength_n=_NYLON_4_40_PIN_N,
+            section_mass_kg=_MORPHEUS_FIN_CAN_KG,
+            section_drag_area_m2=0.55 * MORPHEUS_REFERENCE_AREA_M2,
+            other_drag_area_m2=0.55 * MORPHEUS_REFERENCE_AREA_M2,
+            cord_length_m=35.0 * FT_TO_M,
+        ),
+        main_charge=BlackPowderCharge(
+            grams=3.5,
+            bay_diameter_m=_MORPHEUS_BAY_DIAMETER_M,
+            bay_length_m=16.0 * _IN_TO_M,
+        ).ejection(
+            stroke_m=_MORPHEUS_NOSE_SHOULDER_M,
+            shear_pins=4,
+            pin_strength_n=_NYLON_4_40_PIN_N,
+            section_mass_kg=_MORPHEUS_NOSE_CONE_KG,
+            section_drag_area_m2=0.5 * MORPHEUS_REFERENCE_AREA_M2,
+            other_drag_area_m2=0.55 * MORPHEUS_REFERENCE_AREA_M2,
+            cord_length_m=30.0 * FT_TO_M,
+        ),
+        main_delay_s=1.0,
     ),
     flight_data=MORPHEUS_FLIGHT_DATA,
+    wind=UniformWind(
+        speed=scalar(12.0 * 0.44704, "m/s"), from_azimuth=scalar(270.0, "deg")
+    ),
+    pad_temperature_k=(91.0 - 32.0) / 1.8 + 273.15,
 )
 
 
@@ -271,10 +347,10 @@ def get_default_config(profile: RocketProfile = INVICTUS) -> IntegrationConfigur
         truth=TruthConfiguration(
             atmosphere=LaunchSiteAtmosphere(
                 pad_elevation_m=PAD_ELEVATION_M,
-                pad_temperature_k=PAD_TEMPERATURE_K,
+                pad_temperature_k=profile.pad_temperature_k,
                 pad_pressure_pa=PAD_PRESSURE_PA,
             ),
-            wind=WIND,
+            wind=profile.wind,
             launch_latitude=scalar(LAUNCH_LATITUDE_DEG, "deg"),
             launch_elevation=scalar(PAD_ELEVATION_M, "m"),
             launch_rail=profile.rail,

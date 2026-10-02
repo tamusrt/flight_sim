@@ -209,6 +209,11 @@ class RecoveryPlan:
         main_true_altitude_m (float | None): True altitude above the pad at
             that moment; it differs from the setting through filter lag and
             the standard-atmosphere assumption.
+        main_fire_s (float | None): Time the main separation's charge fires,
+            for a scheme whose main comes out on its own separation.
+        main_separation (Separation | None): That separation.
+        main_line_stretch_s (float | None): Time its cord comes tight and the
+            main starts to inflate.
     """
 
     recovery: RecoverySystem
@@ -220,6 +225,9 @@ class RecoveryPlan:
     line_stretch_s: float
     main_command_s: float | None
     main_true_altitude_m: float | None
+    main_fire_s: float | None = None
+    main_separation: Separation | None = None
+    main_line_stretch_s: float | None = None
 
 
 def plan_recovery(

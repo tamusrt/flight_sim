@@ -117,15 +117,22 @@ def _log_recovery(
     profile: RocketProfile,
 ) -> None:
     """Fly and log the descent with the extended recovery model."""
-    plan = recovery_extension.plan_full_recovery(flight, config, profile.recovery)
-    print(f"charge fires at {plan.fire_s:.2f} seconds")
-    print(f"line stretch at {plan.line_stretch_s:.2f} seconds")
+    plan = recovery_extension.plan_full_recovery(flight, config, profile.scheme)
+    print(f"Recovery: {profile.scheme.kind}")
+    if plan.separation.separated:
+        print(f"charge fires at {plan.fire_s:.2f} seconds")
+        print(f"line stretch at {plan.line_stretch_s:.2f} seconds")
+    if plan.main_fire_s is not None and plan.main_line_stretch_s is not None:
+        print(f"main charge fires at {plan.main_fire_s:.2f} seconds")
+        print(f"main line stretch at {plan.main_line_stretch_s:.2f} seconds")
     for deployment in plan.descent.deployments:
         print(f"{deployment.name} at {deployment.time_s:.2f} seconds")
     print(f"impact at {plan.descent.times_s[-1]:.2f} seconds")
     recovery_extension.log_events(log, plan)
     for (time, frame), sample in zip(
-        recovery_extension.frames(plan), plan.descent.states, strict=True
+        recovery_extension.frames(plan, profile.scheme),
+        plan.descent.states,
+        strict=True,
     ):
         if max_time is not None and time > max_time:
             break

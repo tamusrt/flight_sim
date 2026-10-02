@@ -16,23 +16,12 @@ The settings below are the recovery team's, or assumptions noted at each one.
 
 from collections.abc import Iterator
 
-import numpy as np
-
 from flight_sim.canopy_swing import CanopySwing
 from flight_sim.descent import RecoverySystem
-from flight_sim.flight_computer import (
-    FlightComputer,
-    RecoveryPlan,
-    Sample,
-    plan_recovery,
-)
+from flight_sim.flight_computer import FlightComputer, RecoveryPlan, Sample
 from flight_sim.integration import IntegrationConfiguration
-from flight_sim.recovery_motion import (
-    CORD_TO_BODY_M,
-    CORD_TO_NOSE_M,
-    EjectionCharge,
-    NoseSwing,
-)
+from flight_sim.recovery_motion import EjectionCharge
+from flight_sim.recovery_systems import RecoveryScheme, SingleSeparation
 from flight_sim.visualize import RecoveryFrame, TelemetryLog
 
 _FT_TO_M = 0.3048
@@ -41,24 +30,21 @@ _FT_TO_M = 0.3048
 # the standard launch assumes for the canopy), the reef is cut at 2000 ft
 FLIGHT_COMPUTER = FlightComputer(apogee_delay_s=3.0, main_altitude_m=2000.0 * _FT_TO_M)
 
-# The nose section's mass, from SOL_4_30.ork
+# The nose section's mass, from SOL_4_30.ork. The suspension lines (0.9 of the
+# canopy diameter), the nose's centre of mass (0.45 m from its harness) and
+# the joint station (0.9144 m from the nose tip) are the defaults of
+# ``SingleSeparation``.
 EJECTION_CHARGE = EjectionCharge(nose_mass_kg=4.004)
 
-# Suspension lines from the canopy's skirt to the cord, as a share of its
-# diameter (assumed)
-_LINE_SHARE = 0.9
 
-# The nose section's centre of mass from its harness at the shoulder, about
-# half the section (assumed)
-NOSE_HARNESS_TO_CG_M = 0.45
-
-# Nose tip to the separation joint, where both harnesses are (SOL_4_30.ork)
-_SEPARATION_STATION_M = 0.9144
+def _sol_invictus_scheme(recovery: RecoverySystem) -> SingleSeparation:
+    """Single separation with this module's settings, around a recovery system."""
+    return SingleSeparation(recovery, FLIGHT_COMPUTER, EJECTION_CHARGE)
 
 
 def lines_m(recovery: RecoverySystem) -> float:
     """Length of the suspension lines of the biggest canopy, in metres."""
-    return _LINE_SHARE * max((p.diameter_m for p in recovery.parachutes), default=0.0)
+    return _sol_invictus_scheme(recovery).lines_m
 
 
 def canopy_swing_for(
@@ -78,30 +64,32 @@ def canopy_swing_for(
     Returns:
         CanopySwing: The model, with its other settings at their defaults.
     """
-    length = (
-        CORD_TO_BODY_M + lines_m(recovery) + centre_of_gravity_m - _SEPARATION_STATION_M
-    )
-    return CanopySwing(line_length_m=length)
+    return _sol_invictus_scheme(recovery).swing(centre_of_gravity_m)
 
 
 def plan_full_recovery(
-    flight: list[Sample], config: IntegrationConfiguration, recovery: RecoverySystem
+    flight: list[Sample],
+    config: IntegrationConfiguration,
+    recovery: RecoverySystem | RecoveryScheme,
 ) -> RecoveryPlan:
     """Fly the descent with the flight computer, the ejection and the swing.
 
     Args:
         flight (list[Sample]): The ascent, ending at the true apogee.
         config (IntegrationConfiguration): Atmosphere and gravity.
-        recovery (RecoverySystem): The canopies, with nominal settings.
+        recovery (RecoverySystem | RecoveryScheme): A recovery architecture,
+            which flies as it describes; a bare set of canopies flies as
+            Sol Invictus's single separation, with this module's settings.
 
     Returns:
         RecoveryPlan: The timeline and the descent flown with it.
     """
-    apogee = flight[-1][1]
-    swing = canopy_swing_for(recovery, -float(apogee.cg_location.m_as("m")[0]))
-    return plan_recovery(
-        flight, config, recovery, FLIGHT_COMPUTER, EJECTION_CHARGE, swing=swing
+    scheme = (
+        recovery
+        if isinstance(recovery, RecoveryScheme)
+        else _sol_invictus_scheme(recovery)
     )
+    return scheme.plan(flight, config)
 
 
 def log_events(log: TelemetryLog, plan: RecoveryPlan) -> None:
@@ -115,68 +103,72 @@ def log_events(log: TelemetryLog, plan: RecoveryPlan) -> None:
     ):
         if time is not None:
             log.add_event(kind, name, time)
-    log.add_event(
-        "charge", "Separation charge", plan.fire_s, speed=plan.separation.speed_m_s
-    )
-    log.add_event(
-        "stretch",
-        "Line stretch",
-        plan.line_stretch_s,
-        snatch=plan.separation.snatch_force_n,
-    )
-    for stage, deployment in enumerate(plan.descent.deployments):
-        log.add_event(
-            "deploy" if stage == 0 else "disreef",
-            deployment.name.capitalize(),
-            deployment.time_s,
-            inflation=deployment.inflation_time_s or 0.0,
-            load=deployment.peak_force_n,
-            altitude=deployment.altitude_m,
+    timeline: list[tuple[float, str, str, dict[str, float]]] = []
+    if plan.separation.separated:
+        timeline.append(
+            (
+                plan.fire_s,
+                "charge",
+                "Separation charge",
+                {"speed": plan.separation.speed_m_s},
+            )
         )
+        timeline.append(
+            (
+                plan.line_stretch_s,
+                "stretch",
+                "Line stretch",
+                {"snatch": plan.separation.snatch_force_n},
+            )
+        )
+    main = plan.main_separation
+    if main is not None and plan.main_fire_s is not None and main.separated:
+        timeline.append(
+            (
+                plan.main_fire_s,
+                "charge",
+                "Main separation charge",
+                {"speed": main.speed_m_s},
+            )
+        )
+        if plan.main_line_stretch_s is not None:
+            timeline.append(
+                (
+                    plan.main_line_stretch_s,
+                    "stretch",
+                    "Main line stretch",
+                    {"snatch": main.snatch_force_n},
+                )
+            )
+    for deployment in plan.descent.deployments:
+        timeline.append(
+            (
+                deployment.time_s,
+                "disreef" if deployment.name.endswith("reef cut") else "deploy",
+                deployment.name.capitalize(),
+                {
+                    "inflation": deployment.inflation_time_s or 0.0,
+                    "load": deployment.peak_force_n,
+                    "altitude": deployment.altitude_m,
+                },
+            )
+        )
+    for time, kind, name, extra in sorted(timeline, key=lambda e: e[0]):
+        log.add_event(kind, name, time, **extra)
 
 
-def frames(plan: RecoveryPlan) -> Iterator[tuple[float, RecoveryFrame]]:
+def frames(
+    plan: RecoveryPlan, scheme: RecoveryScheme | None = None
+) -> Iterator[tuple[float, RecoveryFrame]]:
     """The recovery hardware at each sample of the descent.
 
     Yields the sample time and what the scene draws besides the rocket: the
     nose coming out of the body, then the line to the canopy, the canopy's
     angle of attack and drag share, and the nose swinging on its leg.
+
+    Args:
+        plan (RecoveryPlan): The descent to draw.
+        scheme (RecoveryScheme | None): The architecture it was flown with;
+            by default, single separation with this module's settings.
     """
-    descent, swing = plan.descent, plan.swing
-    if swing is None:
-        raise ValueError("The plan was not flown with the swing model")
-    times = descent.times_s
-    stretch = int(np.searchsorted(times, plan.line_stretch_s))
-    lines = np.array(swing.line_directions)
-    nose = NoseSwing(
-        length_m=CORD_TO_NOSE_M + lines_m(plan.recovery) + NOSE_HARNESS_TO_CG_M
-    )
-    nose_dirs = nose.swing(
-        times,
-        np.array(swing.canopy_velocities),
-        start_s=plan.line_stretch_s,
-        start=lines[min(stretch, len(times) - 1)],
-    )
-    curve = plan.separation
-    for i, time in enumerate(times):
-        if time >= plan.line_stretch_s and float(np.linalg.norm(lines[i])) > 0.0:
-            yield (
-                time,
-                RecoveryFrame(
-                    nose_dir=[float(x) for x in nose_dirs[i]],
-                    line=[float(x) for x in lines[i]],
-                    swing_deg=float(np.degrees(swing.angles_rad[i])),
-                    drag_fraction=swing.drag_fractions[i],
-                ),
-            )
-        elif time >= plan.fire_s:
-            yield (
-                time,
-                RecoveryFrame(
-                    nose_sep=float(
-                        np.interp(time - plan.fire_s, curve.times_s, curve.distances_m)
-                    )
-                ),
-            )
-        else:
-            yield time, RecoveryFrame()
+    return (scheme or _sol_invictus_scheme(plan.recovery)).frames(plan)

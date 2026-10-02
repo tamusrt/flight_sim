@@ -532,6 +532,10 @@ function getFrame(tt){
 /* the clock starts 5 s before the data does: the rocket sits on the pad until t = 0 (display only) */
 var TMIN=-5, tNow=0, tMax=1, prevT=0, playing=false, rate=1, last=performance.now(), view='follow';
 var cam={az:0.62,azT:0.62,el:0.3,elT:0.3,dist:99,distT:99,tgt:new V3(),pan:new V3()}, wideC=new V3(), wideD=6000;
+/* what the recovery is doing at a time: the latest separation or canopy event, which also reads for a drogue then a main */
+function recoPhase(t){ var st=null; events.forEach(function(e){ if(e.t>t) return; if(e.k==='charge') st='sep'; else if(e.k==='deploy') st=e; else if(e.k==='disreef') st='open'; });
+  if(st===null) return 'Free fall ↓'; if(st==='sep') return 'Separation ↓'; if(st==='open') return 'Under main ↓';
+  return /reefed$/i.test(st.name||'')?'Under reefed main ↓':'Under '+(st.name||'canopy').toLowerCase()+' ↓'; }
 var events=[], bars=[], apoIdx=0, REC={dep:null,cut:null,rail:null}, POST=12, NOSE_MASS=4.0, CANOPY_MASS=0.71, CORD_VIS=0.35;
 var vis={world:true,body:true,missile:false,vec:false,trail:true,aero:true,pad:false};
 
@@ -560,9 +564,9 @@ function setDataset(d){
   (d.events||[]).forEach(function(e){
     if(e.kind==='vote') events.push({k:'vote',label:e.name+' (FC)',t:e.t,c:'--vel'});
     if(e.kind==='fc') events.push({k:'fc',label:'Apogee detected (FC)',t:e.t,c:'--vel'});
-    if(e.kind==='charge') events.push({k:'charge',label:'Separation charge',t:e.t,c:'--phi',speed:e.speed});
-    if(e.kind==='stretch') events.push({k:'stretch',label:'Line stretch',t:e.t,c:'--phi',snatch:e.snatch});
-    if(e.kind==='deploy') events.push({k:'deploy',label:'Reefed main inflates',t:e.t,c:'--phi',fill:e.inflation||0,load:e.load});
+    if(e.kind==='charge') events.push({k:'charge',label:e.name||'Separation charge',name:e.name,t:e.t,c:'--phi',speed:e.speed});
+    if(e.kind==='stretch') events.push({k:'stretch',label:e.name||'Line stretch',name:e.name,t:e.t,c:'--phi',snatch:e.snatch});
+    if(e.kind==='deploy') events.push({k:'deploy',label:/reefed$/i.test(e.name||'')?'Reefed main inflates':(e.name||'Canopy')+' inflates',name:e.name,t:e.t,c:'--phi',fill:e.inflation||0,load:e.load});
     if(e.kind==='disreef') events.push({k:'disreef',label:'Reef cut · main open',t:e.t,c:'--phi',fill:e.inflation||0,load:e.load,alt:e.altitude}); });
   /* hybrid tail-off: liquid N2O runs out where the thrust falls fastest after its peak (estimate) */
   var pk=0; for(i=1;i<d.N;i++) if(d.thrust[i]>d.thrust[pk]) pk=i;
@@ -1028,10 +1032,11 @@ function draw(dtReal){
   /* HUD: the readouts are the simulation at the playback time, even while the drawn landing plays out */
   if(tq!==tNow){ getFrame(tNow); spA=F.air.length(); spG=F.vel.length(); alt=F.pos.x; if(landed){ spA=0; spG=0; } }
   var tb=evt('burnout'), apo=evt('apogee'), cut=REC.cut, fcAp=evt('fc');
-  var phase=landed?'Landed':tNow<0?'Countdown':tNow<REC.rail.t?'On rail':(tb&&tNow<tb.t)||(!tb&&F.thrust>1)?'Boost':(apo&&tNow<apo.t)?'Coast ↑':!sep?'Free fall ↓':REC.stretch&&tNow<REC.stretch.t?'Separation ↓':cut&&tNow>=cut.t?'Under main ↓':'Under reefed main ↓';
-  var recoTxt=!dep?'–':!sep?'Stowed':landed?'On the ground':cut&&tNow>=cut.t?(rs&&rs.blend<0.99?'Disreefing':'Main open'):rs&&!rs.stretched?'Ejecting nose':dep&&tNow<dep.t+0.05?'Line stretch':rs&&rs.blend<0.99?'Inflating':'Reefed';
+  var phase=landed?'Landed':tNow<0?'Countdown':tNow<REC.rail.t?'On rail':(tb&&tNow<tb.t)||(!tb&&F.thrust>1)?'Boost':(apo&&tNow<apo.t)?'Coast ↑':recoPhase(tNow);
+  var firstCh=null; events.forEach(function(e){ if(e.k==='charge'&&!firstCh) firstCh=e; });
+  var recoTxt=!dep?'–':!(firstCh&&tNow>=firstCh.t)?'Stowed':landed?'On the ground':cut&&tNow>=cut.t?(rs&&rs.blend<0.99?'Disreefing':'Main open'):rs&&!rs.stretched?'Ejecting nose':dep&&tNow<dep.t+0.05?'Line stretch':rs&&rs.blend<0.99?'Inflating':'Reefed';
   var votes=events.filter(function(e){return e.k==='vote'&&tNow>=e.t}).length;
-  var fcTxt=!fcAp?'–':tNow<10?'Boost lockout':tNow<fcAp.t?'Armed · votes '+votes+'/3':REC.charge&&tNow<REC.charge.t?'Apogee · delay':cut&&tNow>=cut.t?'Main fired':'Charge fired';
+  var fcTxt=!fcAp?'–':tNow<10?'Boost lockout':tNow<fcAp.t?'Armed · votes '+votes+'/3':firstCh&&tNow<firstCh.t?'Apogee · delay':cut&&tNow>=cut.t?'Main fired':'Charge fired';
   rA.textContent=sep?'–':fmt(alpha*DEG,1)+'°'; rP.textContent=sep?'–':fmt(phi*DEG,0)+'°'; rV.textContent=fmt(spA,1)+' m/s';
   rT.textContent=F.thrust>1?fmt(F.thrust,0)+' N'+(isFinite(F.mdot)&&F.mdot>0?' · '+fmt(F.mdot,2)+' kg/s':''):'0 N'; rM.textContent=F.mass>0?fmt(F.mass,2)+' kg':'–'; rPh.textContent=phase;
   rQ.textContent=fmt(F.q/1000,1)+' kPa'; rSM.textContent=showCP?fmt((F.cp-F.cg)/(2*VEH.radius),2)+' cal':'–';
@@ -1057,9 +1062,9 @@ function tick(now){
         else if(e.k==='maxq') showBanner('aero','MAX Q · '+fmt(e.q/1000,1)+' kPa',false);
         else if(e.k==='mach') showBanner('aero','MACH 1 · t = '+fmt(e.t,1)+' s',false);
         else if(e.k==='fc') showBanner('rail','FLIGHT COMPUTER · APOGEE DETECTED · t = '+fmt(e.t,2)+' s',false);
-        else if(e.k==='charge') showBanner('reco','SEPARATION CHARGE · NOSE OUT AT '+fmt(e.speed||0,1)+' m/s',false);
-        else if(e.k==='stretch') showBanner('reco','LINE STRETCH · SNATCH '+fmt((e.snatch||0)/4.448222,0)+' lbf',false);
-        else if(e.k==='deploy') showBanner('reco','REEFED MAIN INFLATING · PEAK '+fmt((e.load||0)/4.448222,0)+' lbf',false);
+        else if(e.k==='charge') showBanner('reco',(e.name||'Separation charge').toUpperCase()+' · SECTION OUT AT '+fmt(e.speed||0,1)+' m/s',false);
+        else if(e.k==='stretch') showBanner('reco',(e.name||'Line stretch').toUpperCase()+' · SNATCH '+fmt((e.snatch||0)/4.448222,0)+' lbf',false);
+        else if(e.k==='deploy') showBanner('reco',(/reefed$/i.test(e.name||'')?'REEFED MAIN':(e.name||'CANOPY').toUpperCase())+' INFLATING · PEAK '+fmt((e.load||0)/4.448222,0)+' lbf',false);
         else if(e.k==='disreef') showBanner('reco','REEF CUT AT '+fmt((e.alt||0)*M2FT,0)+' ft · MAIN OPEN · PEAK '+fmt((e.load||0)/4.448222,0)+' lbf',false);
         else if(e.k==='runout') showBanner('burnout','N₂O LIQUID RUNOUT (EST.) · VAPOUR BURN',false);
         else if(e.k==='impact'&&REC.ke) showBanner('impact','LANDING · '+fmt(REC.ke.v,1)+' m/s · BODY '+fmt(REC.ke.body,0)+' ft·lbf · NOSE '+fmt(REC.ke.nose,0)+' ft·lbf',true);
