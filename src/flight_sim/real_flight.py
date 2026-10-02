@@ -49,7 +49,7 @@ def _attitudes(
     return quaternions
 
 
-def real_flight_telemetry(
+def real_flight_telemetry(  # pylint: disable=too-many-locals
     log_path: str | Path, azimuth_deg: float
 ) -> dict[str, object]:
     """Read a Blue Raven log in the format the flight viewer expects.
