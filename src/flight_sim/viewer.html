@@ -111,14 +111,14 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
       <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket's midpoint back at the centre of the view">Centre</button></div>
-      <label class="fld">Rocket scale ×<input type="text" id="mult" value="10" inputmode="decimal" aria-label="Rocket size multiplier"></label>
+      <label class="fld">Rocket scale ×<input type="text" id="mult" value="1" inputmode="decimal" aria-label="Rocket size multiplier"></label>
       <label class="chip"><input type="checkbox" data-k="world" checked>World</label>
       <label class="chip"><input type="checkbox" data-k="body" checked>Body</label>
-      <label class="chip"><input type="checkbox" data-k="missile" checked>Missile</label>
-      <label class="chip"><input type="checkbox" data-k="vec" checked>Vectors</label>
+      <label class="chip"><input type="checkbox" data-k="missile">Missile</label>
+      <label class="chip"><input type="checkbox" data-k="vec">Vectors</label>
       <label class="chip"><input type="checkbox" data-k="trail" checked>Path</label>
       <label class="chip"><input type="checkbox" data-k="aero" checked>Aero</label>
-      <label class="chip"><input type="checkbox" data-k="pad" checked>Pad</label>
+      <label class="chip"><input type="checkbox" data-k="pad">Pad</label>
       <label class="chip" id="conjWrap" hidden><input type="checkbox" id="conj">Conjugate q</label>
       <label class="btn">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
     </div>
@@ -182,7 +182,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 'use strict';
 var $=function(id){return document.getElementById(id)};
 var C={x:0xb5504a,y:0x6b9b6b,z:0x5b86b8,vel:0x5ea0ad,air:0xb06b7b,thr:0xc4894f,alpha:0xc4a050,phi:0x9578b5,ym:0xb89a5a,zm:0x9578b5};
-var M2FT=3.28084, scaleMult=10, curLd=52;
+var M2FT=3.28084, scaleMult=1, curLd=52;
 var V3=THREE.Vector3, DEG=180/Math.PI, TAU=Math.PI*2, DT=0.02, STRIDE=10;
 function clamp(x,a,b){return x<a?a:x>b?b:x}
 
@@ -532,7 +532,7 @@ function getFrame(tt){
 var TMIN=-5, tNow=0, tMax=1, prevT=0, playing=false, rate=1, last=performance.now(), view='follow';
 var cam={az:0.62,azT:0.62,el:0.3,elT:0.3,dist:99,distT:99,tgt:new V3(),pan:new V3()}, wideC=new V3(), wideD=6000;
 var events=[], bars=[], apoIdx=0, REC={dep:null,cut:null,rail:null}, POST=12, NOSE_MASS=4.0, CANOPY_MASS=0.71, CORD_VIS=0.35;
-var vis={world:true,body:true,missile:true,vec:true,trail:true,aero:true,pad:true};
+var vis={world:true,body:true,missile:false,vec:false,trail:true,aero:true,pad:false};
 
 function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p; return (n<=1?1:n<=1.5?1.5:n<=2?2:n<=3?3:n<=5?5:10)*p; }
 function fmt(v,dp){ return v.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
@@ -1075,7 +1075,7 @@ if(!renderer) $('nogl').hidden=false; else resize();
 document.fonts&&document.fonts.ready&&0;
 setDataset(genDemo());
 if(window.TELEMETRY){ try{ rawTel={j:window.TELEMETRY,name:window.TELEMETRY_NAME||'simulation'}; setDataset(fromTelemetry(rawTel.j,false,rawTel.name)); }catch(err){ console.error(err); } }
-G.world.visible=G.body.visible=G.missile.visible=G.vec.visible=G.trail.visible=G.aero.visible=G.pad.visible=true;
+Object.keys(vis).forEach(function(k){ G[k].visible=vis[k]; });
 tNow=-2; prevT=tNow; /* opens 2 s before launch */
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
 window.__viewer={set:function(t){tNow=t;prevT=t},view:setView,cam:cam,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
