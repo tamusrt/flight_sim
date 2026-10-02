@@ -25,8 +25,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--font);padding-inline
 *{box-sizing:border-box}
 h1,h2{margin:0;font-weight:500}
 .app{display:grid;gap:10px;max-width:1280px;margin-inline:auto;
-  grid-template-columns:minmax(0,1fr) 240px;
-  grid-template-areas:"top top" "stage side" "time side"}
+  grid-template-columns:minmax(0,1fr) 240px; grid-template-rows:auto auto auto 1fr;
+  grid-template-areas:"top top" "stage side" "time side" ". side"}
 .top{grid-area:top;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:8px}
 .ttl h1{font:500 13px var(--mono);letter-spacing:.14em;text-transform:uppercase}
 .tools{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font:400 12px var(--mono)}
@@ -42,16 +42,18 @@ h1,h2{margin:0;font-weight:500}
 .stagewrap{grid-area:stage;display:flex;flex-direction:column;gap:6px;min-width:0}
 .stage{position:relative;height:min(64vh,600px);min-height:320px;overflow:hidden;border:1px solid var(--line);background:#000}
 .stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+.stage canvas.pan{cursor:move}
 .note{position:absolute;left:8px;bottom:6px;font:400 11px var(--mono);color:#bdbdb8;pointer-events:none}
 .banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:500 13px var(--mono);letter-spacing:.08em;padding:6px 14px;background:#d6d6d3;color:#101010;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
-.banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}
+.banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}.banner[data-kind="reco"]{background:#b9a0d0;color:#140b1d}.banner[data-kind="aero"]{background:#cf8aa0;color:#1d070c}.banner[data-kind="rail"]{background:#8fbf8f;color:#08160a}
 .nogl[hidden],.chip[hidden]{display:none}
 .nogl{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:#ddd;font:400 13px var(--mono)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font:400 11.5px var(--mono);color:var(--muted)}
 .lg{display:inline-flex;align-items:center;gap:6px}
 .lg i{width:12px;height:3px;background:var(--c);display:inline-block}
 .lg i.sq{height:9px;width:9px;opacity:.85}
-.time{grid-area:time;display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);padding:10px 12px;min-width:0}
+.lg .sym{font-weight:500;color:var(--fg)}
+.time{grid-area:time;align-self:start;display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);padding:10px 12px;min-width:0}
 .play{flex:none;width:34px;height:34px;border:0;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;cursor:pointer;border-radius:0}
 .play svg{width:14px;height:14px;fill:currentColor}
 .scrubwrap{position:relative;flex:1;min-width:0;padding-top:22px}
@@ -60,6 +62,10 @@ h1,h2{margin:0;font-weight:500}
 .mk i{width:2px;height:9px;background:var(--fg);margin-top:2px}
 .mk.burnout{color:var(--thrust)}.mk.burnout i{background:var(--thrust)}.mk.apogee{color:var(--alpha)}.mk.apogee i{background:var(--alpha)}.mk.impact{color:var(--warn)}.mk.impact i{background:var(--warn)}
 .mk.impact{transform:translateX(-100%);align-items:flex-end}
+.mk.rail{color:var(--ok)}.mk.rail i{background:var(--ok)}.mk.maxq,.mk.mach{color:var(--air)}.mk.maxq i,.mk.mach i{background:var(--air)}
+.mk.deploy,.mk.disreef{color:var(--phi)}.mk.deploy i,.mk.disreef i{background:var(--phi)}
+.mk b{font-weight:400}.mk b.quiet{visibility:hidden}
+.mk.vote,.mk.fc{color:var(--vel)}.mk.vote i,.mk.fc i{background:var(--vel)}.mk.charge,.mk.stretch{color:var(--phi)}.mk.charge i,.mk.stretch i{background:var(--phi)}.mk.runout{color:var(--thrust)}.mk.runout i{background:var(--thrust)}
 input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;cursor:pointer;display:block}
 input[type=range]::-webkit-slider-runnable-track{height:4px;background:linear-gradient(to right,var(--accent) var(--p,0%),var(--line) var(--p,0%))}
 input[type=range]::-moz-range-track{height:4px;background:var(--line)}
@@ -81,7 +87,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 .blabel{font:500 11px var(--mono);text-transform:uppercase;letter-spacing:.06em}
 .bmax{font:400 10px var(--mono);color:var(--muted);text-align:center}
 .read{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;margin:0;font:400 12px var(--mono)}
-#rA{color:var(--alpha)}#rP{color:var(--phi)}#rV{color:var(--air)}#rT{color:var(--thrust)}#rM{color:var(--vel)}#rPh{color:var(--ok)}
+#rA{color:var(--alpha)}#rP{color:var(--phi)}#rV{color:var(--air)}#rT{color:var(--thrust)}#rM{color:var(--vel)}#rPh{color:var(--ok)}#rQ{color:var(--air)}#rSM{color:var(--alpha)}#rReco{color:var(--phi)}#rCan{color:var(--phi)}#rFC{color:var(--vel)}
 .read dt{color:var(--muted)} .read dd{margin:0;text-align:right;font-weight:500;font-variant-numeric:tabular-nums}
 .events{list-style:none;margin:0;padding:0;display:grid;gap:5px}
 .events li{display:flex;align-items:center;gap:8px;font:400 12px var(--mono);color:var(--muted)}
@@ -89,7 +95,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 .events li b{margin-left:auto;font-weight:400;font-size:11px;font-variant-numeric:tabular-nums}
 .events li.on{color:var(--fg)} .events li.on i{background:var(--c);border-color:var(--c)}
 @media (max-width:820px){
-  .app{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "stage" "time" "side"}
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-template-areas:"top" "stage" "time" "side"}
   .stage{height:56vh}
 }
 @media (max-width:520px){
@@ -104,12 +110,15 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
     <div class="ttl"><h1>Flight Viewer</h1></div>
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
+      <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket's midpoint back at the centre of the view">Centre</button></div>
       <label class="fld">Rocket scale ×<input type="text" id="mult" value="10" inputmode="decimal" aria-label="Rocket size multiplier"></label>
       <label class="chip"><input type="checkbox" data-k="world" checked>World</label>
       <label class="chip"><input type="checkbox" data-k="body" checked>Body</label>
       <label class="chip"><input type="checkbox" data-k="missile" checked>Missile</label>
       <label class="chip"><input type="checkbox" data-k="vec" checked>Vectors</label>
       <label class="chip"><input type="checkbox" data-k="trail" checked>Path</label>
+      <label class="chip"><input type="checkbox" data-k="aero" checked>Aero</label>
+      <label class="chip"><input type="checkbox" data-k="pad" checked>Pad</label>
       <label class="chip" id="conjWrap" hidden><input type="checkbox" id="conj">Conjugate q</label>
       <label class="btn">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
     </div>
@@ -130,14 +139,17 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <span class="lg"><i class="sq" style="--c:var(--phi)"></i>φ<sub>A</sub></span>
       <span class="lg"><i style="--c:var(--ax)"></i><i style="--c:var(--ay)"></i><i style="--c:var(--az)"></i>Body x<sub>b</sub> y<sub>b</sub> z<sub>b</sub></span>
       <span class="lg">Missile frame x<sub>m</sub> y<sub>m</sub> z<sub>m</sub>, X<sub>m</sub>–Z<sub>m</sub> plane</span>
+      <span class="lg"><b class="sym">◐</b>CG <b class="sym">◎</b>CP</span>
+      <span class="lg"><i style="--c:var(--air)"></i>Mach cone / vapor</span>
+      <span class="lg"><i style="--c:var(--phi)"></i>Shock cords, canopy</span>
     </div>
   </section>
 
   <section class="time">
     <button class="play" id="play" aria-label="Play"><svg viewBox="0 0 16 16" id="ico"><path d="M3 1.5v13l11-6.5z"/></svg></button>
-    <div class="scrubwrap"><div class="mks" id="mks"></div><input type="range" id="scrub" min="0" max="60" step="0.01" value="0" aria-label="Flight time"></div>
+    <div class="scrubwrap"><div class="mks" id="mks"></div><input type="range" id="scrub" min="-5" max="60" step="0.01" value="0" aria-label="Flight time"></div>
     <div class="tt" id="tt">0.00 s<small>of 0.0 s</small></div>
-    <select id="rate" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    <select id="rate" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="10">10×</option><option value="30">30×</option></select>
   </section>
 
   <aside class="side">
@@ -149,6 +161,13 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <dt>Airspeed</dt><dd id="rV">–</dd>
       <dt>Thrust</dt><dd id="rT">–</dd>
       <dt>Mass</dt><dd id="rM">–</dd>
+      <dt>Dyn. pressure</dt><dd id="rQ">–</dd>
+      <dt>Static margin</dt><dd id="rSM">–</dd>
+      <dt>CG / CP</dt><dd id="rCG">–</dd>
+      <dt>Vert. speed</dt><dd id="rVz">–</dd>
+      <dt>Flight comp.</dt><dd id="rFC">–</dd>
+      <dt>Canopy drag</dt><dd id="rCan">–</dd>
+      <dt>Recovery</dt><dd id="rReco">–</dd>
       <dt>Phase</dt><dd id="rPh">–</dd>
     </dl>
     <h2>Events</h2>
@@ -163,7 +182,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 'use strict';
 var $=function(id){return document.getElementById(id)};
 var C={x:0xb5504a,y:0x6b9b6b,z:0x5b86b8,vel:0x5ea0ad,air:0xb06b7b,thr:0xc4894f,alpha:0xc4a050,phi:0x9578b5,ym:0xb89a5a,zm:0x9578b5};
-var M2FT=3.28084, ROCKET_LEN=3, scaleMult=10, curLd=30;
+var M2FT=3.28084, scaleMult=10, curLd=52;
 var V3=THREE.Vector3, DEG=180/Math.PI, TAU=Math.PI*2, DT=0.02, STRIDE=10;
 function clamp(x,a,b){return x<a?a:x>b?b:x}
 
@@ -180,6 +199,7 @@ var sun=new THREE.DirectionalLight(0xffffff,0.75); sun.position.set(0.6,1,0.8); 
 scene.fog=new THREE.Fog(0xcccccc,9000,42000);
 var tmpT=new V3();
 function s2t(v,out){ return (out||new V3()).set(v.z,v.x,v.y); }
+function t2s(v,out){ return (out||new V3()).set(v.y,v.z,v.x); }
 
 var G={world:new THREE.Group(),body:new THREE.Group(),missile:new THREE.Group(),vec:new THREE.Group(),trail:new THREE.Group()};
 for(var gk in G) root.add(G[gk]);
@@ -224,8 +244,6 @@ function buildGrids(){
   var b=new THREE.GridHelper(14000,14,0xe2e8f0,0xe2e8f0); b.rotation.z=-Math.PI/2; b.position.x=0.8;
   [a,b].forEach(function(g){g.material.transparent=true;g.material.opacity=.55;root.add(g);grids.push(g)});
 }
-var pad=new THREE.Mesh(new THREE.RingGeometry(8,13,40),new THREE.MeshBasicMaterial({color:C.thr,side:THREE.DoubleSide}));
-pad.rotation.y=Math.PI/2; pad.position.x=1; root.add(pad);
 
 /* world frame at the pad */
 var padAx=[makeArrow(C.x,1,G.world),makeArrow(C.y,1,G.world),makeArrow(C.z,1,G.world)];
@@ -236,20 +254,148 @@ var windArrow=makeArrow(C.vel,1,G.world), windLb=makeLabel('wind','#8fc0ca',G.wo
 /* ghost world triad that rides with the rocket */
 var ghost=[makeArrow(C.x,.38,G.world),makeArrow(C.y,.38,G.world),makeArrow(C.z,.38,G.world)];
 
-/* ---------- the rocket (model drawn in body coordinates, nose = +x) ---------- */
-var rocket=new THREE.Group(); rocket.matrixAutoUpdate=false; root.add(rocket);
-var model=new THREE.Group(); rocket.add(model);
-var mBody=new THREE.MeshLambertMaterial({color:0xd6d6d2}), mNose=new THREE.MeshLambertMaterial({color:0x56637d});
-var cyl=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,2.5,28),mBody); cyl.rotation.z=-Math.PI/2; cyl.position.x=-0.25; model.add(cyl);
-var band=new THREE.Mesh(new THREE.CylinderGeometry(0.103,0.103,0.18,28),mNose); band.rotation.z=-Math.PI/2; band.position.x=0.55; model.add(band);
-var nose=new THREE.Mesh(new THREE.ConeGeometry(0.1,0.5,28),mNose); nose.rotation.z=-Math.PI/2; nose.position.x=1.25; model.add(nose);
-var finGeo=new THREE.BufferGeometry();
-finGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array([-0.65,0.1,0, -1.5,0.1,0, -1.5,0.46,0]),3)); finGeo.computeVertexNormals();
-var finCols=[0x6b9b6b,0x5b86b8,0x8a8f9a,0x8a8f9a];
-for(var k=0;k<4;k++){ var f=new THREE.Mesh(finGeo,new THREE.MeshLambertMaterial({color:finCols[k],side:THREE.DoubleSide})); f.rotation.x=k*Math.PI/2; model.add(f); }
-var nozzle=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,0.1,20),mNose); nozzle.rotation.z=-Math.PI/2; nozzle.position.x=-1.52; model.add(nozzle);
-var flame=new THREE.Mesh(new THREE.ConeGeometry(0.075,0.9,14),new THREE.MeshBasicMaterial({color:0xb98a5a,transparent:true,opacity:.7}));
-flame.rotation.z=Math.PI/2; model.add(flame);
+/* ---------- vehicle geometry: Sol Invictus, from dynamics/aero_modeling/SOL_INVICTUS/OpenRocket/SOL_4_30.ork ----------
+   Stations are metres aft of the nose tip. Rail-button and fill-port stations are assumptions (not in the .ork). */
+var VEH={
+  length:5.199126, radius:0.0762, sep:0.9144,
+  nose:{len:0.762, C:1/3},                                   /* LV-Haack (Haack series, C = 1/3), fibreglass */
+  shoulder:{x0:0.8636, x1:1.0668, r:0.0742},                 /* nose-section coupler: stays with the nose at separation */
+  tubes:[ {x0:0.762,   x1:0.9144,   m:'fg', n:'nose straight'},
+          {x0:0.9144,  x1:1.77292,  m:'cf', n:'forward 1'},
+          {x0:1.77292, x1:2.2479,   m:'cf', n:'forward 2 / recovery'},
+          {x0:2.2479,  x1:2.5019,   m:'fg', n:'avionics'},
+          {x0:2.5019,  x1:2.683002, m:'cf', n:'plumbing'},
+          {x0:2.683002,x1:4.145026, m:'al', n:'N2O tank (structural)'},
+          {x0:4.145026,x1:4.500626, m:'al', n:'clam + channels'},
+          {x0:4.500626,x1:5.122926, m:'al', n:'combustion chamber'} ],
+  finCan:{x0:4.640326, x1:5.097526, r:0.0768985},
+  tail:{x0:5.122926, x1:5.199126, r1:0.05588},               /* conical tail + nozzle */
+  fins:{n:4, root:0.381, tip:0.0762, span:0.1905, sweep:0.3302, t:0.00508, xLE:4.691126},
+  avBay:2.3749                                               /* avionics bay centre, where the separation charge is wired */
+};
+var MAT={fg:new THREE.MeshLambertMaterial({color:0xd6d6d2}), cf:new THREE.MeshLambertMaterial({color:0x3b3f46}),
+  al:new THREE.MeshLambertMaterial({color:0xa3a9b1}), nose:new THREE.MeshLambertMaterial({color:0x56637d,side:THREE.DoubleSide}),
+  dark:new THREE.MeshLambertMaterial({color:0x15171a,side:THREE.DoubleSide}), tail:new THREE.MeshLambertMaterial({color:0x6b6f76,side:THREE.DoubleSide}),
+  button:new THREE.MeshLambertMaterial({color:0x2a2c30})};
+function tubeMesh(x0,x1,r,mat,open){ var g=new THREE.CylinderGeometry(r,r,x1-x0,40,1,!!open); g.rotateZ(-Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-(x0+x1)/2; return m; }
+function ring(x,r,mat){ var g=new THREE.CylinderGeometry(r,r,0.004,40,1,true); g.rotateZ(-Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-x; return m; }
+function disc(x,r,mat){ var g=new THREE.CircleGeometry(r,40); g.rotateY(Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-x; return m; }
+function haack(x,L,R,Cc){ var th=Math.acos(clamp(1-2*x/L,-1,1)); return R/Math.sqrt(Math.PI)*Math.sqrt(Math.max(th-Math.sin(2*th)/2+Cc*Math.pow(Math.sin(th),3),0)); }
+/* nose section (separates) and aft body; both drawn in body axes with the nose tip at the origin, +x forward */
+var noseSec=new THREE.Group(), aftSec=new THREE.Group();
+(function buildVehicle(){
+  var pts=[], N=48;
+  for(var i=0;i<=N;i++){ var x=VEH.nose.len*Math.pow(i/N,1.6); pts.push(new THREE.Vector2(haack(x,VEH.nose.len,VEH.radius,VEH.nose.C),-x)); }
+  var ng=new THREE.LatheGeometry(pts,48); ng.rotateZ(-Math.PI/2); noseSec.add(new THREE.Mesh(ng,MAT.nose));
+  var bandMat=new THREE.MeshLambertMaterial({color:0x8a8f9a});
+  VEH.tubes.forEach(function(tb,i){ var m=tubeMesh(tb.x0,tb.x1,VEH.radius,MAT[tb.m],true); (tb.x1<=VEH.sep+1e-6?noseSec:aftSec).add(m);
+    if(i>0) (tb.x0<VEH.sep+1e-6?noseSec:aftSec).add(ring(tb.x0,VEH.radius+0.0009,MAT.dark)); });
+  noseSec.add(tubeMesh(VEH.shoulder.x0,VEH.shoulder.x1,VEH.shoulder.r,MAT.fg,true));
+  noseSec.add(disc(VEH.shoulder.x1,VEH.shoulder.r,MAT.dark));                       /* bulkhead on the shoulder */
+  aftSec.add(disc(VEH.sep+0.004,VEH.radius-0.002,MAT.dark));                        /* forward bulkhead seen after separation */
+  aftSec.add(tubeMesh(VEH.finCan.x0,VEH.finCan.x1,VEH.finCan.r,MAT.cf,true));
+  var tg=new THREE.CylinderGeometry(VEH.radius,VEH.tail.r1,VEH.tail.x1-VEH.tail.x0,40,1,true); tg.rotateZ(Math.PI/2);
+  var tm=new THREE.Mesh(tg,MAT.tail); tm.position.x=-(VEH.tail.x0+VEH.tail.x1)/2; aftSec.add(tm);
+  aftSec.add(disc(VEH.tail.x1,VEH.tail.r1,MAT.dark));
+  var throat=disc(VEH.tail.x1+0.001,VEH.tail.r1*0.55,MAT.tail); aftSec.add(throat);
+  /* fins: trapezoids extruded to their thickness; fin 0 lies along +y_b */
+  var f=VEH.fins, r=VEH.radius, sh=new THREE.Shape();
+  sh.moveTo(-f.xLE,r); sh.lineTo(-(f.xLE+f.root),r); sh.lineTo(-(f.xLE+f.sweep+f.tip),r+f.span); sh.lineTo(-(f.xLE+f.sweep),r+f.span); sh.lineTo(-f.xLE,r);
+  var fg=new THREE.ExtrudeGeometry(sh,{depth:f.t,bevelEnabled:false}); fg.translate(0,0,-f.t/2);
+  var finCols=[0x6b9b6b,0x5b86b8,0x8a8f9a,0x8a8f9a];
+  for(var k=0;k<f.n;k++){ var fm=new THREE.Mesh(fg,new THREE.MeshLambertMaterial({color:finCols[k%4]})); fm.rotation.x=k*TAU/f.n; aftSec.add(fm); }
+})();
+noseSec.matrixAutoUpdate=false; aftSec.matrixAutoUpdate=false; root.add(noseSec); root.add(aftSec);
+var ROCKET_LEN=VEH.length;
+
+/* exhaust plume: outer sheath, hot core and faint shock diamonds; local +x is downstream */
+var plume=new THREE.Group(); plume.matrixAutoUpdate=false; root.add(plume);
+/* outer sheath: stacked rings that widen and fade downstream (an opacity gradient without textures) */
+var PSEG=7, plOut=new THREE.Group(), plSegs=[]; plume.add(plOut);
+for(var ps=0;ps<PSEG;ps++){ var u0=ps/PSEG, u1=(ps+1)/PSEG, r0=0.95+0.75*u0, r1=0.95+0.75*u1;
+  var sg=new THREE.CylinderGeometry(r1,r0,u1-u0,20,1,true); sg.rotateZ(-Math.PI/2); sg.translate((u0+u1)/2,0,0);
+  var sm=new THREE.Mesh(sg,new THREE.MeshBasicMaterial({color:0xd9823a,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,blending:THREE.AdditiveBlending}));
+  sm.userData.base=0.5*Math.pow(1-u0,1.3); plOut.add(sm); plSegs.push(sm); }
+var plCore=new THREE.Mesh(new THREE.ConeGeometry(1,1,20,1,true),new THREE.MeshBasicMaterial({color:0xe8d3a8,transparent:true,opacity:.75,side:THREE.DoubleSide,depthWrite:false,blending:THREE.AdditiveBlending}));
+plCore.geometry.rotateZ(-Math.PI/2); plCore.geometry.translate(0.5,0,0); plume.add(plCore);
+var diamonds=[]; for(var di=0;di<4;di++){ var dm=new THREE.Mesh(new THREE.SphereGeometry(1,12,8),new THREE.MeshBasicMaterial({color:0xf3e6c8,transparent:true,opacity:.5,depthWrite:false,blending:THREE.AdditiveBlending})); plume.add(dm); diamonds.push(dm); }
+
+/* ---------- launch tower (scaled with the rocket): see-through square tower with a rail on each corner and
+   five guide plates whose circular cut-outs clear the fins; stand legs and blast deflector ---------- */
+var padHw=new THREE.Group(); padHw.matrixAutoUpdate=false; G.pad=padHw; root.add(padHw);
+var railMat=new THREE.MeshLambertMaterial({color:0xb8bcc2}), steel=new THREE.MeshLambertMaterial({color:0x5d6168});
+var TOWER={half:0.34, hole:0.30, plate:0.0127, plates:5, rail:0.0381};   /* hole radius > fin tip radius 0.267 m */
+var tower=new THREE.Group(); tower.matrixAutoUpdate=false; padHw.add(tower); var towerLen=-1;
+function buildTower(len){
+  while(tower.children.length){ var c=tower.children.pop(); if(c.geometry) c.geometry.dispose(); }
+  var h=TOWER.half, shell=new THREE.Mesh(new THREE.BoxGeometry(len,2*h,2*h),new THREE.MeshBasicMaterial({color:0xaab4c2,transparent:true,opacity:0.07,depthWrite:false,side:THREE.DoubleSide}));
+  shell.position.x=len/2; tower.add(shell);
+  var edges=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(len,2*h,2*h)),new THREE.LineBasicMaterial({color:0x8a93a6,transparent:true,opacity:0.5}));
+  edges.position.x=len/2; tower.add(edges);
+  [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(function(s){ var r=new THREE.Mesh(new THREE.BoxGeometry(len,TOWER.rail,TOWER.rail),railMat);
+    r.position.set(len/2,s[0]*(h-TOWER.rail/2),s[1]*(h-TOWER.rail/2)); tower.add(r); });
+  var sh=new THREE.Shape(); sh.moveTo(-h,-h); sh.lineTo(h,-h); sh.lineTo(h,h); sh.lineTo(-h,h); sh.lineTo(-h,-h);
+  var hole=new THREE.Path(); hole.absarc(0,0,TOWER.hole,0,TAU,true); sh.holes.push(hole);
+  var pg=new THREE.ExtrudeGeometry(sh,{depth:TOWER.plate,bevelEnabled:false,curveSegments:40}); pg.rotateY(Math.PI/2);
+  var plateMat=new THREE.MeshLambertMaterial({color:0x9aa0a8,transparent:true,opacity:0.85,side:THREE.DoubleSide});
+  for(var k=1;k<=TOWER.plates;k++){ var pm=new THREE.Mesh(pg,plateMat); pm.position.x=len*k/TOWER.plates-TOWER.plate; tower.add(pm); }
+  towerLen=len;
+}
+var legs=[0,1,2].map(function(){ var m=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,1,8),steel); padHw.add(m); return m; });
+var deflector=new THREE.Mesh(new THREE.BoxGeometry(0.012,1.2,1.2),steel); padHw.add(deflector);
+var railLb=makeLabel('LAUNCH TOWER','#c8ccd2',G.pad);
+var RAIL={length:10, dir:new V3(1,0,0), tilt:0, base:new V3(), side:new V3(0,1,0), y0:new V3(0,1,0), z0:new V3(0,0,1)};
+
+/* ---------- recovery: shock cords, suspension lines, canopy (single separation, reefed main) ---------- */
+var RECO=null;  /* set from telemetry: diameter, spill_hole, reefed_opening, cord_to_nose, cord_to_body */
+var reco=new THREE.Group(); reco.matrixAutoUpdate=false; G.reco=reco; root.add(reco);
+var CN=26, CM=48, GORES=12;
+var canGeo=new THREE.BufferGeometry(), canPos=new Float32Array(CN*CM*6*3), canCol=new Float32Array(CN*CM*6*3);
+canGeo.setAttribute('position',new THREE.BufferAttribute(canPos,3)); canGeo.setAttribute('color',new THREE.BufferAttribute(canCol,3));
+(function(){ var a=new THREE.Color(0xc4894f), b=new THREE.Color(0xe2e0da), v=0;
+  for(var i=0;i<CN;i++) for(var j=0;j<CM;j++){ var c=(Math.floor(j/(CM/GORES))%2)?a:b; for(var q=0;q<6;q++){ canCol[v++]=c.r;canCol[v++]=c.g;canCol[v++]=c.b; } } })();
+var canopy=new THREE.Mesh(canGeo,new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide})); canopy.matrixAutoUpdate=false; canopy.frustumCulled=false; reco.add(canopy);
+var linesGeo=new THREE.BufferGeometry(); linesGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(GORES*2*3),3));
+var susLines=new THREE.LineSegments(linesGeo,new THREE.LineBasicMaterial({color:0xb9b4aa,transparent:true,opacity:.8})); susLines.frustumCulled=false; reco.add(susLines);
+function cordLine(color){ var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*24),3)); var l=new THREE.Line(g,new THREE.LineBasicMaterial({color:color})); l.frustumCulled=false; reco.add(l); return l; }
+var cordBody=cordLine(0xb9a0d0), cordNose=cordLine(0xb9a0d0);
+var puff=new THREE.Mesh(new THREE.SphereGeometry(1,16,12),new THREE.MeshBasicMaterial({color:0x9a9a96,transparent:true,opacity:.5,depthWrite:false})); reco.add(puff);
+var canLb=makeLabel('MAIN','#d9bd7a',G.reco);
+/* canopy profiles as [axial height above skirt, radius] from apex to skirt, in metres for a nominal diameter D0 */
+function profileFull(D0,spill,u){ var Rp=0.35*D0, H=0.42*Rp*2, rs=spill/2*0.7, a=u*1.95; return [H*Math.cos(Math.min(a,Math.PI/2))*(a<Math.PI/2?1:1)-(a>Math.PI/2?0.08*Rp*(a-Math.PI/2):0), rs+(Rp-rs)*Math.sin(Math.min(a,Math.PI/2))*(a>Math.PI/2?1-0.12*(a-Math.PI/2):1)]; }
+function profileReefed(D0,spill,mouth,u){ var Rb=0.17*D0, Hr=0.62*D0, rs=spill/2*0.5; return [Hr*(1-u), rs*(1-u)+mouth/2*0.62*u+Rb*Math.pow(Math.sin(Math.PI*Math.min(u*1.05,1)),0.9)]; }
+function profilePacked(u){ return [0.254*(1-u), 0.07]; }
+function profileCollapsed(D0,spill,u){ return [0.03*D0*(1-u), spill/2*0.7+(0.5*D0-spill/2*0.7)*u]; }
+function setCanopyShape(D0,spill,mouth,stage,blend){
+  /* stage 0: packed->reefed by blend, stage 1: reefed->full by blend */
+  var prof=[]; for(var i=0;i<=CN;i++){ var u=i/CN, A, B;
+    if(stage===0){ A=profilePacked(u); B=profileReefed(D0,spill,mouth,u); } else if(stage===1){ A=profileReefed(D0,spill,mouth,u); B=profileFull(D0,spill,u); } else { A=profileFull(D0,spill,u); B=profileCollapsed(D0,spill,u); }
+    prof.push([A[0]+(B[0]-A[0])*blend, A[1]+(B[1]-A[1])*blend]); }
+  var v=0; function put(h,r,th){ canPos[v++]=h; canPos[v++]=r*Math.cos(th); canPos[v++]=r*Math.sin(th); }
+  for(i=0;i<CN;i++) for(var j=0;j<CM;j++){ var t0=j/CM*TAU, t1=(j+1)/CM*TAU, p=prof[i], q=prof[i+1];
+    put(p[0],p[1],t0); put(q[0],q[1],t0); put(q[0],q[1],t1); put(p[0],p[1],t0); put(q[0],q[1],t1); put(p[0],p[1],t1); }
+  canGeo.attributes.position.needsUpdate=true; canGeo.computeVertexNormals(); canGeo.computeBoundingSphere();
+  return prof[CN]; /* skirt [height, radius] */
+}
+
+/* ---------- aero cues: Mach cone, Prandtl–Glauert vapour cone, CG and CP markers ---------- */
+var aero=new THREE.Group(); G.aero=aero; root.add(aero);
+var machCone=new THREE.Group(); machCone.matrixAutoUpdate=false; aero.add(machCone);
+var mcMesh=new THREE.Mesh(new THREE.ConeGeometry(1,1,40,1,true),new THREE.MeshBasicMaterial({color:C.air,transparent:true,opacity:.12,side:THREE.DoubleSide,depthWrite:false}));
+mcMesh.geometry.rotateZ(-Math.PI/2); mcMesh.geometry.translate(-0.5,0,0); machCone.add(mcMesh);
+var mcLines=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.ConeGeometry(1,1,12,1,true)),new THREE.LineBasicMaterial({color:C.air,transparent:true,opacity:.5}));
+mcLines.geometry.rotateZ(-Math.PI/2); mcLines.geometry.translate(-0.5,0,0); machCone.add(mcLines);
+var vapor=new THREE.Mesh(new THREE.ConeGeometry(1,1,40,1,true),new THREE.MeshBasicMaterial({color:0xf2f2f0,transparent:true,opacity:.3,side:THREE.DoubleSide,depthWrite:false}));
+vapor.geometry.rotateZ(-Math.PI/2); vapor.geometry.translate(-0.5,0,0); vapor.matrixAutoUpdate=false; aero.add(vapor);
+function symbolSprite(kind,grp){
+  var c=document.createElement('canvas'); c.width=c.height=64; var x=c.getContext('2d');
+  x.lineWidth=4; x.strokeStyle='#111'; x.fillStyle='#f2f2f0'; x.beginPath(); x.arc(32,32,26,0,TAU); x.fill(); x.stroke();
+  if(kind==='cg'){ x.fillStyle='#111'; x.beginPath(); x.moveTo(32,32); x.arc(32,32,26,-Math.PI/2,0); x.fill(); x.beginPath(); x.moveTo(32,32); x.arc(32,32,26,Math.PI/2,Math.PI); x.fill(); }
+  else { x.fillStyle='#a65468'; x.beginPath(); x.arc(32,32,26,0,TAU); x.fill(); x.stroke(); x.fillStyle='#f2f2f0'; x.beginPath(); x.arc(32,32,9,0,TAU); x.fill(); }
+  var tex=new THREE.CanvasTexture(c); var s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false})); s.renderOrder=21; grp.add(s); return s;
+}
+var cgMk=symbolSprite('cg',aero), cpMk=symbolSprite('cp',aero);
+var cgLb=makeLabel('CG','#e2e8f0',aero), cpLb=makeLabel('CP','#d99aa8',aero);
 
 /* body frame, vectors, missile frame */
 var bAx=[makeArrow(C.x,1,G.body),makeArrow(C.y,1,G.body),makeArrow(C.z,1,G.body)];
@@ -288,29 +434,32 @@ var apoLb=makeLabel('APOGEE','#d9bd7a',G.trail), impLb=makeLabel('IMPACT','#d9a5
 
 /* ---------- datasets ---------- */
 var ds=null;
-var F={pos:new V3(),vel:new V3(),air:new V3(),xb:new V3(),yb:new V3(),zb:new V3(),thrust:0,mass:0,mach:0};
+var F={pos:new V3(),vel:new V3(),air:new V3(),xb:new V3(),yb:new V3(),zb:new V3(),thrust:0,mass:0,mach:0,q:0,cg:NaN,cp:NaN,p:NaN,mdot:0,noseDir:new V3(),noseSep:0,hang:new V3(1,0,0),line:new V3(),swing:0,drag:1};
 
 function rowsToDs(r,name,demo){
   var N=r.thrust.length, d={name:name,demo:demo,N:N,
     pos:Float32Array.from(r.pos),vel:Float32Array.from(r.vel),air:Float32Array.from(r.air),
     xb:Float32Array.from(r.xb),yb:Float32Array.from(r.yb),zb:Float32Array.from(r.zb),
     thrust:Float32Array.from(r.thrust),mass:Float32Array.from(r.mass),mach:Float32Array.from(r.mach),
-    wind:r.wind||[0,0,0]};
+    q:Float32Array.from(r.q||[]),cg:Float32Array.from(r.cg||[]),cp:Float32Array.from(r.cp||[]),p:Float32Array.from(r.p||[]),mdot:Float32Array.from(r.mdot||[]),
+    ndir:Float32Array.from(r.ndir||[]),nsep:Float32Array.from(r.nsep||[]),ldir:Float32Array.from(r.ldir||[]),swing:Float32Array.from(r.swing||[]),drag:Float32Array.from(r.drag||[]),
+    wind:r.wind||[0,0,0], events:r.events||[], rail:r.rail||null, recovery:r.recovery||null};
+  if(d.q.length!==N) d.q=new Float32Array(N); if(d.p.length!==N) d.p=new Float32Array(N).fill(NaN); if(d.ndir.length!==3*N) d.ndir=new Float32Array(3*N); if(d.nsep.length!==N) d.nsep=new Float32Array(N); if(d.ldir.length!==3*N) d.ldir=new Float32Array(3*N); if(d.swing.length!==N) d.swing=new Float32Array(N); if(d.drag.length!==N) d.drag=new Float32Array(N).fill(1); if(d.cg.length!==N) d.cg=new Float32Array(N).fill(NaN); if(d.cp.length!==N) d.cp=new Float32Array(N).fill(NaN);
   return d;
 }
 function genDemo(){
   var g=9.80665, wind=new V3(0,6,2), up=new V3(1,0,0), hv=new V3(0,0,1);
   var pos=new V3(), vel=new V3(), air=new V3(), d=new V3(), e1=new V3(), e2=new V3(), xb=new V3(), yb=new V3(), zb=new V3(), y0=new V3(), z0=new V3(), acc=new V3();
   var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],wind:[wind.x,wind.y,wind.z]};
-  var T0=2200, tb=3.5, A=Math.PI*0.1*0.1, thr=0, m=25, a=340;
+  var T0=2200, tb=3.5, A=Math.PI*0.1*0.1, thr=0, m=25, a=340, rho=1.225;
   function rec(){
     o.pos.push(pos.x,pos.y,pos.z); o.vel.push(vel.x,vel.y,vel.z); o.air.push(air.x,air.y,air.z);
     o.xb.push(xb.x,xb.y,xb.z); o.yb.push(yb.x,yb.y,yb.z); o.zb.push(zb.x,zb.y,zb.z);
-    o.thrust.push(thr); o.mass.push(m); o.mach.push(air.length()/a);
+    o.thrust.push(thr); o.mass.push(m); o.mach.push(air.length()/a); (o.q=o.q||[]).push(0.5*rho*air.lengthSq());
   }
   for(var k=0;k<30000;k++){
     var t=k*DT, h=Math.max(pos.x,0), Tk=288.15-0.0065*Math.min(h,11000);
-    var rho=1.225*Math.pow(Tk/288.15,4.256); a=Math.sqrt(1.4*287.05*Tk);
+    rho=1.225*Math.pow(Tk/288.15,4.256); a=Math.sqrt(1.4*287.05*Tk);
     air.copy(vel).sub(wind); var sp=air.length();
     d.copy(air).addScaledVector(up,40*Math.exp(-t/0.5)); if(d.lengthSq()<1e-6) d.copy(up); d.normalize();
     var al=0.012+0.16*Math.exp(-t/2.5); if(t>3) al+=0.42*Math.exp(-Math.pow(vel.x/30,2));
@@ -335,7 +484,9 @@ function fromTelemetry(j,conj,name){
   var n=j.t&&j.t.length; if(!n||n<2) throw new Error('"t" needs at least 2 samples');
   ['pos','vel','quat'].forEach(function(k){ if(!j[k]||j[k].length!==n) throw new Error('"'+k+'" must have the same length as "t"'); });
   var T0=j.t[0], N=Math.floor((j.t[n-1]-T0)/DT)+1, wind=j.wind||[0,0,0];
-  var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],wind:wind};
+  var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],q:[],cg:[],cp:[],p:[],mdot:[],ndir:[],nsep:[],ldir:[],swing:[],drag:[],wind:wind,events:j.events||[],rail:j.rail||null,recovery:j.recovery||null};
+  function has(k){ return j[k]&&j[k].length===n; }
+  function Ln(a,b,u){ return (a===null||b===null)?NaN:a+(b-a)*u; }
   var i=0, q=[0,0,0,0];
   for(var k=0;k<N;k++){
     var tt=T0+k*DT; while(i<n-2&&j.t[i+1]<tt) i++;
@@ -353,7 +504,14 @@ function fromTelemetry(j,conj,name){
     o.pos.push(P[0],P[1],P[2]); o.vel.push(Vv[0],Vv[1],Vv[2]); o.air.push(ar[0],ar[1],ar[2]);
     o.thrust.push(j.thrust&&j.thrust.length===n?L(j.thrust[i],j.thrust[i+1]):0);
     o.mass.push(j.mass&&j.mass.length===n?L(j.mass[i],j.mass[i+1]):0);
-    o.mach.push(isaMach(P[0],Math.hypot(ar[0],ar[1],ar[2])));
+    o.mach.push(has('mach')?L(j.mach[i],j.mach[i+1]):isaMach(P[0],Math.hypot(ar[0],ar[1],ar[2])));
+    o.p.push(has('p')?L(j.p[i],j.p[i+1]):NaN); o.mdot.push(has('mdot')?L(j.mdot[i],j.mdot[i+1]):NaN); o.nsep.push(has('nose_sep')?L(j.nose_sep[i],j.nose_sep[i+1]):0);
+    if(has('nose_dir')){ var a0=j.nose_dir[i], a1=j.nose_dir[i+1]; if(a0[0]*a0[0]+a0[1]*a0[1]+a0[2]*a0[2]<0.5) a0=a1; if(a1[0]*a1[0]+a1[1]*a1[1]+a1[2]*a1[2]<0.5) a1=a0; o.ndir.push(L(a0[0],a1[0]),L(a0[1],a1[1]),L(a0[2],a1[2])); } else o.ndir.push(0,0,0);
+    /* the line from the canopy to the rocket; zero before there is a canopy, so each end borrows the other's */
+    if(has('line')){ var k0=j.line[i], k1=j.line[i+1], z0=k0[0]*k0[0]+k0[1]*k0[1]+k0[2]*k0[2]<0.5, z1=k1[0]*k1[0]+k1[1]*k1[1]+k1[2]*k1[2]<0.5;
+      if(z0&&z1) o.ldir.push(0,0,0); else { if(z0) k0=k1; if(z1) k1=k0; o.ldir.push(L(k0[0],k1[0]),L(k0[1],k1[1]),L(k0[2],k1[2])); } } else o.ldir.push(0,0,0);
+    o.swing.push(has('swing')?L(j.swing[i],j.swing[i+1]):0); o.drag.push(has('drag')?L(j.drag[i],j.drag[i+1]):1);
+    o.q.push(has('q')?L(j.q[i],j.q[i+1]):0); o.cg.push(has('cg')?L(j.cg[i],j.cg[i+1]):NaN); o.cp.push(has('cp')?Ln(j.cp[i],j.cp[i+1],u):NaN);
   }
   return rowsToDs(o,name,false);
 }
@@ -362,14 +520,19 @@ function getFrame(tt){
   function l3(a,out){ out.set(a[3*i]+(a[3*j]-a[3*i])*u, a[3*i+1]+(a[3*j+1]-a[3*i+1])*u, a[3*i+2]+(a[3*j+2]-a[3*i+2])*u); }
   l3(ds.pos,F.pos); l3(ds.vel,F.vel); l3(ds.air,F.air); l3(ds.xb,F.xb); l3(ds.yb,F.yb); l3(ds.zb,F.zb);
   F.thrust=ds.thrust[i]+(ds.thrust[j]-ds.thrust[i])*u; F.mass=ds.mass[i]+(ds.mass[j]-ds.mass[i])*u; F.mach=ds.mach[i]+(ds.mach[j]-ds.mach[i])*u;
+  F.q=ds.q[i]+(ds.q[j]-ds.q[i])*u; F.p=ds.p[i]+(ds.p[j]-ds.p[i])*u; F.mdot=ds.mdot.length?ds.mdot[i]+(ds.mdot[j]-ds.mdot[i])*u:NaN; F.noseSep=ds.nsep[i]+(ds.nsep[j]-ds.nsep[i])*u; l3(ds.ndir,F.noseDir); if(F.noseDir.lengthSq()>1e-6) F.noseDir.normalize(); l3(ds.ldir,F.line); if(F.line.lengthSq()>1e-6) F.line.normalize(); F.swing=ds.swing[i]+(ds.swing[j]-ds.swing[i])*u; F.drag=ds.drag[i]+(ds.drag[j]-ds.drag[i])*u; F.cg=ds.cg[i]+(ds.cg[j]-ds.cg[i])*u; F.cp=ds.cp[i]+(ds.cp[j]-ds.cp[i])*u;
   F.xb.normalize(); F.yb.addScaledVector(F.xb,-F.xb.dot(F.yb)).normalize(); F.zb.crossVectors(F.xb,F.yb);
+  if(tt<0){ F.thrust=0; F.mdot=0; }
+  /* steady hang: the canopy's drag opposes the airspeed, so the cord runs back up against it */
+  if(F.air.lengthSq()>1) F.hang.copy(F.air).multiplyScalar(-1).normalize(); else F.hang.set(1,0,0);
 }
 
 /* ---------- state ---------- */
-var tNow=0, tMax=1, prevT=0, playing=false, rate=1, last=performance.now(), view='follow';
-var cam={az:0.62,azT:0.62,el:0.3,elT:0.3,dist:100,distT:100,tgt:new V3()}, wideC=new V3(), wideD=6000;
-var events=[], bars=[], apoIdx=0;
-var vis={world:true,body:true,missile:true,vec:true,trail:true};
+/* the clock starts 5 s before the data does: the rocket sits on the pad until t = 0 (display only) */
+var TMIN=-5, tNow=0, tMax=1, prevT=0, playing=false, rate=1, last=performance.now(), view='follow';
+var cam={az:0.62,azT:0.62,el:0.3,elT:0.3,dist:99,distT:99,tgt:new V3(),pan:new V3()}, wideC=new V3(), wideD=6000;
+var events=[], bars=[], apoIdx=0, REC={dep:null,cut:null,rail:null}, POST=12, NOSE_MASS=4.0, CANOPY_MASS=0.71, CORD_VIS=0.35;
+var vis={world:true,body:true,missile:true,vec:true,trail:true,aero:true,pad:true};
 
 function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p; return (n<=1?1:n<=1.5?1.5:n<=2?2:n<=3?3:n<=5?5:10)*p; }
 function fmt(v,dp){ return v.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
@@ -381,12 +544,46 @@ function setDataset(d){
     var s=Math.hypot(d.vel[3*i],d.vel[3*i+1],d.vel[3*i+2]); maxM=Math.max(maxM,d.mach[i]); maxS=Math.max(maxS,s);
     if(d.pos[3*i]>maxA){maxA=d.pos[3*i];apoIdx=i;} maxT=Math.max(maxT,d.thrust[i]);
   }
+  plumeTmax=Math.max(maxT,1);
+  var maxMd=0; for(i=0;i<(d.mdot?d.mdot.length:0);i++) if(d.mdot[i]>maxMd) maxMd=d.mdot[i];
+  plumeMdMax=maxMd;
   var bo=-1; if(maxT>0){ for(var k=d.N-1;k>=0;k--){ if(d.thrust[k]>0.005*maxT){bo=k;break;} } }
-  var lastAlt=d.pos[3*(d.N-1)];
+  var lastAlt=d.pos[3*(d.N-1)], qi=0, mi=-1;
+  for(i=0;i<d.N;i++){ if(d.q[i]>d.q[qi]) qi=i; if(mi<0&&d.mach[i]>=1) mi=i; }
   events=[{k:'liftoff',label:'Liftoff',t:0,c:'--ok'}];
+  (d.events||[]).forEach(function(e){ if(e.kind==='rail') events.push({k:'rail',label:'Rail exit',t:e.t,c:'--ok'}); });
+  if(d.q[qi]>0) events.push({k:'maxq',label:'Max Q',t:qi*DT,c:'--air',q:d.q[qi]});
+  if(mi>0) events.push({k:'mach',label:'Mach 1',t:mi*DT,c:'--air'});
   if(bo>0) events.push({k:'burnout',label:'Burnout',t:bo*DT,c:'--thrust'});
   events.push({k:'apogee',label:'Apogee',t:apoIdx*DT,c:'--alpha',alt:maxA});
-  events.push({k:'impact',label:lastAlt<5?'Impact':'End of data',t:tMax,c:'--warn'});
+  (d.events||[]).forEach(function(e){
+    if(e.kind==='vote') events.push({k:'vote',label:e.name+' (FC)',t:e.t,c:'--vel'});
+    if(e.kind==='fc') events.push({k:'fc',label:'Apogee detected (FC)',t:e.t,c:'--vel'});
+    if(e.kind==='charge') events.push({k:'charge',label:'Separation charge',t:e.t,c:'--phi',speed:e.speed});
+    if(e.kind==='stretch') events.push({k:'stretch',label:'Line stretch',t:e.t,c:'--phi',snatch:e.snatch});
+    if(e.kind==='deploy') events.push({k:'deploy',label:'Reefed main inflates',t:e.t,c:'--phi',fill:e.inflation||0,load:e.load});
+    if(e.kind==='disreef') events.push({k:'disreef',label:'Reef cut · main open',t:e.t,c:'--phi',fill:e.inflation||0,load:e.load,alt:e.altitude}); });
+  /* hybrid tail-off: liquid N2O runs out where the thrust falls fastest after its peak (estimate) */
+  var pk=0; for(i=1;i<d.N;i++) if(d.thrust[i]>d.thrust[pk]) pk=i;
+  var win=Math.round(0.5/DT), best=0, bi=-1;
+  for(i=pk+win;i<d.N-win;i++){ if(d.thrust[i]<=1) break; var sl=(d.thrust[i+win]-d.thrust[i-win])/(2*win*DT); if(sl<best){best=sl;bi=i;} }
+  REC.runout=bi>0?bi*DT:null; if(REC.runout!==null) events.push({k:'runout',label:'N₂O liquid runout (est.)',t:REC.runout,c:'--thrust'});
+  REC.pRef=isFinite(d.p[0])?d.p[0]:NaN;
+  events.sort(function(a,b){return a.t-b.t});
+  var tData=(d.N-1)*DT; REC.land=lastAlt<5?tData:null; if(REC.land!==null) tMax=tData+POST;
+  events.push({k:'impact',label:lastAlt<5?'Landing':'End of data',t:tData,c:'--warn'});
+  REC.dep=null; REC.cut=null; REC.charge=null; REC.stretch=null;
+  events.forEach(function(e){ if(e.k==='deploy') REC.dep=e; if(e.k==='disreef') REC.cut=e; if(e.k==='rail') REC.rail=e; if(e.k==='charge') REC.charge=e; if(e.k==='stretch') REC.stretch=e; });
+  var mLand=d.mass[d.N-1]; REC.ke=null;
+  if(REC.land!==null){ var vl=Math.hypot(d.vel[3*(d.N-1)],d.vel[3*(d.N-1)+1],d.vel[3*(d.N-1)+2]); REC.ke={v:vl,body:0.5*(mLand-NOSE_MASS)*vl*vl*0.737562,nose:0.5*NOSE_MASS*vl*vl*0.737562}; }
+  RECO=d.recovery; if(!RECO&&REC.dep) RECO={diameter:3.048,spill_hole:0.536,reefed_opening:1.213,cord_to_nose:4.62,cord_to_body:9.25};
+  if(d.rail){ RAIL.length=d.rail.length; RAIL.dir.set(d.rail.direction[0],d.rail.direction[1],d.rail.direction[2]).normalize(); RAIL.tilt=d.rail.tilt_deg; }
+  else { RAIL.length=5.2; RAIL.dir.set(1,0,0); RAIL.tilt=0; }
+  if(!REC.rail){ REC.rail={t:0}; for(i=0;i<d.N;i++){ if(d.pos[3*i]*RAIL.dir.x+d.pos[3*i+1]*RAIL.dir.y+d.pos[3*i+2]*RAIL.dir.z>=RAIL.length){ REC.rail={t:i*DT}; break; } } }
+  /* the rail sits on the rail-button side of the rocket as it stands on the pad */
+  var bs=new V3(d.yb[0],d.yb[1],d.yb[2]).multiplyScalar(Math.cos(Math.PI/4)).addScaledVector(new V3(d.zb[0],d.zb[1],d.zb[2]),Math.sin(Math.PI/4)).normalize();
+  RAIL.side.copy(bs); RAIL.cg0=isFinite(d.cg[0])?d.cg[0]:VEH.length*0.6;
+  RAIL.y0.set(d.yb[0],d.yb[1],d.yb[2]).addScaledVector(RAIL.dir,-RAIL.dir.dot(new V3(d.yb[0],d.yb[1],d.yb[2]))).normalize(); RAIL.z0.crossVectors(RAIL.dir,RAIL.y0);
   /* side bars */
   var cfg=[{k:'mach',l:'Mach',max:2.5,dp:2,c:'var(--air)'},{k:'spd',l:'Speed m/s',max:600,dp:0,c:'var(--vel)'},{k:'alt',l:'Alt ft',max:40000,dp:0,c:'var(--alpha)'}];
   var host=$('bars'); host.innerHTML=''; bars=[];
@@ -401,10 +598,14 @@ function setDataset(d){
   events.forEach(function(e){ var li=document.createElement('li'); li.style.setProperty('--c','var('+e.c+')');
     li.innerHTML='<i></i><span>'+e.label+'</span><b>'+fmt(e.t,1)+' s'+(e.alt!==undefined?' · '+fmt(e.alt*M2FT,0)+' ft':'')+'</b>'; ev.appendChild(li); e.li=li; });
   var mk=$('mks'); mk.innerHTML='';
+  var trackPx=Math.max(($('scrub').clientWidth||600)-16,100), lastPx=-1e9;
   events.forEach(function(e){ if(e.k==='liftoff') return; var s=document.createElement('span'); s.className='mk '+e.k;
-    var p=e.t/tMax; if(e.k!=='impact') s.style.left='calc(8px + (100% - 16px) * '+p+')'; else s.style.right='0';
-    s.innerHTML=e.label.toUpperCase()+'<i></i>'; mk.appendChild(s); });
-  var sc=$('scrub'); sc.max=tMax.toFixed(2);
+    var p=(e.t-TMIN)/(tMax-TMIN), px=p*trackPx; s.style.left='calc(8px + (100% - 16px) * '+p+')';
+    /* crowded markers keep their tick; the name stays in the tooltip and the events list */
+    var room=e.k==='impact'||(px>=40&&px-lastPx>=78&&trackPx-px>=120);
+    s.innerHTML='<b'+(room?'':' class="quiet"')+'>'+e.label.split(' · ')[0].toUpperCase()+'</b><i></i>'; s.title=e.label+' · '+fmt(e.t,1)+' s';
+    if(room&&e.k!=='impact') lastPx=px; mk.appendChild(s); });
+  var sc=$('scrub'); sc.min=TMIN; sc.max=tMax.toFixed(2);
   /* path dots */
   [ptsP,ptsF,ptsG].forEach(function(p){ if(p){G.trail.remove(p);p.geometry.dispose();} });
   var cnt=Math.floor((d.N-1)/STRIDE)+1, a3=new Float32Array(cnt*3), g3=new Float32Array(cnt*3);
@@ -432,20 +633,31 @@ function applyTheme(){
 
 /* ---------- camera setup & interaction ---------- */
 function setView(v){
-  view=v; document.querySelectorAll('#views button').forEach(function(b){b.classList.toggle('on',b.dataset.v===v)});
-  if(v==='follow'){cam.distT=100;cam.elT=0.3;cam.azT=0.62;} else {cam.distT=wideD;cam.elT=0.18;cam.azT=0.9;}
+  view=v; cam.pan.set(0,0,0); document.querySelectorAll('#views button').forEach(function(b){b.classList.toggle('on',b.dataset.v===v)});
+  if(v==='follow'){cam.distT=curLd*1.9;cam.elT=0.3;cam.azT=0.62;} else {cam.distT=wideD;cam.elT=0.18;cam.azT=0.9;}
 }
 var ptrs=new Map(), pinch=0;
 function pd(){var a=Array.from(ptrs.values());return Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)}
-cv.addEventListener('pointerdown',function(e){cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});if(ptrs.size===2)pinch=pd();});
+/* the pan tool: it moves the view across the screen and never changes the zoom. It is on while the Pan button is
+   pressed, or for one drag with Shift, the middle button or the right button */
+var panMode=false, panV=new V3();
+$('pan').onclick=function(){ panMode=!panMode; this.classList.toggle('on',panMode); this.setAttribute('aria-pressed',panMode); cv.classList.toggle('pan',panMode); };
+$('recenter').onclick=function(){ cam.pan.set(0,0,0); };
+cv.addEventListener('contextmenu',function(e){e.preventDefault()});
+cv.addEventListener('pointerdown',function(e){cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY,pan:panMode||e.shiftKey||e.button===1||e.button===2});if(ptrs.size===2)pinch=pd();});
 cv.addEventListener('pointermove',function(e){
   var p=ptrs.get(e.pointerId); if(!p) return; var dx=e.clientX-p.x, dy=e.clientY-p.y; p.x=e.clientX; p.y=e.clientY;
-  if(ptrs.size===1){ cam.az-=dx*0.006;cam.azT-=dx*0.006; cam.el=clamp(cam.el+dy*0.006,-0.25,1.45);cam.elT=cam.el; }
+  if(ptrs.size===1&&p.pan){
+    var wpp=2*cam.dist*Math.tan(camera.fov*Math.PI/360)/Math.max(stage.clientHeight,1), me=camera.matrixWorld.elements;
+    panV.set(-dx*me[0]+dy*me[4],-dx*me[1]+dy*me[5],-dx*me[2]+dy*me[6]).multiplyScalar(wpp);
+    cam.pan.add(t2s(panV,tmpT));
+  }
+  else if(ptrs.size===1){ cam.az-=dx*0.006;cam.azT-=dx*0.006; cam.el=clamp(cam.el+dy*0.006,-0.25,1.45);cam.elT=cam.el; }
   else if(ptrs.size===2){ var nd=pd(); if(pinch>0) cam.distT=clamp(cam.distT*pinch/nd,4,40000); pinch=nd; }
 });
 function up(e){ptrs.delete(e.pointerId);pinch=0}
 cv.addEventListener('pointerup',up); cv.addEventListener('pointercancel',up);
-cv.addEventListener('wheel',function(e){e.preventDefault();cam.distT=clamp(cam.distT*Math.exp(e.deltaY*0.0012),4,40000);},{passive:false});
+cv.addEventListener('wheel',function(e){e.preventDefault();var dy=e.deltaY*(e.deltaMode===1?33:e.deltaMode===2?400:1);cam.distT=clamp(cam.distT*Math.exp(clamp(dy,-300,300)*0.005*(e.shiftKey?2.5:1)),2,40000);},{passive:false});
 
 /* ---------- UI wiring ---------- */
 var banner=$('banner'), bannerTimer=0;
@@ -454,9 +666,11 @@ function showBanner(kind,text,sticky){
   if(!sticky) bannerTimer=setTimeout(function(){banner.hidden=true},2600);
 }
 function setPlaying(p){ playing=p; $('ico').innerHTML=p?'<path d="M3 1.5h3.5v13H3zM9.5 1.5H13v13H9.5z"/>':'<path d="M3 1.5v13l11-6.5z"/>'; $('play').setAttribute('aria-label',p?'Pause':'Play'); }
-$('play').onclick=function(){ if(!playing&&tNow>=tMax-1e-3){tNow=0;prevT=0;banner.hidden=true;} last=performance.now(); setPlaying(!playing); };
+$('play').onclick=function(){ if(!playing&&tNow>=tMax-1e-3){tNow=TMIN;prevT=TMIN;banner.hidden=true;} last=performance.now(); setPlaying(!playing); };
 $('scrub').oninput=function(){ tNow=parseFloat(this.value); prevT=tNow; if(tNow<tMax-1e-3&&banner.dataset.kind==='impact') banner.hidden=true; };
-$('mult').onchange=function(){ var v=parseFloat(this.value); if(!(v>0)) v=scaleMult; scaleMult=clamp(v,0.1,1000); this.value=scaleMult; };
+$('mult').onchange=function(){ var v=parseFloat(this.value); if(!(v>0)) v=scaleMult; var was=scaleMult; scaleMult=clamp(v,0.1,1000); this.value=scaleMult;
+  /* the rocket keeps the same size on screen, so the zoom follows the scale */
+  if(view==='follow'){ cam.dist*=scaleMult/was; cam.distT*=scaleMult/was; } };
 $('rate').onchange=function(){rate=parseFloat(this.value)};
 document.querySelectorAll('#views button').forEach(function(b){b.onclick=function(){setView(b.dataset.v)}});
 document.querySelectorAll('input[data-k]').forEach(function(c){c.onchange=function(){ vis[c.dataset.k]=c.checked; G[c.dataset.k].visible=c.checked; }});
@@ -464,7 +678,7 @@ $('conj').onchange=function(){ if(rawTel){ var keep=tNow; setDataset(fromTelemet
 $('file').onchange=function(){
   var f=this.files&&this.files[0]; if(!f) return; var rd=new FileReader();
   rd.onload=function(){ try{ var j=JSON.parse(rd.result); rawTel={j:j,name:f.name}; $('conj').checked=false;
-      setDataset(fromTelemetry(j,false,f.name)); tNow=0;prevT=0;setPlaying(false);banner.hidden=true; setView(view);
+      setDataset(fromTelemetry(j,false,f.name)); tNow=TMIN;prevT=TMIN;setPlaying(false);banner.hidden=true; setView(view);
     }catch(err){ showBanner('burnout','Could not read telemetry: '+err.message,false); } };
   rd.readAsText(f); this.value='';
 };
@@ -484,29 +698,245 @@ function arcPoints(w,center,a0,a1,rad,ang){
   w.geo.attributes.position.needsUpdate=true; w.lg.attributes.position.needsUpdate=true;
 }
 function place(l,p,dir,off){ l.position.copy(p).addScaledVector(dir,off); }
-var noteMult=-1, rA=$('rA'),rP=$('rP'),rV=$('rV'),rT=$('rT'),rM=$('rM'),rPh=$('rPh'), ttEl=$('tt'), scrub=$('scrub');
+var noteMult=-1, rA=$('rA'),rP=$('rP'),rV=$('rV'),rT=$('rT'),rM=$('rM'),rPh=$('rPh'),rQ=$('rQ'),rSM=$('rSM'),rCG=$('rCG'),rVz=$('rVz'),rReco=$('rReco'),rCan=$('rCan'),rFC=$('rFC'), ttEl=$('tt'), scrub=$('scrub');
+
+function smooth(x){ x=clamp(x,0,1); return x*x*(3-2*x); }
+var mS=new THREE.Matrix4(), mT=new THREE.Matrix4(), Pv=new V3(), off=new V3(), xn=new V3(), yn=new V3(), zn=new V3();
+var A=new V3(), Cc=new V3(), Nn=new V3(), Sk=new V3(), Tn=new V3(), w1=new V3(), w2=new V3(), w3=new V3(), upV=new V3(1,0,0);
+var BC=new V3(), bX=new V3(), bY=new V3(), bZ=new V3(), pivDir=new V3(), cAx=new V3(), cUp=new V3(), tailG=new V3(), TD={sc:-1,t:null};
+var aimAft=0, wasSep=false, tmpQ=new THREE.Quaternion(), YAX=new V3(0,1,0), canKey='', canLbR=makeLabel('REEFED MAIN','#d9bd7a',G.reco), plumeTmax=1, plumeMdMax=0;
+/* group local: body axes with the nose tip at the origin; put body station `station` at world point `at` */
+function placeSection(group,at,xb,yb,zb,station){
+  basis.makeBasis(xb,yb,zb); basis.setPosition(at); mS.makeScale(scaleMult,scaleMult,scaleMult); mT.makeTranslation(station,0,0);
+  group.matrix.copy(basis).multiply(mS).multiply(mT); group.matrixWorldNeedsUpdate=true;
+}
+function orient(mesh,dir,len,rad,at){ mesh.position.copy(at); mesh.quaternion.setFromUnitVectors(YAX,dir); mesh.scale.set(rad,len,rad); }
+function curve(line,p0,p1,sagDir,sag){
+  var a=line.geometry.attributes.position.array, n=a.length/3;
+  for(var i=0;i<n;i++){ var u=i/(n-1), s=4*u*(1-u)*sag; a[3*i]=p0.x+(p1.x-p0.x)*u+sagDir.x*s; a[3*i+1]=p0.y+(p1.y-p0.y)*u+sagDir.y*s; a[3*i+2]=p0.z+(p1.z-p0.z)*u+sagDir.z*s; }
+  line.geometry.attributes.position.needsUpdate=true;
+}
+function evt(k){ for(var i=0;i<events.length;i++) if(events[i].k===k) return events[i]; return null; }
+
+function drawPad(sc,pos,cg){
+  /* tower on the rocket's axis as it stands on the pad, square faces aligned with the fins */
+  var d=RAIL.dir, L=RAIL.length*sc;
+  if(towerLen!==RAIL.length) buildTower(RAIL.length);
+  basis.makeBasis(d,RAIL.y0,RAIL.z0); basis.setPosition(w1.set(0.02*sc,0,0));
+  tower.matrix.copy(basis).multiply(mS.makeScale(sc,sc,sc)); tower.matrixWorldNeedsUpdate=true;
+  /* three-legged stand meeting the tower at a third of its length */
+  var top=w3.set(0.02*sc,0,0).addScaledVector(d,L*0.33), spread=L*0.16;
+  for(var i=0;i<3;i++){ var a=i*TAU/3+0.5, g=new V3(0.02*sc,spread*Math.cos(a),spread*Math.sin(a)), dir=new V3().subVectors(top,g), len=dir.length(); dir.normalize();
+    orient(legs[i],dir,len,sc,g.clone().addScaledVector(dir,len/2)); }
+  deflector.position.set(0.012*sc,0,0); deflector.scale.setScalar(sc);
+  railLb.position.set(0.02*sc,0,0).addScaledVector(d,L*1.04);
+}
+
+function drawRecovery(sc,pos,cg,te,tq,land){
+  /* te: time since the separation charge. tq: the time the airborne pose is drawn for (held at touchdown).
+     land: null in the air, or {tl, wind, fd, vh} once the drawn body has touched down */
+  var R=RECO, cb=R.cord_to_body*sc*CORD_VIS, cn=R.cord_to_nose*sc*CORD_VIS, lines=R.diameter*0.9, ax=F.xb, ay=F.yb, az=F.zb;
+  var stretched=!REC.stretch||tq>=REC.stretch.t;
+  var cut=REC.cut, dep=REC.dep, stage=0, blend=0;
+  if(dep&&tq>=dep.t) blend=smooth((tq-dep.t)/Math.max(dep.fill,0.15));
+  if(cut&&tq>=cut.t){ stage=1; blend=smooth((tq-cut.t)/Math.max(cut.fill,0.3)); }
+  var lineLen=lines*(stage===0?Math.max(blend,0.05):1), wq=0, Lp=(cg-VEH.sep)*sc+cb+lineLen*sc, hasLine=F.line.lengthSq()>0.5, cDir=ax;
+  BC.copy(pos); bX.copy(ax); bY.copy(ay); bZ.copy(az); pivDir.copy(ax);
+  if(!stretched){
+    /* ejection: the nose runs out the cord, the bag trailing it by the nose leg */
+    A.copy(BC).addScaledVector(ax,(cg-VEH.sep)*sc);
+    var ns=Math.max(F.noseSep*CORD_VIS,VEH.sep*0.02)*sc;
+    Nn.copy(A).addScaledVector(ax,ns); Cc.copy(A).addScaledVector(ax,Math.max(ns-cn,0));
+    xn.copy(ax); yn.copy(ay); zn.copy(az);
+  } else {
+    wq=REC.stretch?smooth((tq-REC.stretch.t)/3):1;
+    if(hasLine){
+      /* the simulation flew the rocket and canopy as two bodies on a line: the rocket is where the data puts it and the
+         canopy sits up the line, so the body, cords and canopy all follow the logged line */
+      pivDir.copy(F.line).negate(); cDir=pivDir;
+    } else {
+      /* no line logged: the part hangs along the steady hang (against the drag) about the canopy, which flies a smooth path */
+      pivDir.copy(ax).lerp(F.hang,wq).normalize();
+      BC.copy(pos).addScaledVector(pivDir,Lp).addScaledVector(ax,-Lp);
+    }
+    A.copy(BC).addScaledVector(ax,(cg-VEH.sep)*sc);
+    Cc.copy(A).addScaledVector(cDir,cb);
+    xn.copy(F.noseDir.lengthSq()>0.5?F.noseDir:w1.copy(ax).negate()).normalize();
+    Nn.copy(Cc).addScaledVector(xn,cn);
+    yn.copy(ay).addScaledVector(xn,-xn.dot(ay)); if(yn.lengthSq()<1e-8) yn.copy(az); yn.normalize(); zn.crossVectors(xn,yn);
+  }
+  Sk.copy(Cc).addScaledVector(cDir,lineLen*sc);
+  if(wq<0.999){
+    /* while the nose flies out the trajectory is the whole system's centre of mass: the nose and canopy pulling
+       away move the body the other way (by m_nose / m_total of the separation, and so on) */
+    var mT_=Math.max(F.mass,NOSE_MASS+CANOPY_MASS+1), shift=w1.copy(Nn).addScaledVector(xn,VEH.sep*0.5*sc).sub(pos).multiplyScalar(-NOSE_MASS/mT_);
+    shift.addScaledVector(w3.copy(Sk).sub(pos),-CANOPY_MASS/mT_).multiplyScalar(1-wq);
+    A.add(shift); Cc.add(shift); Nn.add(shift); Sk.add(shift); BC.add(shift);
+  }
+  cAx.copy(cDir); cUp.copy(ay);
+  var flat=0;
+  if(land){
+    var tl=land.tl, dw=land.wind, fd=land.fd;
+    /* body: it lands on its tail, which stops while the rest keeps drifting, and falls over like a rod about its
+       end, theta'' = g d / (k^2 + d^2) sin(theta), d tail to CG, k its radius of gyration, starting with the
+       spin the drift gives it, v d / (k^2 + d^2) */
+    var d=VEH.length-cg, k2=VEH.length*VEH.length/12, th0=Math.asin(clamp(bX.dot(fd),-1,1)), om0=land.vh*d/(k2+d*d);
+    var th=fall(tl,th0,om0,d,k2), thF=fall(60,th0,om0,d,k2), sgn=thF>=0?1:-1;
+    tailG.copy(BC).addScaledVector(bX,-d*sc); tailG.x=0;
+    var lx=new V3(Math.cos(th),0,0).addScaledVector(fd,Math.sin(th)).normalize();
+    var ly=new V3().copy(bY).addScaledVector(lx,-lx.dot(bY)); if(ly.lengthSq()<1e-6) ly.crossVectors(lx,upV); ly.normalize();
+    bX.copy(lx); bY.copy(ly); bZ.crossVectors(lx,ly);
+    BC.copy(tailG).addScaledVector(lx,d*sc); BC.x+=VEH.radius*sc*Math.abs(Math.sin(th));
+    A.copy(BC).addScaledVector(lx,(cg-VEH.sep)*sc);
+    /* where the rest ends up: the cord runs out downwind from the fallen body, the canopy beyond it */
+    var AF=w1.copy(tailG).addScaledVector(fd,sgn*(VEH.length-VEH.sep)*sc); AF.x=VEH.radius*sc;
+    var CcF=new V3().copy(AF).addScaledVector(dw,cb*0.75); CcF.x=0.02*sc;
+    var SkF=new V3().copy(CcF).addScaledVector(dw,lineLen*sc*0.8); SkF.x=0.06*R.diameter*sc;
+    /* the confluence drops under gravity (drawn to scale) and the canopy drags it downwind */
+    var Cc0=new V3().copy(Cc), uc=Math.min(tl/1.8,1), uch=smooth(tl/3);
+    Cc.y=Cc0.y+(CcF.y-Cc0.y)*uch; Cc.z=Cc0.z+(CcF.z-Cc0.z)*uch; Cc.x=Cc0.x+(CcF.x-Cc0.x)*uc*uc;
+    var dy=Cc.y-Cc0.y, dz=Cc.z-Cc0.z;
+    /* nose: hanging tip-down below the confluence, it drops onto its tip and falls on its side */
+    var tip=new V3().copy(Nn).addScaledVector(xn,VEH.sep*sc), Tdrop=clamp(Math.sqrt(2*Math.max(tip.x,0)/(9.80665*sc)),0.25,2.0);
+    if(tl<Tdrop){ var dr=tip.x*(tl/Tdrop)*(tl/Tdrop); Nn.x-=dr; Nn.y+=dy; Nn.z+=dz; }
+    else {
+      var un0=w2.copy(xn).negate(), fdn=new V3(0,un0.y,un0.z);
+      if(fdn.lengthSq()<0.01) fdn.crossVectors(upV,dw); fdn.normalize();
+      var thn=fall(tl-Tdrop,Math.max(Math.asin(clamp(un0.dot(fdn),-1,1)),0.05),0.6,VEH.sep*0.5,VEH.sep*VEH.sep/12);
+      var un=new V3(Math.cos(thn),0,0).addScaledVector(fdn,Math.sin(thn)).normalize();
+      tip.x=VEH.radius*0.6*sc*Math.sin(thn); tip.y+=dy; tip.z+=dz;
+      Nn.copy(tip).addScaledVector(un,VEH.sep*sc); xn.copy(un).negate();
+      yn.copy(upV).addScaledVector(xn,-xn.dot(upV)); if(yn.lengthSq()<1e-8) yn.copy(fdn); yn.normalize(); zn.crossVectors(xn,yn);
+    }
+    /* canopy: with its load gone it settles slowly, deflates and lies down downwind of the lines */
+    var us=smooth(tl/3.4), uv=Math.min(Math.pow(tl/3.4,1.4),1);
+    var Sk0=new V3().copy(Sk); Sk.y=Sk0.y+(SkF.y-Sk0.y)*us; Sk.z=Sk0.z+(SkF.z-Sk0.z)*us; Sk.x=Sk0.x+(SkF.x-Sk0.x)*uv;
+    var perp=new V3().crossVectors(upV,dw); if(perp.lengthSq()<1e-8) perp.set(0,0,1); perp.normalize();
+    cAx.lerp(dw,us).normalize(); cUp.lerp(perp,us); cUp.addScaledVector(cAx,-cAx.dot(cUp)); if(cUp.lengthSq()<1e-8) cUp.copy(perp); cUp.normalize();
+    stage=2; blend=smooth(tl/3); flat=smooth((tl-0.3)/3.2);
+  }
+  placeSection(aftSec,BC,bX,bY,bZ,cg);
+  placeSection(noseSec,Nn,xn,yn,zn,VEH.sep);
+  var key=stage+':'+blend.toFixed(3), skirt;
+  if(key!==canKey){ canKey=key; canopy.userData.skirt=setCanopyShape(R.diameter,R.spill_hole,R.reefed_opening,stage,blend); }
+  skirt=canopy.userData.skirt;
+  var canZ=new V3().crossVectors(cAx,cUp), su=1+0.3*flat, sz=1-0.86*flat;
+  basis.makeBasis(cAx,cUp,canZ); basis.setPosition(Sk);
+  canopy.matrix.copy(basis).multiply(mS.makeScale(sc,sc*su,sc*sz)).multiply(mT.makeTranslation(-skirt[0],0,0)); canopy.matrixWorldNeedsUpdate=true;
+  canopy.visible=stretched||Nn.distanceTo(A)>cn*0.5;
+  var la=susLines.geometry.attributes.position.array;
+  for(var g=0;g<GORES;g++){ var a=g/GORES*TAU, rr=skirt[1]*sc, cy=Math.cos(a)*rr*su, cz=Math.sin(a)*rr*sz;
+    la[6*g]=Cc.x;la[6*g+1]=Cc.y;la[6*g+2]=Cc.z;
+    la[6*g+3]=Sk.x+cUp.x*cy+canZ.x*cz; la[6*g+4]=Sk.y+cUp.y*cy+canZ.y*cz; la[6*g+5]=Sk.z+cUp.z*cy+canZ.z*cz; }
+  susLines.geometry.attributes.position.needsUpdate=true; susLines.visible=canopy.visible;
+  /* cords: slack while ejecting, taut after line stretch, flashing at the snatch, slack on the ground */
+  var slack=land?0.12:stretched?0.015:0.08, droop=land?w1.crossVectors(upV,land.wind).normalize():ay;
+  curve(cordBody,A,Cc,droop,cb*slack); curve(cordNose,Cc,Nn,land?droop:az,cn*(land?0.15:stretched?0.04:0.1));
+  var snap=REC.stretch?tq-REC.stretch.t:-1, hot=!land&&snap>=0&&snap<0.35;
+  cordBody.material.color.setHex(hot?0xf2f2f0:0xb9a0d0); cordNose.material.color.setHex(hot?0xf2f2f0:0xb9a0d0);
+  puff.visible=te<1.2&&!land; if(puff.visible){ puff.position.copy(A); puff.scale.setScalar((0.15+0.6*smooth(te/0.9))*sc); puff.material.opacity=0.35*(1-smooth(te/1.2)); }
+  var apex=w1.copy(Sk).addScaledVector(cAx,(0.42*R.diameter+0.1)*sc);
+  canLb.visible=stage===1&&vis.trail; canLbR.visible=stage===0&&blend>0.5&&vis.trail; canLb.position.copy(apex); canLbR.position.copy(apex);
+  return {stage:stage,blend:blend,te:te,stretched:stretched};
+}
+
+/* a rod standing on one end falls over: theta'' = g d / (k^2 + d^2) sin(theta), d from the end to its CG,
+   k its radius of gyration about the CG; returns the angle from vertical after tl seconds, stopping flat */
+function fall(tl,th0,om0,d,k2){
+  var th=th0, om=om0, h=0.004, c=9.80665*d/(k2+d*d), t=0;
+  if(Math.abs(th)<0.03&&Math.abs(om)<0.05) th=0.03;
+  while(t<tl&&Math.abs(th)<Math.PI/2){ om+=h*c*Math.sin(th); th+=h*om; t+=h; }
+  return clamp(th,-Math.PI/2,Math.PI/2);
+}
+
+/* when the drawn body's tail reaches the ground: the drawing is scaled up, so this comes before the true touchdown */
+function touchdownT(sc){
+  if(TD.sc===sc) return TD.t;
+  TD.sc=sc; TD.t=null;
+  if(REC.land===null) return null;
+  var cgL=isFinite(ds.cg[ds.N-1])?ds.cg[ds.N-1]:RAIL.cg0, h=RECO&&(REC.charge||REC.dep)?(VEH.length-cgL)*sc:0;
+  TD.t=REC.land;
+  for(var i=ds.N-1;i>0;i--){ if(ds.pos[3*i]>h){ TD.t=Math.min((i+1)*DT,REC.land); break; } }
+  return TD.t;
+}
 
 function draw(dtReal){
-  getFrame(tNow);
+  /* once the drawn body touches the ground the airborne pose is held at that moment and the landing plays out from it */
+  var sc=scaleMult, Ttd=touchdownT(sc), down=Ttd!==null&&tNow>=Ttd, tq=down?Ttd:tNow;
+  getFrame(tq);
   var bx=F.air.dot(F.xb), by=F.air.dot(F.yb), bz=F.air.dot(F.zb), hh=Math.hypot(by,bz);
   var alpha=Math.atan2(hh,bx), phiS=hh>1e-9?Math.atan2(-by,bz):0, phi=(phiS+TAU)%TAU;
   var spA=F.air.length(), spG=F.vel.length(), alt=F.pos.x;
+  var Ld=ROCKET_LEN*sc; curLd=Ld; PADL=Ld*17;
+  if(noteMult!==sc){ noteMult=sc; $('scaleNote').textContent='rocket '+fmt(Ld,1)+' m ('+fmt(VEH.length,2)+' m × '+sc+') · rail '+fmt(RAIL.length*sc,0)+' m · recovery and tower to the same scale, shock cords drawn at '+Math.round(CORD_VIS*100)+'% length'; }
+  var cg=isFinite(F.cg)?F.cg:RAIL.cg0, dep=REC.dep, sepEv=REC.charge||dep, sep=!!(sepEv&&RECO&&tq>=sepEv.t), te=sep?tq-sepEv.t:0;
+  var landed=REC.land!==null&&tNow>REC.land, land=null;
+
+  /* drawn position: on the scaled rail the rocket rides the rail scaled too, easing back onto the true path after it leaves */
+  /* ...fading out over the first 1.5 km of travel so the drawn rocket never slows or drops */
+  var sAlong=F.pos.dot(RAIL.dir), wr=1-smooth((sAlong-RAIL.length)/1500);
+  off.copy(RAIL.dir).multiplyScalar(((VEH.length-RAIL.cg0)+0.15)*sc+clamp(sAlong,0,RAIL.length)*(sc-1)).multiplyScalar(wr);
+  Pv.copy(F.pos).add(off); var pos=Pv;
+  if(down){
+    /* it falls toward its drift over the ground (the wind), or downwind when it has none */
+    var wv=new V3(0,ds.wind[1],ds.wind[2]), dw=wv.lengthSq()>0.01?wv.normalize():new V3(0,1,0);
+    var vh=Math.hypot(F.vel.y,F.vel.z), fd=vh>0.3?new V3(0,F.vel.y/vh,F.vel.z/vh):dw.clone();
+    land={tl:tNow-Ttd,wind:dw,fd:fd,vh:vh};
+  }
+
+  /* vehicle: one rigid body until separation, then nose section and aft body on their cords */
+  var rs=null; reco.visible=sep;
+  if(sep){
+    rs=drawRecovery(sc,pos,cg,te,tq,land);
+    Pv.copy(BC); F.xb.copy(bX); F.yb.copy(bY); F.zb.copy(bZ);
+  } else {
+    if(land){
+      /* no canopy: it stands on its tail and falls over */
+      var d0=VEH.length-cg, k20=VEH.length*VEH.length/12, th=fall(land.tl,Math.asin(clamp(F.xb.dot(land.fd),-1,1)),land.vh*d0/(k20+d0*d0),d0,k20);
+      tailG.copy(Pv).addScaledVector(F.xb,-d0*sc); tailG.x=0;
+      var lx=new V3(Math.cos(th),0,0).addScaledVector(land.fd,Math.sin(th)).normalize();
+      F.yb.addScaledVector(lx,-lx.dot(F.yb)); if(F.yb.lengthSq()<1e-6) F.yb.crossVectors(lx,upV); F.yb.normalize();
+      F.xb.copy(lx); F.zb.crossVectors(F.xb,F.yb);
+      Pv.copy(tailG).addScaledVector(lx,d0*sc); Pv.x+=VEH.radius*sc*Math.abs(Math.sin(th));
+    }
+    placeSection(aftSec,pos,F.xb,F.yb,F.zb,cg); placeSection(noseSec,pos,F.xb,F.yb,F.zb,cg);
+  }
 
   /* camera */
   var k=1-Math.exp(-dtReal*10);
-  cam.az+=(cam.azT-cam.az)*k; cam.el+=(cam.elT-cam.el)*k; cam.dist+=(cam.distT-cam.dist)*k;
-  var goal=view==='follow'?F.pos:wideC; cam.tgt.lerp(goal,view==='follow'?1-Math.exp(-dtReal*14):k);
-  var tt=s2t(cam.tgt,new V3()), d=cam.dist;
+  cam.az+=(cam.azT-cam.az)*k; cam.el+=(cam.elT-cam.el)*k; cam.dist+=(cam.distT-cam.dist)*Math.min(1,k*1.6);
+  if(sep!==wasSep&&view==='follow'){ cam.distT=Ld*(sep?6.5:1.9); } wasSep=sep;
+  /* the view is centred on the middle of the rocket as drawn (the aft body once the nose has come off), exactly, with no
+     lag, so neither the scale nor the playback speed moves it; the pan adds to that */
+  if(view==='follow'){ cam.tgt.copy(pos).addScaledVector(F.xb,(cg-(sep?(VEH.sep+VEH.length)/2:VEH.length/2))*sc); }
+  else cam.tgt.lerp(wideC,k);
+  var tt=s2t(w1.copy(cam.tgt).add(cam.pan),new V3()), d=cam.dist;
   camera.position.set(tt.x+d*Math.cos(cam.el)*Math.sin(cam.az), tt.y+d*Math.sin(cam.el), tt.z+d*Math.cos(cam.el)*Math.cos(cam.az));
   camera.near=Math.max(0.2,d*0.01); camera.far=120000; camera.updateProjectionMatrix(); camera.lookAt(tt);
 
-  var Ld=ROCKET_LEN*scaleMult; curLd=Ld; PADL=Ld*30; if(noteMult!==scaleMult){ noteMult=scaleMult; $('scaleNote').textContent='rocket length '+fmt(Ld,1)+' m  (3 m × '+scaleMult+')'; }
-  var pos=F.pos;
+  drawPad(sc,pos,cg);
 
-  /* rocket pose */
-  basis.makeBasis(F.xb,F.yb,F.zb); basis.setPosition(pos); rocket.matrix.copy(basis); rocket.matrixWorldNeedsUpdate=true; model.scale.setScalar(scaleMult);
-  var burning=F.thrust>1; flame.visible=burning;
-  if(burning){ var fl=0.7+0.5*(F.thrust/2200)+0.12*Math.sin(tNow*90); flame.scale.set(1,fl,1); flame.position.x=-1.52-0.45*fl; }
+  /* exhaust plume from the nozzle exit, scaled with the propellant mass flow (thrust when the log has none) */
+  var mf=plumeMdMax>0&&isFinite(F.mdot)?Math.max(F.mdot,0)/plumeMdMax:F.thrust/plumeTmax;
+  var burning=mf>0.004; plume.visible=burning;
+  var tail=w3.copy(pos).addScaledVector(F.xb,-(VEH.length-cg)*sc), plen=0;
+  if(burning){
+    /* nozzle assumed matched to the pad pressure: as the air thins the exhaust is under-expanded, so the plume
+       widens (area ~ exit / ambient pressure) and the shock diamonds spread (spacing ~ D_e sqrt(p_e / p_a)) */
+    var tf=mf, ratio=isFinite(F.p)&&isFinite(REC.pRef)&&F.p>0?Math.max(REC.pRef/F.p,1):1, ex=Math.sqrt(ratio);
+    /* after the liquid N2O runs out the motor burns tank vapour: weaker, paler, ragged */
+    var vap=REC.runout!==null?smooth((tNow-REC.runout)/1.0):0;
+    var fl=1+(0.06+0.16*vap)*Math.sin(tNow*97)+(0.04+0.1*vap)*Math.sin(tNow*151+1.3), rp=VEH.tail.r1*sc;
+    /* more gas through the throat: a longer flame and a fuller jet (width ~ sqrt of the flow) */
+    var wf=0.45+0.55*Math.sqrt(tf);
+    plen=(0.5+3.2*tf)*sc*fl*(1+0.35*(ex-1));
+    basis.makeBasis(w1.copy(F.xb).negate(),F.yb,w2.copy(F.zb).negate()); basis.setPosition(tail); plume.matrix.copy(basis); plume.matrixWorldNeedsUpdate=true;
+    plOut.scale.set(plen,rp*1.1*ex*wf,rp*1.1*ex*wf); plCore.scale.set(plen*0.5,rp*0.75*ex*wf,rp*0.75*ex*wf);
+    plSegs.forEach(function(m){ m.material.opacity=m.userData.base*(1-0.55*vap); }); plCore.material.opacity=0.8*(1-0.45*vap);
+    plCore.material.color.setRGB(1.0-0.15*vap,0.9-0.02*vap,0.7+0.3*vap);
+    var spacing=2.4*VEH.tail.r1*sc*ex;
+    diamonds.forEach(function(m,i){ m.visible=tf>0.2&&vap<0.5&&spacing*(i+0.6)<plen*0.85; m.position.set(spacing*(i+0.6),0,0);
+      var s=rp*ex*(1-i*0.16); m.scale.set(s*0.45,s*0.3,s*0.3); m.material.opacity=(0.55-0.11*i)*(1-vap); }); }
 
   /* pad frame */
   for(var i=0;i<3;i++){ setArrow(padAx[i],v1.set(0,0,0),padDirs[i],PADL,1,Ld*0.0045); place(padLb[i],v2.copy(padDirs[i]).multiplyScalar(PADL),padDirs[i],PADL*0.04); }
@@ -521,9 +951,10 @@ function draw(dtReal){
 
   /* vectors */
   var lenV=Ld*(0.5+1.3*Math.min(spG/320,1)), lenA=Ld*(0.5+1.3*Math.min(spA/320,1));
+  if(landed){ spG=0; spA=0; }
   if(spG>0.05){ v1.copy(F.vel).divideScalar(spG); setArrow(vVel,pos,v1,lenV,1.1); place(vLb[0],v2.copy(pos).addScaledVector(v1,lenV),v1,Ld*0.16); vVel.visible=vLb[0].visible=true; } else vVel.visible=vLb[0].visible=false;
   if(spA>0.05){ airDir.copy(F.air).divideScalar(spA); setArrow(vAir,pos,airDir,lenA*0.92,0.85); place(vLb[1],v2.copy(pos).addScaledVector(airDir,lenA*0.92),airDir,Ld*0.16); vAir.visible=vLb[1].visible=true; } else { airDir.copy(F.xb); vAir.visible=vLb[1].visible=false; }
-  if(burning){ var tl=Ld*0.9*(F.thrust/2200); v1.copy(pos).addScaledVector(F.xb,-Ld*0.5-tl-Ld*0.55); setArrow(vThr,v1,F.xb,tl,1.3); place(vLb[2],v2.copy(v1),F.xb,-Ld*0.14); vThr.visible=vLb[2].visible=true; } else vThr.visible=vLb[2].visible=false;
+  if(burning){ var tl=Ld*0.6*(F.thrust/plumeTmax); v1.copy(tail).addScaledVector(F.xb,-plen-tl-Ld*0.04); setArrow(vThr,v1,F.xb,tl,1.3); place(vLb[2],v2.copy(v1),F.xb,-Ld*0.08); vThr.visible=vLb[2].visible=true; } else vThr.visible=vLb[2].visible=false;
 
   /* missile frame: body rolled about x by phi so V_R lies in the x_m–z_m plane */
   if(hh>1e-9){ zm.set(0,0,0).addScaledVector(F.yb,by/hh).addScaledVector(F.zb,bz/hh); } else zm.copy(F.zb);
@@ -532,18 +963,32 @@ function draw(dtReal){
   place(mLb[0],v1.copy(pos).addScaledVector(ym,Ld*0.55),ym,Ld*0.12); place(mLb[1],v1.copy(pos).addScaledVector(zm,Ld*0.75),zm,Ld*0.12);
   basis.makeBasis(F.xb,ym,zm); basis.setPosition(pos); mPlane.matrix.copy(basis); mPlane.matrixWorldNeedsUpdate=true;
   planeMesh.scale.set(Ld*1.8,Ld*1.0,1); planeMesh.position.set(Ld*0.3,0,Ld*0.4); planeEdge.scale.copy(planeMesh.scale); planeEdge.position.copy(planeMesh.position);
-  /* α wedge: x_m rotating toward airspeed inside the x_m–z_m plane (zero-angle wedge when V_R is along x) */
   arcPoints(aW,pos,F.xb,zm,Ld*0.8,alpha);
   place(aLb,v1.copy(pos).addScaledVector(F.xb,Math.cos(alpha/2)*Ld*0.95).addScaledVector(zm,Math.sin(alpha/2)*Ld*0.95),F.xb,0);
-  /* φ wedge: z_b rotating about x_b to z_m, drawn in the body cross-section ahead of the nose */
   org.copy(pos).addScaledVector(F.xb,Ld*0.78);
-  var pa=phiS; v3.copy(F.yb).multiplyScalar(-1); /* x_b × z_b = −y_b */
+  var pa=phiS; v3.copy(F.yb).multiplyScalar(-1);
   arcPoints(pW,org,F.zb,v3,Ld*0.38,pa);
   place(pLb,v1.copy(org).addScaledVector(F.zb,Math.cos(pa/2)*Ld*0.55).addScaledVector(v3,Math.sin(pa/2)*Ld*0.55),F.xb,Ld*0.04);
-  aW.mesh.visible=aW.line.visible=aLb.visible=alpha>0.004; pW.mesh.visible=pW.line.visible=pLb.visible=Math.abs(pa)>0.02&&alpha>0.004;
+  var wedges=!sep&&alpha>0.004;
+  aW.mesh.visible=aW.line.visible=aLb.visible=wedges; pW.mesh.visible=pW.line.visible=pLb.visible=wedges&&Math.abs(pa)>0.02;
+  mPlane.visible=mAx[0].visible=mAx[1].visible=mLb[0].visible=mLb[1].visible=!sep;
+
+  /* aero cues */
+  var M=F.mach;
+  machCone.visible=!sep&&M>1.0005;
+  if(machCone.visible){ var mu=Math.asin(1/M), cl=Ld*1.3; Tn.copy(pos).addScaledVector(F.xb,cg*sc);
+    w1.copy(airDir); w2.copy(F.yb).addScaledVector(w1,-w1.dot(F.yb)).normalize(); basis.makeBasis(w1,w2,w3.crossVectors(w1,w2)); basis.setPosition(Tn);
+    machCone.matrix.copy(basis).multiply(mS.makeScale(cl,cl*Math.tan(mu),cl*Math.tan(mu))); machCone.matrixWorldNeedsUpdate=true; }
+  var vap=!sep&&alt<6000?Math.max(0,1-Math.abs(M-1)/0.06):0; vapor.visible=vap>0.01;
+  if(vapor.visible){ vapor.material.opacity=0.38*vap; Tn.copy(pos).addScaledVector(F.xb,(cg-1.1)*sc);
+    basis.makeBasis(F.xb,F.yb,F.zb); basis.setPosition(Tn); vapor.matrix.copy(basis).multiply(mS.makeScale(1.3*sc,(0.28+0.25*vap)*sc,(0.28+0.25*vap)*sc)); vapor.matrixWorldNeedsUpdate=true; }
+  var showCP=!sep&&isFinite(F.cp)&&isFinite(F.cg), mk=Ld*0.045;
+  cgMk.visible=cgLb.visible=!sep&&isFinite(F.cg); cpMk.visible=cpLb.visible=showCP;
+  cgMk.position.copy(pos); cgMk.scale.set(mk,mk,1); cgLb.position.copy(pos).addScaledVector(F.yb,-Ld*0.1).addScaledVector(F.zb,-Ld*0.1);
+  if(showCP){ cpMk.position.copy(pos).addScaledVector(F.xb,(cg-F.cp)*sc); cpMk.scale.set(mk,mk,1); cpLb.position.copy(cpMk.position).addScaledVector(F.yb,-Ld*0.1).addScaledVector(F.zb,-Ld*0.1); }
 
   /* path, footprint, drop line, markers */
-  var kk=Math.min(Math.floor(tNow/DT/STRIDE)+1,ptsP.userData.cnt); ptsP.geometry.setDrawRange(0,kk);
+  var kk=clamp(Math.floor(tNow/DT/STRIDE)+1,0,ptsP.userData.cnt); ptsP.geometry.setDrawRange(0,kk);
   var da=drop.geometry.attributes.position.array; da[0]=pos.x;da[1]=pos.y;da[2]=pos.z;da[3]=0.6;da[4]=pos.y;da[5]=pos.z; drop.geometry.attributes.position.needsUpdate=true;
   var fa=foot.geometry.attributes.position.array; fa[0]=0.8;fa[1]=pos.y;fa[2]=pos.z; foot.geometry.attributes.position.needsUpdate=true;
   [apoMk,impMk].forEach(function(m){ m.scale.setScalar(camera.position.distanceTo(s2t(m.position,tmpT))*0.008); });
@@ -552,30 +997,49 @@ function draw(dtReal){
   apoLb.visible=impLb.visible=vis.trail;
 
   /* label sizing */
-  labels.forEach(function(l){ if(!l.visible) return; var sc=l.userData.world?curLd*0.065:camera.position.distanceTo(s2t(l.position,tmpT))*l.userData.size; l.scale.set(sc*l.userData.asp,sc,1); });
+  labels.forEach(function(l){ if(!l.visible) return; var s=l.userData.world?curLd*0.065:camera.position.distanceTo(s2t(l.position,tmpT))*l.userData.size; l.scale.set(s*l.userData.asp,s,1); });
 
   if(renderer) renderer.render(scene,camera);
 
-  /* HUD */
-  var tb=events.filter(function(e){return e.k==='burnout'})[0];
-  var phase=tNow>=tMax-1e-3?'Impact':(tb&&tNow<tb.t)||(!tb&&F.thrust>1)?'Boost':F.vel.x>0?'Coast ↑':'Descent ↓';
-  rA.textContent=fmt(alpha*DEG,1)+'°'; rP.textContent=fmt(phi*DEG,0)+'°'; rV.textContent=fmt(spA,1)+' m/s';
-  rT.textContent=F.thrust>1?fmt(F.thrust,0)+' N':'0 N'; rM.textContent=F.mass>0?fmt(F.mass,2)+' kg':'–'; rPh.textContent=phase;
+  /* HUD: the readouts are the simulation at the playback time, even while the drawn landing plays out */
+  if(tq!==tNow){ getFrame(tNow); spA=F.air.length(); spG=F.vel.length(); alt=F.pos.x; if(landed){ spA=0; spG=0; } }
+  var tb=evt('burnout'), apo=evt('apogee'), cut=REC.cut, fcAp=evt('fc');
+  var phase=landed?'Landed':tNow<0?'Countdown':tNow<REC.rail.t?'On rail':(tb&&tNow<tb.t)||(!tb&&F.thrust>1)?'Boost':(apo&&tNow<apo.t)?'Coast ↑':!sep?'Free fall ↓':REC.stretch&&tNow<REC.stretch.t?'Separation ↓':cut&&tNow>=cut.t?'Under main ↓':'Under reefed main ↓';
+  var recoTxt=!dep?'–':!sep?'Stowed':landed?'On the ground':cut&&tNow>=cut.t?(rs&&rs.blend<0.99?'Disreefing':'Main open'):rs&&!rs.stretched?'Ejecting nose':dep&&tNow<dep.t+0.05?'Line stretch':rs&&rs.blend<0.99?'Inflating':'Reefed';
+  var votes=events.filter(function(e){return e.k==='vote'&&tNow>=e.t}).length;
+  var fcTxt=!fcAp?'–':tNow<10?'Boost lockout':tNow<fcAp.t?'Armed · votes '+votes+'/3':REC.charge&&tNow<REC.charge.t?'Apogee · delay':cut&&tNow>=cut.t?'Main fired':'Charge fired';
+  rA.textContent=sep?'–':fmt(alpha*DEG,1)+'°'; rP.textContent=sep?'–':fmt(phi*DEG,0)+'°'; rV.textContent=fmt(spA,1)+' m/s';
+  rT.textContent=F.thrust>1?fmt(F.thrust,0)+' N'+(isFinite(F.mdot)&&F.mdot>0?' · '+fmt(F.mdot,2)+' kg/s':''):'0 N'; rM.textContent=F.mass>0?fmt(F.mass,2)+' kg':'–'; rPh.textContent=phase;
+  rQ.textContent=fmt(F.q/1000,1)+' kPa'; rSM.textContent=showCP?fmt((F.cp-F.cg)/(2*VEH.radius),2)+' cal':'–';
+  rFC.textContent=fcTxt; rCG.textContent=isFinite(F.cg)?fmt(F.cg,2)+(showCP?' / '+fmt(F.cp,2):'')+' m':'–'; rVz.textContent=fmt(F.vel.x,1)+' m/s'; rReco.textContent=recoTxt;
+  rCan.textContent=sep&&!landed&&F.line.lengthSq()>0.5?fmt(F.swing,1)+'° · '+Math.round(F.drag*100)+'%':'–';
   var vals={mach:F.mach,spd:spG,alt:Math.max(alt,0)*M2FT};
   bars.forEach(function(b){ b.val.textContent=fmt(vals[b.k],b.dp); b.fill.style.height=clamp(vals[b.k]/b.max*100,0,100)+'%'; });
   events.forEach(function(e){ e.li.classList.toggle('on',tNow>=e.t-1e-6); });
-  ttEl.innerHTML=fmt(tNow,2)+' s<small>of '+fmt(tMax,1)+' s</small>';
-  scrub.value=tNow; scrub.style.setProperty('--p',(tNow/tMax*100)+'%');
+  ttEl.innerHTML=(tNow<0?'−':'')+fmt(Math.abs(tNow),2)+' s<small>of '+fmt(tMax,1)+' s</small>';
+  scrub.value=tNow; scrub.style.setProperty('--p',((tNow-TMIN)/(tMax-TMIN)*100)+'%');
 }
 
 function tick(now){
   var dtReal=Math.min((now-last)/1000,0.1); last=now;
   if(playing){
     prevT=tNow; tNow=Math.min(tNow+dtReal*rate,tMax);
-    events.forEach(function(e){ if(e.k==='liftoff') return;
+    events.forEach(function(e){
+      if(e.k==='liftoff'){ if(prevT<0&&tNow>=0) showBanner('rail','LIFTOFF',false); return; }
       if(prevT<e.t&&tNow>=e.t-1e-6){
         if(e.k==='apogee') showBanner('apogee','APOGEE · '+fmt(e.alt*M2FT,0)+' ft · t = '+fmt(e.t,1)+' s',false);
         else if(e.k==='burnout') showBanner('burnout','BURNOUT · t = '+fmt(e.t,1)+' s',false);
+        else if(e.k==='rail') showBanner('rail','RAIL EXIT · '+fmt(F.vel.length(),1)+' m/s',false);
+        else if(e.k==='maxq') showBanner('aero','MAX Q · '+fmt(e.q/1000,1)+' kPa',false);
+        else if(e.k==='mach') showBanner('aero','MACH 1 · t = '+fmt(e.t,1)+' s',false);
+        else if(e.k==='fc') showBanner('rail','FLIGHT COMPUTER · APOGEE DETECTED · t = '+fmt(e.t,2)+' s',false);
+        else if(e.k==='charge') showBanner('reco','SEPARATION CHARGE · NOSE OUT AT '+fmt(e.speed||0,1)+' m/s',false);
+        else if(e.k==='stretch') showBanner('reco','LINE STRETCH · SNATCH '+fmt((e.snatch||0)/4.448222,0)+' lbf',false);
+        else if(e.k==='deploy') showBanner('reco','REEFED MAIN INFLATING · PEAK '+fmt((e.load||0)/4.448222,0)+' lbf',false);
+        else if(e.k==='disreef') showBanner('reco','REEF CUT AT '+fmt((e.alt||0)*M2FT,0)+' ft · MAIN OPEN · PEAK '+fmt((e.load||0)/4.448222,0)+' lbf',false);
+        else if(e.k==='runout') showBanner('burnout','N₂O LIQUID RUNOUT (EST.) · VAPOUR BURN',false);
+        else if(e.k==='impact'&&REC.ke) showBanner('impact','LANDING · '+fmt(REC.ke.v,1)+' m/s · BODY '+fmt(REC.ke.body,0)+' ft·lbf · NOSE '+fmt(REC.ke.nose,0)+' ft·lbf',true);
+        else if(e.k==='vote') {}
         else { var sp=Math.hypot(F.vel.x,F.vel.y,F.vel.z); showBanner('impact',e.label.toUpperCase()+' · t = '+fmt(e.t,1)+' s · '+fmt(sp,0)+' m/s',true); }
       } });
     if(tNow>=tMax-1e-6) setPlaying(false);
@@ -588,10 +1052,10 @@ if(!renderer) $('nogl').hidden=false; else resize();
 document.fonts&&document.fonts.ready&&0;
 setDataset(genDemo());
 if(window.TELEMETRY){ try{ rawTel={j:window.TELEMETRY,name:window.TELEMETRY_NAME||'simulation'}; setDataset(fromTelemetry(rawTel.j,false,rawTel.name)); }catch(err){ console.error(err); } }
-G.world.visible=G.body.visible=G.missile.visible=G.vec.visible=G.trail.visible=true;
-tNow=Math.max(0,events.filter(function(e){return e.k==='apogee'})[0].t-2.2); prevT=tNow;
+G.world.visible=G.body.visible=G.missile.visible=G.vec.visible=G.trail.visible=G.aero.visible=G.pad.visible=true;
+tNow=-2; prevT=tNow; /* opens 2 s before launch */
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
-window.__viewer={set:function(t){tNow=t;prevT=t},view:setView,cam:cam,toggle:function(k,v){G[k].visible=v}};
+window.__viewer={set:function(t){tNow=t;prevT=t},view:setView,cam:cam,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
 requestAnimationFrame(tick);
 })();
 </script>

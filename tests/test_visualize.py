@@ -3,10 +3,10 @@
 import json
 from pathlib import Path
 
-from flight_sim.__main__ import get_default_state
+from flight_sim.__main__ import LAUNCH_RAIL, RECOVERY, get_default_state
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.vehicle.rocket_properties import RocketProperties
-from flight_sim.visualize import TelemetryLog, write_viewer
+from flight_sim.visualize import RecoveryFrame, TelemetryLog, write_viewer
 
 
 def test_viewer_page_embeds_the_logged_flight(
@@ -17,6 +17,9 @@ def test_viewer_page_embeds_the_logged_flight(
     state = get_default_state()
     log.record(0.0, state)
     log.record(0.5, state)
+    log.add_event("deploy", "Main reefed", 0.25, inflation=0.1)
+    log.describe_rail(LAUNCH_RAIL)
+    log.describe_recovery(RECOVERY)
 
     page = write_viewer(log, tmp_path / "flight.html", open_browser=False)
 
@@ -27,3 +30,37 @@ def test_viewer_page_embeds_the_logged_flight(
     assert data["t"] == [0.0, 0.5]
     assert data["quat"][0] == [1.0, 0.0, 0.0, 0.0]
     assert len(data["pos"]) == len(data["vel"]) == len(data["thrust"]) == 2
+    assert data["mach"] == [0.0, 0.0]
+    assert data["q"] == [0.0, 0.0]
+    # Burning at both samples, so propellant flows out of the nozzle
+    assert all(m > 0.0 for m in data["mdot"])
+    assert data["cg"] == [3.298, 3.298]
+    assert len(data["cp"]) == 2
+    assert data["events"] == [
+        {"kind": "deploy", "name": "Main reefed", "t": 0.25, "inflation": 0.1}
+    ]
+    assert data["rail"]["length"] == 10.0
+    assert data["recovery"]["cord_to_body"] == 364 * 0.0254
+
+
+def test_recovery_frame_is_logged_beside_the_state(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A sample without a frame has no line; one with a frame carries it."""
+    log = TelemetryLog(baseline_rocket_properties, IntegrationConfiguration())
+    state = get_default_state()
+    log.record(0.0, state)
+    log.record(
+        1.0,
+        state,
+        RecoveryFrame(
+            nose_dir=[0.0, 0.0, 1.0],
+            line=[-1.0, 0.0, 0.0],
+            swing_deg=12.0,
+            drag_fraction=0.5,
+        ),
+    )
+    assert log.rows["line"] == [[0.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]
+    assert log.rows["nose_dir"][1] == [0.0, 0.0, 1.0]
+    assert log.rows["swing"] == [0.0, 12.0]
+    assert log.rows["drag"] == [1.0, 0.5]
