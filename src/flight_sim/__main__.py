@@ -14,28 +14,44 @@ from flight_sim.integration import (
     TruthConfiguration,
     adaptive_step,
 )
-from flight_sim.units import scalar, vector, zero_vector
+from flight_sim.units import matrix, scalar, vector, zero_vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.utilities.quaternion import Quaternion
+from flight_sim.vehicle.engine import PropellantGrain, solid_engine_from_csv
+from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
 
 def get_default_state() -> RocketState:
-    """Generate the standard launchpad initial state for Sol Invictus."""
+    """Generate the standard initial state for Sol Invictus, at rest off the rail."""
     return RocketState(
         position=vector((0.0, 0.0, 0.0), "m"),
         velocity=vector((0.0, 0.0, 0.0), "m/s"),
-        current_mass=scalar(25.0, "kg"),
-        inertia=vector((2.5, 150.0, 150.0), "kg*m**2"),
-        cg_location=vector((-1.5, 0.0, 0.0), "m"),
         angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
         orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
     )
 
 
 def get_default_properties() -> RocketProperties:
-    """Build the standard aerodynamic and motor properties for Sol Invictus."""
+    """Build the standard aerodynamic, motor and mass properties for Sol Invictus.
+
+    The mass properties are placeholders: 25 kg with its CG about 1.5 m aft of
+    the nose tip at ignition, burning down to 20 kg.
+    """
+    grain = PropellantGrain(
+        mass=scalar(5.0, "kg"),
+        length=scalar(0.75, "m"),
+        outer_diameter=scalar(0.0762, "m"),
+        core_diameter=scalar(0.03, "m"),
+        cg_location=vector((-2.6, 0.0, 0.0), "m"),
+    )
+    # Thin tube of radius 0.045 m and length 0.9 m
+    casing = MassProperties(
+        mass=scalar(3.0, "kg"),
+        cg_location=vector((-2.6, 0.0, 0.0), "m"),
+        inertia=matrix(np.diag((0.0061, 0.21, 0.21)), "kg*m**2"),
+    )
     return RocketProperties(
         aero_table=aero_table_from_csv(
             "data/aero/estimated_aero.csv",
@@ -44,8 +60,14 @@ def get_default_properties() -> RocketProperties:
             reference_point=zero_vector("m"),
             frame="missile",
         ),
-        motor_file_path="tests/test_data/standard_motor.csv",
-        propellant_mass=5.0,
+        engine=solid_engine_from_csv(
+            "tests/test_data/standard_motor.csv", grain, casing
+        ),
+        dry_mass_properties=MassProperties(
+            mass=scalar(17.0, "kg"),
+            cg_location=vector((-1.0, 0.0, 0.0), "m"),
+            inertia=matrix(np.diag((2.4, 135.0, 135.0)), "kg*m**2"),
+        ),
     )
 
 
@@ -78,7 +100,7 @@ def main() -> None:  # pylint: disable=too-many-statements
                 "Inertial Position (m)": pos,
                 "Inertial Velocity (m/s)": vel,
                 "Angular Rate (rad/s)": ang_rate,
-                "Mass (kg)": float(state.current_mass.m_as("kg")),
+                "Mass (kg)": properties.mass_properties(current_time).mass,
             }
         )
 

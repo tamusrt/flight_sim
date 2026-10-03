@@ -1,7 +1,6 @@
 """Functions for loading aerodynamic CSV data."""
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from typing import Annotated, Literal
 
@@ -174,28 +173,3 @@ def aero_table_from_csv(
         reference_point=reference_point,
         frame=frame,
     )
-
-
-def time_interpolator_from_csv(
-    filepath: str, time_col: str, output_col: str
-) -> Callable[[float], float]:
-    """Read a CSV and build a 1D time-based interpolator for motor curves.
-
-    Args:
-        filepath (str): CSV holding the time and output columns.
-        time_col (str): Column of increasing sample times, in seconds.
-        output_col (str): Column to interpolate.
-
-    Returns:
-        Callable[[float], float]: Linear interpolation of the output column,
-            returning 0.0 outside the sampled time range.
-    """
-    data_frame = pd.read_csv(filepath)
-    times = data_frame[time_col].to_numpy(dtype=float)
-    outputs = data_frame[output_col].to_numpy(dtype=float)
-
-    def interpolate(time: float) -> float:
-        """Return the output column's value at the given time in seconds."""
-        return float(np.interp(time, times, outputs, left=0.0, right=0.0))
-
-    return interpolate

@@ -1,11 +1,8 @@
 """Flight event tests."""
 
-from dataclasses import replace
-
 import numpy as np
 import pytest
 
-from flight_sim.__main__ import get_default_state
 from flight_sim.environment.atmosphere import VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.environment.launch_rail import LaunchRail
@@ -22,13 +19,8 @@ from flight_sim.vehicle.rocket_state import RocketState
 
 
 def _coasting_state(vertical_velocity: float) -> RocketState:
-    """Return a massless state rising at the given vertical velocity."""
-    return RocketState(
-        current_mass=scalar(0.0, "kg"),
-        inertia=vector((0.1, 2.5, 2.5), "kg*m**2"),
-        cg_location=vector((-2.5, 0.0, 0.0), "m"),
-        velocity=vector((vertical_velocity, 0.0, 0.0), "m/s"),
-    )
+    """Return a state at the origin rising at the given vertical velocity."""
+    return RocketState(velocity=vector((vertical_velocity, 0.0, 0.0), "m/s"))
 
 
 def test_event_crossed_when_value_falls_through_zero() -> None:
@@ -48,19 +40,23 @@ def test_impact_is_not_crossed_on_the_pad() -> None:
     assert not IMPACT.crossed(0.0, on_pad, 1.0, on_pad)
 
 
+_BALLISTIC = IntegrationConfiguration(
+    truth=TruthConfiguration(
+        gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere()
+    )
+)
+
+
 def test_adaptive_step_ends_on_apogee(
-    baseline_rocket_properties: RocketProperties,
+    unpowered_rocket_properties: RocketProperties,
 ) -> None:
     """A ballistic step that passes apogee is cut at apogee and reports it."""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=ConstantGravity(9.81))
-    )
 
     state, dt_taken, _next_dt, hit = adaptive_step(
         0.0,
         _coasting_state(50.0),
-        baseline_rocket_properties,
-        config,
+        unpowered_rocket_properties,
+        _BALLISTIC,
         scalar(10.0, "s"),
         events=(APOGEE,),
     )
@@ -71,18 +67,15 @@ def test_adaptive_step_ends_on_apogee(
 
 
 def test_adaptive_step_reports_no_event_when_none_is_crossed(
-    baseline_rocket_properties: RocketProperties,
+    unpowered_rocket_properties: RocketProperties,
 ) -> None:
     """A step that crosses nothing runs its full length and reports None."""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=ConstantGravity(9.81))
-    )
 
     _state, dt_taken, _next_dt, hit = adaptive_step(
         0.0,
         _coasting_state(50.0),
-        baseline_rocket_properties,
-        config,
+        unpowered_rocket_properties,
+        _BALLISTIC,
         scalar(1.0, "s"),
         events=(APOGEE,),
     )
@@ -102,7 +95,6 @@ def test_peak_vertical_velocity_lands_where_acceleration_is_zero(
     )
     peak = peak_vertical_velocity(baseline_rocket_properties, config)
     state = _coasting_state(100.0)
-    state.current_mass = scalar(20.0, "kg")
 
     # Thrust fades from 2 s to 4 s, so the acceleration crosses zero in between
     time = 2.0
@@ -132,7 +124,7 @@ def test_rail_exit_lands_where_the_rail_releases_the_rocket(
         azimuth=scalar(90.0, "deg"),
     )
     config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
-    state = rail.mount(replace(get_default_state(), position=vector(start, "m")))
+    state = rail.mount(RocketState(position=vector(start, "m")))
 
     time = 0.0
     dt = scalar(0.1, "s")

@@ -20,17 +20,15 @@ from flight_sim.flight_event import FlightEvent
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
 from flight_sim.utilities.dcm import aero_angles, body_to_world
 from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_rates
-from flight_sim.vehicle.engine import Engine
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
-# Layout of the state array: metres, m/s, rad/s, quaternion, kilograms
+# Layout of the state array: metres, m/s, rad/s, quaternion
 _POSITION = slice(0, 3)
 _VELOCITY = slice(3, 6)
 _ANGULAR_VELOCITY = slice(6, 9)
 _ORIENTATION = slice(9, 13)  # q_w, q_x, q_y, q_z
-_MASS = 13
-_STATE_SIZE = 14
+_STATE_SIZE = 13
 
 # Fehlberg RKF45 tableau: stage time fractions, stage weights, and the weights
 # of the 5th and 4th order solutions.
@@ -88,9 +86,6 @@ class SimConfiguration(UnitChecked):
         default_factory=lambda: scalar(1e-6, "rad/s")
     )
     orientation_tolerance: float = 1e-7
-    mass_tolerance: Annotated[Scalar, "kg"] = field(
-        default_factory=lambda: scalar(1e-6, "kg")
-    )
 
     # Shortest step the integrator takes. A step this short is accepted
     # whatever its error, with a warning.
@@ -132,8 +127,6 @@ class StateDerivative(UnitChecked):
     # d(orientation)/dt
     orientation_derivative: Quaternion
 
-    mass_derivative: Annotated[Scalar, "kg/s"]
-
 
 class _StepInputs(NamedTuple):
     """Models and constants of one step, with numbers in SI units."""
@@ -144,8 +137,6 @@ class _StepInputs(NamedTuple):
     gravity: GravityModel
     latitude_rad: float
     elevation_m: float
-    inertia: np.ndarray  # kg*m**2, body axes
-    cg_location: np.ndarray  # m, from the nose tip in body axes
     rail: LaunchRail | None  # Holding the rocket for the whole step
     rail_start_m: np.ndarray  # World frame, the rail's foot
     absolute_tolerance: np.ndarray  # One per state component, SI units
@@ -167,8 +158,6 @@ def _step_inputs(
         gravity=truth.gravity,
         latitude_rad=float(truth.launch_latitude.m_as("rad")),
         elevation_m=float(truth.launch_elevation.m_as("m")),
-        inertia=state.inertia.m_as("kg*m**2"),
-        cg_location=state.cg_location.m_as("m"),
         rail=truth.launch_rail if state.rail_start is not None else None,
         rail_start_m=(
             state.rail_start.m_as("m") if state.rail_start is not None else np.zeros(3)
@@ -179,9 +168,8 @@ def _step_inputs(
                 float(sim.velocity_tolerance.m_as("m/s")),
                 float(sim.angular_velocity_tolerance.m_as("rad/s")),
                 sim.orientation_tolerance,
-                float(sim.mass_tolerance.m_as("kg")),
             ],
-            [3, 3, 3, 4, 1],
+            [3, 3, 3, 4],
         ),
         relative_tolerance=sim.relative_tolerance,
         min_dt_s=float(sim.min_time_step.m_as("s")),
@@ -196,13 +184,7 @@ def _pack(state: RocketState) -> np.ndarray:
             state.position.m_as("m"),
             state.velocity.m_as("m/s"),
             state.angular_velocity.m_as("rad/s"),
-            (
-                orientation.q_w,
-                orientation.q_x,
-                orientation.q_y,
-                orientation.q_z,
-                float(state.current_mass.m_as("kg")),
-            ),
+            (orientation.q_w, orientation.q_x, orientation.q_y, orientation.q_z),
         )
     )
 
@@ -212,12 +194,11 @@ def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
 
     Args:
         values (np.ndarray): Integrated fields in the layout ``_pack`` produces.
-        template (RocketState): State supplying the fields the integrator
-            holds constant: inertia, CG location and the rail start.
+        template (RocketState): State supplying the rail start, which the
+            integrator holds constant.
 
     Returns:
-        RocketState: The integrated fields combined with the template's
-            constant ones.
+        RocketState: The integrated fields with the template's rail start.
     """
     q_w, q_x, q_y, q_z = values[_ORIENTATION].tolist()
     return RocketState(
@@ -225,39 +206,16 @@ def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
         velocity=vector(values[_VELOCITY], "m/s"),
         angular_velocity=vector(values[_ANGULAR_VELOCITY], "rad/s"),
         orientation=Quaternion(q_w=q_w, q_x=q_x, q_y=q_y, q_z=q_z),
-        current_mass=scalar(float(values[_MASS]), "kg"),
-        inertia=template.inertia,
-        cg_location=template.cg_location,
         rail_start=template.rail_start,
     )
 
 
-def _thrust_acceleration(
-    time: float, mass: float, nose_vector: np.ndarray, engine: Engine
-) -> tuple[np.ndarray, float]:
-    """Compute the acceleration the motor produces and the rate it burns mass.
-
-    Args:
-        time (float): Time since ignition in seconds, for the thrust curve.
-        mass (float): Current mass in kilograms.
-        nose_vector (np.ndarray): Direction the nose points in the world frame.
-        engine (Engine): Motor model.
-
-    Returns:
-        tuple[np.ndarray, float]: Acceleration in the world frame in m/s**2
-            and the mass flow rate in kg/s, negative while burning.
-    """
-    thrust_magnitude = engine.get_thrust(time)
-    if thrust_magnitude > 0 and mass > 0:
-        return (
-            nose_vector * (thrust_magnitude / mass),
-            engine.get_mass_flow(time, thrust_magnitude),
-        )
-    return np.zeros(3), 0.0
-
-
 def _aero_loads(
-    velocity: np.ndarray, altitude: float, to_body: np.ndarray, inputs: _StepInputs
+    velocity: np.ndarray,
+    altitude: float,
+    to_body: np.ndarray,
+    cg_location: np.ndarray,
+    inputs: _StepInputs,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute the aerodynamic force and the torque about the CG, in body axes.
 
@@ -268,6 +226,7 @@ def _aero_loads(
         velocity (np.ndarray): Velocity in the world frame in m/s.
         altitude (float): Altitude above sea level in metres.
         to_body (np.ndarray): World-to-body rotation matrix.
+        cg_location (np.ndarray): CG from the nose tip in body axes in m.
         inputs (_StepInputs): Constants of the step.
 
     Returns:
@@ -288,7 +247,7 @@ def _aero_loads(
         [coefficients.cx, coefficients.cy, coefficients.cz]
     )
     # Reference length acts as "lever arm" length
-    lever_arm = table.reference_point_m - inputs.cg_location
+    lever_arm = table.reference_point_m - cg_location
     torque_body = (force_scale * table.reference_length_m) * np.array(
         [coefficients.cmx, coefficients.cmy, coefficients.cmz]
     ) + cross(lever_arm, force_body)
@@ -341,7 +300,7 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     """Compute the time derivative of a state array.
 
     Args:
-        time (float): Time since ignition in seconds, for the thrust curve.
+        time (float): Simulation time in seconds, for the motor.
         values (np.ndarray): State in the layout ``_pack`` produces.
         inputs (_StepInputs): Constants of the step.
 
@@ -351,32 +310,28 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     altitude = inputs.elevation_m + float(values[_POSITION][0])
     velocity = values[_VELOCITY]
     angular_velocity = values[_ANGULAR_VELOCITY]
-    mass = float(values[_MASS])
     orientation: tuple[float, float, float, float] = tuple(
         values[_ORIENTATION].tolist()
     )
     to_world = body_to_world(Quaternion(*orientation))
+    properties = inputs.properties
+    mass_properties = properties.mass_properties(time)
 
-    # Gravity along -X, thrust along the nose
-    acceleration = np.array(
-        [-inputs.gravity.magnitude(inputs.latitude_rad, altitude), 0.0, 0.0]
+    # Aerodynamics plus thrust along the nose, then gravity along -X
+    force_body, torque_body = _aero_loads(
+        velocity, altitude, to_world.T, mass_properties.cg_location, inputs
     )
-    thrust_acceleration, mass_flow_rate = _thrust_acceleration(
-        time, mass, to_world[:, 0], inputs.properties.engine
-    )
-    acceleration += thrust_acceleration
+    force_body[0] += properties.engine.get_thrust(time)
+    acceleration = to_world @ force_body / mass_properties.mass
+    acceleration[0] -= inputs.gravity.magnitude(inputs.latitude_rad, altitude)
 
-    body_torque = np.zeros(3)
-    if mass > 0:
-        force_body, body_torque = _aero_loads(velocity, altitude, to_world.T, inputs)
-        acceleration += (to_world @ force_body) / mass
-
-    # Euler's equations about the principal axes
-    angular_acceleration = (
-        body_torque - cross(angular_velocity, inputs.inertia * angular_velocity)
-    ) / inputs.inertia
-
-    if inputs.rail is not None:
+    if inputs.rail is None:
+        # Euler's equations with the full inertia tensor
+        inertia = mass_properties.inertia
+        angular_acceleration = np.linalg.solve(
+            inertia, torque_body - cross(angular_velocity, inertia @ angular_velocity)
+        )
+    else:
         acceleration = _rail_acceleration(
             values[_POSITION], velocity, acceleration, inputs.rail, inputs.rail_start_m
         )
@@ -387,7 +342,6 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     rates[_VELOCITY] = acceleration
     rates[_ANGULAR_VELOCITY] = angular_acceleration
     rates[_ORIENTATION] = quaternion_rates(*orientation, angular_velocity)
-    rates[_MASS] = mass_flow_rate
     return rates
 
 
@@ -400,7 +354,7 @@ def derivative_computation(
     """Compute the time derivative of the rocket state.
 
     Args:
-        time (float): Time since ignition in seconds, for the thrust curve.
+        time (float): Simulation time in seconds, for the motor.
         state (RocketState): Current state of the vehicle.
         properties (RocketProperties): Aerodynamic and motor properties.
         config (IntegrationConfiguration): Truth models.
@@ -417,7 +371,6 @@ def derivative_computation(
         orientation_derivative=Quaternion(
             q_w=q_dot[0], q_x=q_dot[1], q_y=q_dot[2], q_z=q_dot[3]
         ),
-        mass_derivative=scalar(float(rates[_MASS]), "kg/s"),
     )
 
 
@@ -519,15 +472,14 @@ def adaptive_step(
     The step is ``dt`` or shorter: RKF45 shrinks it until the error in every
     state component is within tolerance, and the step ends exactly at the
     first of ``events`` it crosses. Pass the returned next step length back
-    in on the following call so step lengths adapt to the flight. Inertia
-    and CG location are held constant across the step.
+    in on the following call so step lengths adapt to the flight.
 
     While the state is on the configured launch rail, the rail's
     ``exit_event`` is checked before ``events``. A step ending on it returns
     the state off the rail, with ``rail_start`` None.
 
     Args:
-        time (float): Time since ignition in seconds, for the thrust curve.
+        time (float): Simulation time in seconds, for the motor.
         state (RocketState): Current state of the vehicle.
         properties (RocketProperties): Aerodynamic and motor properties.
         config (IntegrationConfiguration): Truth models and sim settings.
@@ -571,10 +523,10 @@ def step(
 ) -> RocketState:
     """Advance the rocket state by exactly ``dt`` using adaptive RKF45 steps.
 
-    Inertia, CG location and the rail start are held constant across the step.
+    The rail start is held constant across the step.
 
     Args:
-        time (float): Time since ignition in seconds, for the thrust curve.
+        time (float): Simulation time in seconds, for the motor.
         state (RocketState): Current state of the vehicle.
         properties (RocketProperties): Aerodynamic and motor properties.
         config (IntegrationConfiguration): Truth models and sim settings.

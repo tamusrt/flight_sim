@@ -1,20 +1,26 @@
 """Data structures defining physical vehicle properties"""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from flight_sim.utilities.data_loader import AeroTable
-from flight_sim.vehicle.engine import Engine, solid_engine_from_csv
+from flight_sim.vehicle.engine import Engine
+from flight_sim.vehicle.mass_properties import (
+    MassProperties,
+    MassPropertiesSI,
+    combine,
+)
 
 
 @dataclass
 class RocketProperties:
-    """Aerodynamic and motor properties of the rocket"""
+    """Aerodynamics, motor and dry mass properties of the rocket."""
 
     aero_table: AeroTable
-    motor_file_path: str
-    propellant_mass: float  # Total weight of solid fuel in kg
+    engine: Engine
 
-    engine: Engine = field(init=False)
+    # Everything but the motor
+    dry_mass_properties: MassProperties
 
-    def __post_init__(self) -> None:
-        self.engine = solid_engine_from_csv(self.motor_file_path, self.propellant_mass)
+    def mass_properties(self, time: float) -> MassPropertiesSI:
+        """Return the whole rocket's mass properties at a simulation time in s."""
+        return combine(self.dry_mass_properties.si, self.engine.mass_properties(time))

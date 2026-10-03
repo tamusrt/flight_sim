@@ -31,12 +31,7 @@ from flight_sim.vehicle.rocket_state import RocketState
 
 def _rocket_state(**overrides: Any) -> RocketState:
     """Return a valid RocketState with the given fields replaced."""
-    state = RocketState(
-        current_mass=scalar(25.0, "kg"),
-        inertia=vector((150.0, 150.0, 2.5), "kg*m**2"),
-        cg_location=vector((0.0, 0.0, -1.5), "m"),
-    )
-    return replace(state, **overrides)
+    return replace(RocketState(), **overrides)
 
 
 def test_scalar_and_vector_constructors() -> None:
@@ -75,12 +70,8 @@ def test_quantities_convert_between_units() -> None:
             "RocketState.position",
         ),
         (
-            lambda: _rocket_state(current_mass=scalar(1.0, "m")),
-            "RocketState.current_mass",
-        ),
-        (
-            lambda: _rocket_state(inertia=zero_vector("kg*m")),
-            "RocketState.inertia",
+            lambda: _rocket_state(rail_start=zero_vector("s")),
+            "RocketState.rail_start",
         ),
         (
             lambda: MassProperties(
@@ -120,7 +111,6 @@ def test_quantities_convert_between_units() -> None:
                 acceleration=zero_vector("m/s"),
                 angular_acceleration=zero_vector("rad/s**2"),
                 orientation_derivative=Quaternion(q_w=0.0),
-                mass_derivative=scalar(0.0, "kg/s"),
             ),
             "StateDerivative.acceleration",
         ),

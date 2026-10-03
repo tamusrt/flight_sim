@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.__main__ import get_default_state
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.units import scalar, vector
 from flight_sim.utilities.dcm import body_to_world
+from flight_sim.vehicle.rocket_state import RocketState
 
 
 def _rail(elevation_deg: float, azimuth_deg: float) -> LaunchRail:
@@ -79,8 +79,7 @@ def test_distance_along_is_measured_up_the_rail_from_its_foot() -> None:
 def test_mount_puts_the_rail_foot_at_the_rocket() -> None:
     """Mounting points the nose up the rail and starts the rail at the rocket."""
     rail = _rail(80.0, 45.0)
-    state = replace(
-        get_default_state(),
+    state = RocketState(
         position=vector((500.0, 30.0, -20.0), "m"),
         velocity=vector((1.0, 2.0, 3.0), "m/s"),
     )
@@ -97,21 +96,14 @@ def test_mount_puts_the_rail_foot_at_the_rocket() -> None:
 def test_exit_event_counts_the_distance_left_on_the_rail() -> None:
     """The event value falls from the length at the foot to zero at the end."""
     rail = _rail(60.0, 0.0)
-    mounted = rail.mount(
-        replace(get_default_state(), position=vector((10.0, 0.0, 5.0), "m"))
-    )
+    mounted = rail.mount(RocketState(position=vector((10.0, 0.0, 5.0), "m")))
     moved = replace(
         mounted, position=vector(np.array([10.0, 0.0, 5.0]) + rail.direction(), "m")
     )
 
     assert rail.exit_event.value(0.0, mounted) == pytest.approx(5.0)
     assert rail.exit_event.value(0.0, moved) == pytest.approx(4.0)
-    assert rail.exit_event.value(
-        0.0,
-        replace(
-            get_default_state(),
-        ),
-    ) == pytest.approx(5.0)
+    assert rail.exit_event.value(0.0, RocketState()) == pytest.approx(5.0)
 
 
 def test_rail_rejects_a_negative_friction_coefficient() -> None:
