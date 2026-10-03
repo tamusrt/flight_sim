@@ -177,7 +177,8 @@
         </div>
         <div class="ucstep">
           <h4>2. Make the 31 RASAero files</h4>
-          <p>Press the button and let go of the keyboard and mouse until it says Finished. The helper makes <code id="uc-cdx">rasaero.CDX1</code> match the OpenRocket file (fins, tubes, boat tail), opens it in RASAero by itself, runs RASAero's test for every angle and closes that RASAero window again. To stop, move the mouse into a corner of the screen.</p>
+          <p>Export the newest OpenRocket design to RASAero, saved as <code id="uc-cdx">rasaero.CDX1</code>, and have it open in RASAero II. Click inside the RASAero window, then come back here and press the button. Let go of the keyboard and mouse until it says Finished: the helper switches to RASAero and runs its test for every angle. To stop, move the mouse into a corner of the screen.</p>
+          <p class="legend">First the helper checks <code>rasaero.CDX1</code> against the OpenRocket file. OpenRocket's export sometimes gets the fins or tubes wrong; then the helper corrects the file and stops before typing anything, because RASAero still has the wrong version open. Open the file again in RASAero (File, Open) and press the button again.</p>
           <div class="row">
             <button id="uc-sweep" type="button" class="primary" disabled>Create the 31 RASAero files</button>
             <span class="legend" id="uc-sweep-note"></span>
