@@ -8,7 +8,11 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "matplotlib>=3.11.2",
     "numpy>=2.4.6",
+    "pandas>=3.0.5",
+    "pint>=0.25.3",
+    "r3f>=2.2.1",
     "scipy>=1.17.1",
 ]
 
@@ -25,6 +29,7 @@ dev = [
     "pylint>=4.0.8",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.16.5",
 ]
 
@@ -34,10 +39,28 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 
+[tool.pylint.design]
+# The integrator's public functions take the time, state, vehicle,
+# configuration and step
+max-args = 7
+# State and property dataclasses hold one field per physical quantity
+max-attributes = 12
+# Numerical routines carry many intermediate quantities
+max-locals = 20
+
+[tool.pylint."messages control"]
+# Base classes such as UnitChecked work through dataclass hooks alone
+disable = ["too-few-public-methods"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
 warn_unreachable = true
+
+# r3f ships no type stubs or py.typed marker
+[[tool.mypy.overrides]]
+module = "r3f"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
