@@ -331,7 +331,8 @@ const plotConfig = { responsive: true, displaylogo: false, scrollZoom: true, mod
 function baseLayout(xTitle, yTitle) {
   const grid = isDark() ? '#30363d' : '#d0d7de';
   return { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: css('--fg'), size: 12 },
-           margin: { l: 60, r: 20, t: 30, b: 60 }, hovermode: 'x unified', dragmode: 'zoom', legend: { orientation: 'h', y: 1.06, x: 0, traceorder: 'normal' },
+           margin: { l: 60, r: 20, t: 30, b: 60 }, hovermode: 'x unified',
+           hoverlabel: { bgcolor: css('--card'), bordercolor: css('--line'), font: { color: css('--fg') } },  // the popup follows the theme dragmode: 'zoom', legend: { orientation: 'h', y: 1.06, x: 0, traceorder: 'normal' },
            xaxis: { title: { text: xTitle }, gridcolor: grid, zeroline: false, automargin: true },
            yaxis: { title: { text: yTitle }, gridcolor: grid, zeroline: true, zerolinecolor: grid, automargin: true } };
 }
