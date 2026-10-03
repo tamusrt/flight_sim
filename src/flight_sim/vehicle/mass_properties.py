@@ -1,6 +1,7 @@
 """Mass, center of gravity and inertia of the rocket's parts."""
 
 from dataclasses import dataclass, field
+from functools import reduce
 from typing import Annotated, NamedTuple
 
 import numpy as np
@@ -33,27 +34,30 @@ class MassProperties(UnitChecked):
     si: MassPropertiesSI = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Check the values and cache them in SI units.
+        """Check the inertia and cache the values in SI units.
 
         Raises:
-            ValueError: If the mass is negative, the CG location is not a
-                3-vector, or the inertia is not a symmetric 3x3 matrix.
+            ValueError: If the inertia is not symmetric.
         """
         super().__post_init__()
-        mass = float(self.mass.m_as("kg"))
-        cg_location = np.array(self.cg_location.m_as("m"), dtype=float)
-        inertia = np.array(self.inertia.m_as("kg*m**2"), dtype=float)
-        if mass < 0.0:
-            raise ValueError(f"Mass must not be negative, got {mass} kg")
-        if cg_location.shape != (3,):
-            raise ValueError(f"Expected a 3-vector CG, got shape {cg_location.shape}")
-        if inertia.shape != (3, 3):
-            raise ValueError(f"Expected a 3x3 inertia, got shape {inertia.shape}")
+        inertia = self.inertia.m_as("kg*m**2")
         if not np.allclose(inertia, inertia.T):
             raise ValueError(f"Inertia must be symmetric, got {inertia.tolist()}")
-        cg_location.flags.writeable = False
-        inertia.flags.writeable = False
-        object.__setattr__(self, "si", MassPropertiesSI(mass, cg_location, inertia))
+        si = MassPropertiesSI(
+            float(self.mass.m_as("kg")), self.cg_location.m_as("m"), inertia
+        )
+        object.__setattr__(self, "si", si)
+
+
+def _combine_pair(a: MassPropertiesSI, b: MassPropertiesSI) -> MassPropertiesSI:
+    """Combine two parts, using their reduced mass for the parallel-axis term."""
+    mass = a.mass + b.mass
+    offset = a.cg_location - b.cg_location
+    inertia = a.inertia + b.inertia
+    inertia += (a.mass * b.mass / mass) * (
+        float(offset @ offset) * _IDENTITY - np.outer(offset, offset)
+    )
+    return MassPropertiesSI(mass, b.cg_location + (a.mass / mass) * offset, inertia)
 
 
 def combine(*parts: MassPropertiesSI) -> MassPropertiesSI:
@@ -72,14 +76,4 @@ def combine(*parts: MassPropertiesSI) -> MassPropertiesSI:
     mass = sum(part.mass for part in parts)
     if not mass > 0.0:
         raise ValueError(f"Total mass must be positive, got {mass} kg")
-    cg_location = np.zeros(3)
-    for part in parts:
-        cg_location += part.mass * part.cg_location
-    cg_location /= mass
-    inertia = np.zeros((3, 3))
-    for part in parts:
-        offset = part.cg_location - cg_location
-        inertia += part.inertia + part.mass * (
-            float(offset @ offset) * _IDENTITY - np.outer(offset, offset)
-        )
-    return MassPropertiesSI(mass, cg_location, inertia)
+    return reduce(_combine_pair, parts)

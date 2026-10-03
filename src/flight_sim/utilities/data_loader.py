@@ -68,15 +68,13 @@ class AeroTable(UnitChecked):
     def __post_init__(self) -> None:
         """Cache the reference values in SI units."""
         super().__post_init__()
-        reference_point = np.array(self.reference_point.m_as("m"), dtype=float)
-        reference_point.flags.writeable = False
         object.__setattr__(
             self, "reference_area_m2", float(self.reference_area.m_as("m**2"))
         )
         object.__setattr__(
             self, "reference_length_m", float(self.reference_length.m_as("m"))
         )
-        object.__setattr__(self, "reference_point_m", reference_point)
+        object.__setattr__(self, "reference_point_m", self.reference_point.m_as("m"))
 
     def __call__(self, mach: float, alpha: float, phi: float) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.

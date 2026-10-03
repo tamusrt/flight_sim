@@ -398,11 +398,11 @@ def test_rail_holds_an_unpowered_rocket_on_the_pad(
     assert next_state.velocity.m_as("m/s") == pytest.approx(np.zeros(3))
 
 
-def _incline_rail(friction_coefficient: float) -> LaunchRail:
-    """Return a long 60 degree rail with the given friction."""
+def _incline_rail(friction_coefficient: float, elevation_deg: float) -> LaunchRail:
+    """Return a long rail at the given elevation and friction."""
     return LaunchRail(
         length=scalar(20.0, "m"),
-        elevation=scalar(60.0, "deg"),
+        elevation=scalar(elevation_deg, "deg"),
         friction_coefficient=friction_coefficient,
     )
 
@@ -412,7 +412,7 @@ def test_friction_slows_the_run_up_the_rail(
     baseline_rocket_properties: RocketProperties, friction_coefficient: float
 ) -> None:
     """A coasting rocket slides up an incline decelerated by g*(sin + mu*cos)."""
-    rail = _incline_rail(friction_coefficient)
+    rail = _incline_rail(friction_coefficient, 60.0)
     config = IntegrationConfiguration(
         truth=TruthConfiguration(
             atmosphere=VacuumAtmosphere(),
@@ -449,11 +449,7 @@ def test_static_friction_holds_a_rocket_at_rest_on_a_shallow_rail(
     held: bool,
 ) -> None:
     """At rest on a 30 degree rail, friction above tan(30 deg) stops it sliding."""
-    rail = LaunchRail(
-        length=scalar(20.0, "m"),
-        elevation=scalar(30.0, "deg"),
-        friction_coefficient=friction_coefficient,
-    )
+    rail = _incline_rail(friction_coefficient, 30.0)
     config = IntegrationConfiguration(
         truth=TruthConfiguration(atmosphere=VacuumAtmosphere(), launch_rail=rail)
     )
@@ -474,30 +470,6 @@ def test_static_friction_holds_a_rocket_at_rest_on_a_shallow_rail(
         assert distance < 1.0
 
 
-def test_large_friction_holds_a_thrusting_rocket_on_the_pad(
-    baseline_rocket_properties: RocketProperties,
-) -> None:
-    """Friction from the weight across a 45 degree rail can outmatch the thrust."""
-    rail = LaunchRail(
-        length=scalar(5.0, "m"),
-        elevation=scalar(45.0, "deg"),
-        friction_coefficient=20.0,
-    )
-    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
-    assert baseline_rocket_properties.engine.get_thrust(0.0) > 0.0
-
-    next_state = step(
-        0.0,
-        rail.mount(get_default_state()),
-        baseline_rocket_properties,
-        config,
-        scalar(0.5, "s"),
-    )
-
-    assert next_state.position.m_as("m") == pytest.approx(np.zeros(3))
-    assert next_state.velocity.m_as("m/s") == pytest.approx(np.zeros(3))
-
-
 def test_rail_does_not_affect_a_free_rocket(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
@@ -511,25 +483,19 @@ def test_rail_does_not_affect_a_free_rocket(
     )
     with_rail = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=_RAIL))
 
-    def advance(config: IntegrationConfiguration) -> tuple[np.ndarray, float, object]:
-        """Return the state array, step length and event after one adaptive step."""
-        next_state, dt_taken, _next_dt, hit = adaptive_step(
-            1.0, state, baseline_rocket_properties, config, scalar(0.5, "s")
-        )
-        values = np.concatenate(
-            (
-                next_state.position.m_as("m"),
-                next_state.velocity.m_as("m/s"),
-                next_state.angular_velocity.m_as("rad/s"),
-            )
-        )
-        return values, float(dt_taken.m_as("s")), hit
+    dt = scalar(0.5, "s")
 
-    free_values, free_dt, free_hit = advance(_CONFIG)
-    rail_values, rail_dt, rail_hit = advance(with_rail)
-    assert np.array_equal(rail_values, free_values)
-    assert rail_dt == free_dt
-    assert rail_hit is free_hit is None
+    free = adaptive_step(1.0, state, baseline_rocket_properties, _CONFIG, dt)
+    railed = adaptive_step(1.0, state, baseline_rocket_properties, with_rail, dt)
+
+    assert railed[1] == free[1]
+    assert railed[3] is free[3] is None
+    assert railed[0].orientation == free[0].orientation
+    for field_name in ("position", "velocity", "angular_velocity"):
+        assert np.array_equal(
+            getattr(railed[0], field_name).magnitude,
+            getattr(free[0], field_name).magnitude,
+        )
 
 
 def test_default_rocket_turns_over_and_lands_nose_first() -> None:

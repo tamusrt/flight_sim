@@ -137,8 +137,8 @@ class _StepInputs(NamedTuple):
     gravity: GravityModel
     latitude_rad: float
     elevation_m: float
-    rail: LaunchRail | None  # Holding the rocket for the whole step
-    rail_start_m: np.ndarray  # World frame, the rail's foot
+    # Rail holding the rocket for the whole step, and its foot in the world frame
+    rail: tuple[LaunchRail, np.ndarray] | None
     absolute_tolerance: np.ndarray  # One per state component, SI units
     relative_tolerance: float
     min_dt_s: float
@@ -158,9 +158,10 @@ def _step_inputs(
         gravity=truth.gravity,
         latitude_rad=float(truth.launch_latitude.m_as("rad")),
         elevation_m=float(truth.launch_elevation.m_as("m")),
-        rail=truth.launch_rail if state.rail_start is not None else None,
-        rail_start_m=(
-            state.rail_start.m_as("m") if state.rail_start is not None else np.zeros(3)
+        rail=(
+            (truth.launch_rail, state.rail_start.m_as("m"))
+            if truth.launch_rail is not None and state.rail_start is not None
+            else None
         ),
         absolute_tolerance=np.repeat(
             [
@@ -333,7 +334,7 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
         )
     else:
         acceleration = _rail_acceleration(
-            values[_POSITION], velocity, acceleration, inputs.rail, inputs.rail_start_m
+            values[_POSITION], velocity, acceleration, *inputs.rail
         )
         angular_acceleration = np.zeros(3)
 
@@ -496,7 +497,7 @@ def adaptive_step(
         time, _pack(state), float(dt.m_as("s")), inputs
     )
     next_state = _unpack(values, state)
-    rail_events = (inputs.rail.exit_event,) if inputs.rail is not None else ()
+    rail_events = (inputs.rail[0].exit_event,) if inputs.rail is not None else ()
     for event in (*rail_events, *events):
         if event.crossed(time, state, time + dt_taken, next_state):
             next_state, dt_to_event = locate_event(

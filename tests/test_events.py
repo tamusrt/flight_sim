@@ -88,11 +88,7 @@ def test_peak_vertical_velocity_lands_where_acceleration_is_zero(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Stepping through the burn ends a step where vertical acceleration is zero."""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere()
-        )
-    )
+    config = _BALLISTIC
     peak = peak_vertical_velocity(baseline_rocket_properties, config)
     state = _coasting_state(100.0)
 

@@ -6,8 +6,8 @@ import pytest
 from flight_sim.__main__ import get_default_properties
 from flight_sim.units import matrix, scalar, vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
-from flight_sim.vehicle.engine import PropellantGrain, SolidEngine
-from flight_sim.vehicle.mass_properties import MassProperties
+from flight_sim.vehicle.engine import Engine
+from flight_sim.vehicle.mass_properties import MassProperties, MassPropertiesSI
 from flight_sim.vehicle.rocket_properties import RocketProperties
 
 
@@ -27,36 +27,30 @@ def _baseline_rocket_properties() -> RocketProperties:
     return properties
 
 
+class _InertEngine(Engine):
+    """Massless motor that never fires."""
+
+    def get_thrust(self, time: float) -> float:
+        return 0.0
+
+    def mass_properties(self, time: float) -> MassPropertiesSI:
+        return MassPropertiesSI(0.0, np.zeros(3), np.zeros((3, 3)))
+
+
 @pytest.fixture(name="unpowered_rocket_properties")
 def _unpowered_rocket_properties(
     baseline_rocket_properties: RocketProperties,
 ) -> RocketProperties:
-    """Provides the test-table rocket with a motor that never fires.
+    """Provides the test-table rocket as a fixed 20 kg body with no motor.
 
-    Every part's CG is 2.5 m aft of the nose tip, so the 20 kg rocket's mass
-    properties are fixed and its inertia diagonal.
+    Its CG is 2.5 m aft of the nose tip and its inertia is diag(0.1, 2.5, 2.5).
     """
-    cg_location = vector((-2.5, 0.0, 0.0), "m")
-    engine = SolidEngine(
-        times=np.array([0.0, 1.0]),
-        thrusts=np.zeros(2),
-        grain=PropellantGrain(
-            mass=scalar(2.0, "kg"),
-            length=scalar(0.5, "m"),
-            outer_diameter=scalar(0.06, "m"),
-            core_diameter=scalar(0.02, "m"),
-            cg_location=cg_location,
-        ),
-        casing=MassProperties(
-            scalar(2.0, "kg"), cg_location, matrix(np.zeros((3, 3)), "kg*m**2")
-        ),
-    )
     return RocketProperties(
         aero_table=baseline_rocket_properties.aero_table,
-        engine=engine,
+        engine=_InertEngine(),
         dry_mass_properties=MassProperties(
-            scalar(16.0, "kg"),
-            cg_location,
+            scalar(20.0, "kg"),
+            vector((-2.5, 0.0, 0.0), "m"),
             matrix(np.diag((0.1, 2.5, 2.5)), "kg*m**2"),
         ),
     )

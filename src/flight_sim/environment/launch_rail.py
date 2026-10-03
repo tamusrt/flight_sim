@@ -41,21 +41,11 @@ class LaunchRail(UnitChecked):
     _direction: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Check the friction coefficient and cache the geometry in SI units.
-
-        Raises:
-            ValueError: If the friction coefficient is negative.
-        """
+        """Cache the rail's geometry in SI units."""
         super().__post_init__()
-        if self.friction_coefficient < 0.0:
-            raise ValueError(
-                "Friction coefficient must not be negative,"
-                f" got {self.friction_coefficient}"
-            )
         direction = world_direction(
             float(self.elevation.m_as("rad")), float(self.azimuth.m_as("rad"))
         )
-        direction.flags.writeable = False
         object.__setattr__(self, "_length_m", float(self.length.m_as("m")))
         object.__setattr__(self, "_direction", direction)
         object.__setattr__(
@@ -88,8 +78,7 @@ class LaunchRail(UnitChecked):
 
     def _distance_to_exit(self, _time: float, state: RocketState) -> float:
         """Return the distance in m the rocket has left to slide up the rail."""
-        if state.rail_start is None:
-            return self._length_m
+        assert state.rail_start is not None, "Only a rocket on the rail can exit it"
         return self._length_m - self.distance_along(
             state.position.m_as("m"), state.rail_start.m_as("m")
         )

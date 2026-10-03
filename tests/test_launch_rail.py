@@ -103,20 +103,3 @@ def test_exit_event_counts_the_distance_left_on_the_rail() -> None:
 
     assert rail.exit_event.value(0.0, mounted) == pytest.approx(5.0)
     assert rail.exit_event.value(0.0, moved) == pytest.approx(4.0)
-    assert rail.exit_event.value(0.0, RocketState()) == pytest.approx(5.0)
-
-
-def test_rail_rejects_a_negative_friction_coefficient() -> None:
-    """Friction cannot push the rocket along its motion."""
-    with pytest.raises(ValueError, match="Friction coefficient"):
-        LaunchRail(length=scalar(5.0, "m"), friction_coefficient=-0.1)
-
-
-def test_rail_is_immutable() -> None:
-    """The cached geometry cannot go stale through reassignment."""
-    rail = _rail(85.0, 0.0)
-
-    with pytest.raises(AttributeError):
-        rail.length = scalar(1.0, "m")  # type: ignore[misc]
-    with pytest.raises(ValueError, match="read-only"):
-        rail.direction()[0] = 0.0

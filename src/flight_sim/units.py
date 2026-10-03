@@ -95,14 +95,10 @@ def matrix(components: Sequence[Sequence[float]] | np.ndarray, units: str) -> Ma
 
     Returns:
         Matrix: The components tagged with the given units.
-
-    Raises:
-        ValueError: If the components are not 3x3.
     """
-    values = np.array(components, dtype=float)
-    if values.shape != (3, 3):
-        raise ValueError(f"Expected 3x3 components, got shape {values.shape}")
-    result: Matrix = ureg.Quantity(values, parse_units(units))
+    result: Matrix = ureg.Quantity(
+        np.array(components, dtype=float), parse_units(units)
+    )
     return result
 
 

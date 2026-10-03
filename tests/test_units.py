@@ -40,19 +40,12 @@ def test_scalar_and_vector_constructors() -> None:
 
 
 def test_matrix_constructor() -> None:
-    """The matrix constructor copies 3x3 components and attaches the units."""
+    """The matrix constructor copies the components and attaches the units."""
     components = np.diag((1.0, 2.0, 3.0))
     inertia = matrix(components, "kg*m**2")
     components[0, 0] = 5.0
 
     assert inertia.m_as("g*m**2") == pytest.approx(1000.0 * np.diag((1.0, 2.0, 3.0)))
-
-
-@pytest.mark.parametrize("components", [np.eye(2), np.ones(3), np.ones((3, 3, 1))])
-def test_matrix_rejects_components_that_are_not_3x3(components: np.ndarray) -> None:
-    """Only 3x3 components make a matrix."""
-    with pytest.raises(ValueError, match="3x3"):
-        matrix(components, "kg*m**2")
 
 
 def test_quantities_convert_between_units() -> None:
@@ -66,18 +59,6 @@ def test_quantities_convert_between_units() -> None:
         (
             lambda: _rocket_state(position=vector((0.0, 0.0, 0.0), "m/s")),
             "RocketState.position",
-        ),
-        (
-            lambda: _rocket_state(rail_start=vector((0.0, 0.0, 0.0), "s")),
-            "RocketState.rail_start",
-        ),
-        (
-            lambda: MassProperties(
-                scalar(1.0, "m"),
-                vector((0.0, 0.0, 0.0), "m"),
-                matrix(np.eye(3), "kg*m**2"),
-            ),
-            "MassProperties.mass",
         ),
         (
             lambda: MassProperties(

@@ -1,6 +1,5 @@
 """Engine models giving the thrust and mass properties of a motor over its burn."""
 
-import bisect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Annotated
@@ -55,34 +54,23 @@ class PropellantGrain(UnitChecked):
     _cg_m: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Check the geometry and cache it in SI units.
+        """Check the core fits in the grain and cache the geometry in SI units.
 
         Raises:
-            ValueError: If the mass is negative, the length is not positive, or
-                the core is not within 0 and the outer diameter.
+            ValueError: If the core is not within 0 and the outer diameter.
         """
         super().__post_init__()
-        mass = float(self.mass.m_as("kg"))
-        length = float(self.length.m_as("m"))
         outer = float(self.outer_diameter.m_as("m"))
         core = float(self.core_diameter.m_as("m"))
-        cg_m = np.array(self.cg_location.m_as("m"), dtype=float)
-        if mass < 0.0:
-            raise ValueError(f"Grain mass must not be negative, got {mass} kg")
-        if length <= 0.0:
-            raise ValueError(f"Grain length must be positive, got {length} m")
         if not 0.0 <= core < outer:
             raise ValueError(
                 f"Grain core diameter must be in [0, {outer}) m, got {core} m"
             )
-        if cg_m.shape != (3,):
-            raise ValueError(f"Expected a 3-vector CG, got shape {cg_m.shape}")
-        cg_m.flags.writeable = False
-        object.__setattr__(self, "_mass_kg", mass)
+        object.__setattr__(self, "_mass_kg", float(self.mass.m_as("kg")))
         object.__setattr__(self, "_outer_radius_sq", (outer / 2) ** 2)
         object.__setattr__(self, "_core_radius_sq", (core / 2) ** 2)
-        object.__setattr__(self, "_length_sq", length**2)
-        object.__setattr__(self, "_cg_m", cg_m)
+        object.__setattr__(self, "_length_sq", float(self.length.m_as("m")) ** 2)
+        object.__setattr__(self, "_cg_m", self.cg_location.m_as("m"))
 
     def mass_properties(self, burned_fraction: float) -> MassPropertiesSI:
         """Return the mass properties of the propellant left after part of the burn.
@@ -123,55 +111,33 @@ class SolidEngine(Engine, UnitChecked):
     )
 
     _ignition_s: float = field(init=False, repr=False, compare=False)
-    _sample_times: tuple[float, ...] = field(init=False, repr=False, compare=False)
-    _sample_thrusts: tuple[float, ...] = field(init=False, repr=False, compare=False)
-    _slopes: tuple[float, ...] = field(init=False, repr=False, compare=False)
 
     # Impulse delivered by each sample time, in N*s
-    _impulses: tuple[float, ...] = field(init=False, repr=False, compare=False)
+    _impulses: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Check the thrust curve and cache its cumulative impulse.
 
         Raises:
-            ValueError: If the curve has fewer than two samples, mismatched
-                lengths, non-increasing times or negative thrust, or the
-                casing has no mass.
+            ValueError: If the times are not strictly increasing or the curve
+                delivers no impulse.
         """
         super().__post_init__()
-        times = np.array(self.times, dtype=float)
-        thrusts = np.array(self.thrusts, dtype=float)
-        if times.ndim != 1 or times.shape != thrusts.shape or len(times) < 2:
-            raise ValueError(
-                "Expected matching 1-D times and thrusts of at least two samples,"
-                f" got shapes {times.shape} and {thrusts.shape}"
-            )
-        if np.any(np.diff(times) <= 0.0):
+        intervals = np.diff(self.times)
+        if np.any(intervals <= 0.0):
             raise ValueError("Thrust curve times must be strictly increasing")
-        if np.any(thrusts < 0.0):
-            raise ValueError("Thrust curve must not be negative")
-        if not self.casing.si.mass > 0.0:
-            raise ValueError("Casing mass must be positive")
-        intervals = np.diff(times)
         impulses = np.concatenate(
-            ([0.0], np.cumsum(0.5 * (thrusts[:-1] + thrusts[1:]) * intervals))
+            ([0.0], np.cumsum(0.5 * (self.thrusts[:-1] + self.thrusts[1:]) * intervals))
         )
-        times.flags.writeable = False
-        thrusts.flags.writeable = False
-        object.__setattr__(self, "times", times)
-        object.__setattr__(self, "thrusts", thrusts)
+        if not impulses[-1] > 0.0:
+            raise ValueError("Thrust curve must deliver some impulse")
         object.__setattr__(self, "_ignition_s", float(self.ignition_time.m_as("s")))
-        object.__setattr__(self, "_sample_times", tuple(times.tolist()))
-        object.__setattr__(self, "_sample_thrusts", tuple(thrusts.tolist()))
-        object.__setattr__(
-            self, "_slopes", tuple((np.diff(thrusts) / intervals).tolist())
-        )
-        object.__setattr__(self, "_impulses", tuple(impulses.tolist()))
+        object.__setattr__(self, "_impulses", impulses)
 
     @property
     def total_impulse(self) -> float:
         """Return the impulse of the whole thrust curve in N*s."""
-        return self._impulses[-1]
+        return float(self._impulses[-1])
 
     def get_thrust(self, time: float) -> float:
         """Return the thrust in N along body +X at a simulation time in seconds."""
@@ -189,21 +155,21 @@ class SolidEngine(Engine, UnitChecked):
 
         Returns:
             float: Impulse delivered by ``time`` over the total impulse, exact
-                for the linear thrust curve; 0 for a motor with no impulse.
+                for the linear thrust curve.
         """
-        total = self._impulses[-1]
         burn_time = time - self._ignition_s
-        times = self._sample_times
-        if total <= 0.0 or burn_time <= times[0]:
+        times, thrusts = self.times, self.thrusts
+        if burn_time <= times[0]:
             return 0.0
         if burn_time >= times[-1]:
             return 1.0
-        index = bisect.bisect_right(times, burn_time) - 1
+        index = int(np.searchsorted(times, burn_time, side="right")) - 1
         into = burn_time - times[index]
-        impulse = self._impulses[index] + into * (
-            self._sample_thrusts[index] + 0.5 * self._slopes[index] * into
+        slope = (thrusts[index + 1] - thrusts[index]) / (
+            times[index + 1] - times[index]
         )
-        return impulse / total
+        impulse = self._impulses[index] + into * (thrusts[index] + 0.5 * slope * into)
+        return float(impulse / self._impulses[-1])
 
     def mass_properties(self, time: float) -> MassPropertiesSI:
         """Return the casing plus remaining propellant at a simulation time in s."""
