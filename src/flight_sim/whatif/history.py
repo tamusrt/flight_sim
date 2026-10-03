@@ -141,8 +141,10 @@ def from_history(entry: dict[str, Any]) -> dict[str, Any] | None:
         if history.get(name) is not None:
             result["m"][key] = round(history[name] * factor, 4)
     result["source"] = "history"
-    version = f"version {entry['short']}, {entry['date']}"
-    result["label"] = f"OpenRocket, as run for the History tab ({version})"
+    result["label"] = (
+        "OpenRocket results from the History tab "
+        f"(design commit {entry['short']}, {entry['date']})"
+    )
     return result
 
 
@@ -174,7 +176,7 @@ def from_saved(sim: SavedSim) -> dict[str, Any]:
         if name in saved:
             result["m"][key] = round(float(saved[name]) * factor, 4)
     result["source"] = "file"
-    result["label"] = "OpenRocket, as saved in the design file"
+    result["label"] = "OpenRocket results saved in the design file"
     return result
 
 

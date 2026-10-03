@@ -419,13 +419,13 @@ def _recovery_data(profile: Any) -> dict[str, Any] | None:
         return None
     recovery = scheme.recovery
     first = recovery.parachutes[0]
-    text = "Sol Invictus recovery as a stand-in: one canopy on a single separation"
+    text = "Sol Invictus recovery (placeholder): one parachute, single separation"
     if isinstance(first, ReefedParachute):
         inches = first.diameter_m / 0.0254
         text = (
-            f"Sol Invictus recovery as a stand-in: {inches:.0f} in reefed main, "
-            f"out {first.deploy_delay_s:g} s after apogee, "
-            f"reef cut at {first.disreef_altitude_m / 0.3048:,.0f} ft"
+            f"Sol Invictus recovery (placeholder): {inches:.0f} in reefed main, "
+            f"deployed {first.deploy_delay_s:g} s after apogee, "
+            f"disreefed at {first.disreef_altitude_m / 0.3048:,.0f} ft"
         )
     return {
         "label": text,

@@ -107,20 +107,20 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 
 <div class="app">
   <header class="top">
-    <div class="ttl"><h1>Vision</h1></div>
+    <div class="ttl"><h1>VISION</h1></div>
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
-      <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket's midpoint back at the centre of the view">Centre</button></div>
-      <label class="fld">Rocket scale ×<input type="text" id="mult" value="1" inputmode="decimal" aria-label="Rocket size multiplier"></label>
-      <label class="chip"><input type="checkbox" data-k="world" checked>World</label>
-      <label class="chip"><input type="checkbox" data-k="body" checked>Body</label>
-      <label class="chip"><input type="checkbox" data-k="missile">Missile</label>
-      <label class="chip"><input type="checkbox" data-k="vec">Vectors</label>
-      <label class="chip"><input type="checkbox" data-k="trail" checked>Path</label>
-      <label class="chip"><input type="checkbox" data-k="aero" checked>Aero</label>
-      <label class="chip"><input type="checkbox" data-k="pad" checked>Pad</label>
-      <label class="chip" id="conjWrap" hidden><input type="checkbox" id="conj">Conjugate q</label>
-      <label class="btn">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
+      <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket back in the middle of the view">Center</button></div>
+      <label class="fld" title="Draw the rocket bigger than life size so it can be seen from far away. The flight path is not changed.">Rocket scale ×<input type="text" id="mult" value="1" inputmode="decimal" aria-label="Rocket size multiplier"></label>
+      <label class="chip" title="Axes fixed to the ground at the launch pad"><input type="checkbox" data-k="world" checked>World axes</label>
+      <label class="chip" title="Axes fixed to the rocket: x along the body, y and z through the fins"><input type="checkbox" data-k="body" checked>Body axes</label>
+      <label class="chip" title="The missile frame: the body axes without the rocket's roll"><input type="checkbox" data-k="missile">Missile axes</label>
+      <label class="chip" title="Arrows for ground velocity, airspeed and thrust"><input type="checkbox" data-k="vec">Vectors</label>
+      <label class="chip" title="The flight path"><input type="checkbox" data-k="trail" checked>Path</label>
+      <label class="chip" title="Angle of attack (α) and aerodynamic roll angle (φ)"><input type="checkbox" data-k="aero" checked>Aero angles</label>
+      <label class="chip" title="The launch pad and rail"><input type="checkbox" data-k="pad" checked>Pad</label>
+      <label class="chip" id="conjWrap" hidden title="Use the conjugate of the attitude quaternion in the loaded log. Try this if the rocket turns the wrong way."><input type="checkbox" id="conj">Conjugate q</label>
+      <label class="btn" title="Replay a flight log (JSON) instead of the simulation">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
       <label class="btn" id="realBtn" hidden>Showing simulation</label>
     </div>
   </header>
@@ -133,16 +133,17 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <div class="nogl" id="nogl" hidden>WebGL isn't available here, so the 3D view can't draw. The readouts on the right still work.</div>
     </div>
     <div class="legend">
+      <span class="lg"><b>Press ▶ to play · drag to rotate · scroll to zoom</b></span>
       <span class="lg"><i style="--c:var(--vel)"></i>Velocity (ground)</span>
-      <span class="lg"><i style="--c:var(--air)"></i>Airspeed V<sub>R</sub> (vs air)</span>
+      <span class="lg"><i style="--c:var(--air)"></i>Airspeed V<sub>R</sub> (relative to the air)</span>
       <span class="lg"><i style="--c:var(--thrust)"></i>Thrust</span>
-      <span class="lg"><i class="sq" style="--c:var(--alpha)"></i>α<sub>TOT</sub></span>
-      <span class="lg"><i class="sq" style="--c:var(--phi)"></i>φ<sub>A</sub></span>
+      <span class="lg"><i class="sq" style="--c:var(--alpha)"></i>Angle of attack α<sub>TOT</sub></span>
+      <span class="lg"><i class="sq" style="--c:var(--phi)"></i>Aero roll angle φ<sub>A</sub></span>
       <span class="lg"><i style="--c:var(--ax)"></i><i style="--c:var(--ay)"></i><i style="--c:var(--az)"></i>Body x<sub>b</sub> y<sub>b</sub> z<sub>b</sub></span>
-      <span class="lg">Missile frame x<sub>m</sub> y<sub>m</sub> z<sub>m</sub>, X<sub>m</sub>–Z<sub>m</sub> plane</span>
-      <span class="lg"><b class="sym">◐</b>CG <b class="sym">◎</b>CP</span>
+      <span class="lg">Missile axes x<sub>m</sub> y<sub>m</sub> z<sub>m</sub> (body axes without roll)</span>
+      <span class="lg"><b class="sym">◐</b>CG (center of gravity) <b class="sym">◎</b>CP (center of pressure)</span>
       <span class="lg"><i style="--c:var(--air)"></i>Mach cone / vapor</span>
-      <span class="lg"><i style="--c:var(--phi)"></i>Shock cords, canopy</span>
+      <span class="lg"><i style="--c:var(--phi)"></i>Shock cords and parachute</span>
     </div>
   </section>
 
@@ -157,17 +158,17 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
     <h2>Flight data</h2>
     <div class="bars" id="bars"></div>
     <dl class="read">
-      <dt>α total</dt><dd id="rA">–</dd>
-      <dt>φ roll (aero)</dt><dd id="rP">–</dd>
+      <dt>Angle of attack</dt><dd id="rA">–</dd>
+      <dt>Aero roll angle</dt><dd id="rP">–</dd>
       <dt>Airspeed</dt><dd id="rV">–</dd>
       <dt>Thrust</dt><dd id="rT">–</dd>
       <dt>Mass</dt><dd id="rM">–</dd>
-      <dt>Dyn. pressure</dt><dd id="rQ">–</dd>
-      <dt>Static margin</dt><dd id="rSM">–</dd>
+      <dt>Dynamic pressure</dt><dd id="rQ">–</dd>
+      <dt>Stability margin</dt><dd id="rSM">–</dd>
       <dt>CG / CP</dt><dd id="rCG">–</dd>
-      <dt>Vert. speed</dt><dd id="rVz">–</dd>
-      <dt>Flight comp.</dt><dd id="rFC">–</dd>
-      <dt>Canopy drag</dt><dd id="rCan">–</dd>
+      <dt>Vertical speed</dt><dd id="rVz">–</dd>
+      <dt>Flight computer</dt><dd id="rFC">–</dd>
+      <dt>Parachute drag</dt><dd id="rCan">–</dd>
       <dt>Recovery</dt><dd id="rReco">–</dd>
       <dt>Phase</dt><dd id="rPh">–</dd>
     </dl>
@@ -318,21 +319,45 @@ var VEH={
   fins:{n:4, root:0.381, tip:0.0762, span:0.1905, sweep:0.3302, t:0.00508, xLE:4.691126},
   avBay:2.3749                                               /* avionics bay centre, where the separation charge is wired */
 };
-var MAT={fg:new THREE.MeshLambertMaterial({color:0xd6d6d2}), cf:new THREE.MeshLambertMaterial({color:0x3b3f46}),
-  al:new THREE.MeshLambertMaterial({color:0xa3a9b1}), nose:new THREE.MeshLambertMaterial({color:0x56637d,side:THREE.DoubleSide}),
-  dark:new THREE.MeshLambertMaterial({color:0x15171a,side:THREE.DoubleSide}), tail:new THREE.MeshLambertMaterial({color:0x6b6f76,side:THREE.DoubleSide}),
-  button:new THREE.MeshLambertMaterial({color:0x2a2c30})};
+/* the white fibreglass and light grey aluminium stay; everything else on the rocket is Texas A&M maroon */
+var MAROON=0x500000;
+var MAT={fg:new THREE.MeshLambertMaterial({color:0xd6d6d2}), cf:new THREE.MeshLambertMaterial({color:MAROON}),
+  al:new THREE.MeshLambertMaterial({color:0xa3a9b1}), nose:new THREE.MeshLambertMaterial({color:MAROON,side:THREE.DoubleSide}),
+  dark:new THREE.MeshLambertMaterial({color:0x2e0000,side:THREE.DoubleSide}), tail:new THREE.MeshLambertMaterial({color:MAROON,side:THREE.DoubleSide}),
+  button:new THREE.MeshLambertMaterial({color:0x3a0000})};
 function tubeMesh(x0,x1,r,mat,open){ var g=new THREE.CylinderGeometry(r,r,x1-x0,40,1,!!open); g.rotateZ(-Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-(x0+x1)/2; return m; }
 function ring(x,r,mat){ var g=new THREE.CylinderGeometry(r,r,0.004,40,1,true); g.rotateZ(-Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-x; return m; }
 function disc(x,r,mat){ var g=new THREE.CircleGeometry(r,40); g.rotateY(Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-x; return m; }
 function haack(x,L,R,Cc){ var th=Math.acos(clamp(1-2*x/L,-1,1)); return R/Math.sqrt(Math.PI)*Math.sqrt(Math.max(th-Math.sin(2*th)/2+Cc*Math.pow(Math.sin(th),3),0)); }
 /* nose section (separates) and aft body; both drawn in body axes with the nose tip at the origin, +x forward */
+/* a soft halo round the rocket, so it stands out at any distance: a glow shaped like the rocket, turned to face the
+   camera, drawn behind the body (the body hides the middle of it, so only the glow round the edges shows) */
+var HALO_TEX=(function(){ var w=256,h=64,c=document.createElement('canvas'); c.width=w; c.height=h; var g=c.getContext('2d'), im=g.createImageData(w,h);
+  function sm(e0,e1,x){ var t=Math.min(Math.max((x-e0)/(e1-e0),0),1); return t*t*(3-2*t); }
+  for(var y=0;y<h;y++) for(var x=0;x<w;x++){ var u=Math.abs(x/(w-1)-0.5), v=Math.abs(y/(h-1)-0.5);
+    var a=Math.pow(sm(0.5,0,v),1.8)*sm(0.5,0.36,u), k=4*(y*w+x); im.data[k]=255; im.data[k+1]=255; im.data[k+2]=255; im.data[k+3]=Math.round(a*255); }
+  g.putImageData(im,0,0); var t=new THREE.CanvasTexture(c); return t; })();
+var halos=[];
+function addHalo(sec){
+  var box=new THREE.Box3().setFromObject(sec), r=Math.max(Math.abs(box.min.y),Math.abs(box.max.y),Math.abs(box.min.z),Math.abs(box.max.z));
+  var m=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({map:HALO_TEX,color:0xffd9a8,transparent:true,opacity:0.6,
+    depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide}));
+  m.renderOrder=-1; m.raycast=function(){}; m.userData={x0:box.min.x,x1:box.max.x,r:r}; sec.add(m); halos.push(m);
+}
+var haloCam=new THREE.Vector3(), haloAt=new THREE.Vector3(), haloInv=new THREE.Matrix4();
+function placeHalos(){   /* each frame: face the camera, at least a few pixels wide however far away the rocket is */
+  var H=Math.max(stage.clientHeight,1), tanH=Math.tan(camera.fov*Math.PI/360);
+  halos.forEach(function(m){ var sec=m.parent, u=m.userData; if(!sec.visible) return;
+    haloInv.copy(sec.matrixWorld).invert(); haloCam.copy(camera.position).applyMatrix4(haloInv);
+    haloAt.set((u.x0+u.x1)/2,0,0).applyMatrix4(sec.matrixWorld);
+    var wpp=2*camera.position.distanceTo(haloAt)*tanH/H/scaleMult, W=Math.max(u.r*3.2,22*wpp);
+    m.position.set((u.x0+u.x1)/2,0,0); m.rotation.set(Math.atan2(-haloCam.y,haloCam.z),0,0); m.scale.set(u.x1-u.x0+W*0.6,W,1); });
+}
 var noseSec=new THREE.Group(), aftSec=new THREE.Group();
 (function buildVehicle(){
   var pts=[], N=48;
   for(var i=0;i<=N;i++){ var x=VEH.nose.len*Math.pow(i/N,1.6); pts.push(new THREE.Vector2(haack(x,VEH.nose.len,VEH.radius,VEH.nose.C),-x)); }
   var ng=new THREE.LatheGeometry(pts,48); ng.rotateZ(-Math.PI/2); noseSec.add(new THREE.Mesh(ng,MAT.nose));
-  var bandMat=new THREE.MeshLambertMaterial({color:0x8a8f9a});
   VEH.tubes.forEach(function(tb,i){ var m=tubeMesh(tb.x0,tb.x1,VEH.radius,MAT[tb.m],true); (tb.x1<=VEH.sep+1e-6?noseSec:aftSec).add(m);
     if(i>0) (tb.x0<VEH.sep+1e-6?noseSec:aftSec).add(ring(tb.x0,VEH.radius+0.0009,MAT.dark)); });
   noseSec.add(tubeMesh(VEH.shoulder.x0,VEH.shoulder.x1,VEH.shoulder.r,MAT.fg,true));
@@ -347,8 +372,10 @@ var noseSec=new THREE.Group(), aftSec=new THREE.Group();
   var f=VEH.fins, r=VEH.radius, sh=new THREE.Shape();
   sh.moveTo(-f.xLE,r); sh.lineTo(-(f.xLE+f.root),r); sh.lineTo(-(f.xLE+f.sweep+f.tip),r+f.span); sh.lineTo(-(f.xLE+f.sweep),r+f.span); sh.lineTo(-f.xLE,r);
   var fg=new THREE.ExtrudeGeometry(sh,{depth:f.t,bevelEnabled:false}); fg.translate(0,0,-f.t/2);
-  var finCols=[0x6b9b6b,0x5b86b8,0x8a8f9a,0x8a8f9a];
+  /* Texas A&M maroon; fin 0 (along +y_b) a lighter maroon, so the roll can still be seen */
+  var finCols=[0x9a3b3b,MAROON,MAROON,MAROON];
   for(var k=0;k<f.n;k++){ var fm=new THREE.Mesh(fg,new THREE.MeshLambertMaterial({color:finCols[k%4]})); fm.rotation.x=k*TAU/f.n; aftSec.add(fm); }
+  addHalo(noseSec); addHalo(aftSec);
 })();
 noseSec.matrixAutoUpdate=false; aftSec.matrixAutoUpdate=false; root.add(noseSec); root.add(aftSec);
 var ROCKET_LEN=VEH.length;
@@ -951,7 +978,7 @@ function draw(dtReal){
   var alpha=Math.atan2(hh,bx), phiS=hh>1e-9?Math.atan2(-by,bz):0, phi=(phiS+TAU)%TAU;
   var spA=F.air.length(), spG=F.vel.length(), alt=F.pos.x;
   var Ld=ROCKET_LEN*sc; curLd=Ld; PADL=Ld*17;
-  if(noteMult!==sc){ noteMult=sc; $('scaleNote').textContent='rocket '+fmt(Ld,1)+' m ('+fmt(VEH.length,2)+' m × '+sc+') · rail '+fmt(RAIL.length,0)+' m, true height, width to scale · recovery to the same scale, shock cords drawn at '+Math.round(CORD_VIS*100)+'% length'; }
+  if(noteMult!==sc){ noteMult=sc; $('scaleNote').textContent='Rocket drawn '+fmt(Ld,1)+' m long ('+fmt(VEH.length,2)+' m × '+sc+') · rail '+fmt(RAIL.length,0)+' m · parachutes to the same scale · shock cords drawn at '+Math.round(CORD_VIS*100)+'% of their length'; }
   var cg=isFinite(F.cg)?F.cg:RAIL.cg0, dep=REC.dep, sepEv=REC.charge||dep, sep=!!(sepEv&&RECO&&tq>=sepEv.t), te=sep?tq-sepEv.t:0;
   var landed=REC.land!==null&&tNow>REC.land, land=null;
 
@@ -1089,6 +1116,7 @@ function draw(dtReal){
   /* label sizing */
   labels.forEach(function(l){ if(!l.visible) return; var s=l.userData.world?curLd*0.065:camera.position.distanceTo(s2t(l.position,tmpT))*l.userData.size; l.scale.set(s*l.userData.asp,s,1); });
 
+  scene.updateMatrixWorld(); placeHalos();
   if(renderer) renderer.render(scene,camera);
 
   /* HUD: the readouts are the simulation at the playback time, even while the drawn landing plays out */
