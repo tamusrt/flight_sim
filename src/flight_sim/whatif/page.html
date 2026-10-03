@@ -179,6 +179,12 @@
           <h4>2. Make the 31 RASAero files</h4>
           <p>Export the newest OpenRocket design to RASAero, saved as <code id="uc-cdx">rasaero.CDX1</code>, and have it open in RASAero II. Click inside the RASAero window, then come back here and press the button. Let go of the keyboard and mouse until it says Finished: the helper switches to RASAero and runs its test for every angle. To stop, move the mouse into a corner of the screen.</p>
           <p class="legend">First the helper checks <code>rasaero.CDX1</code> against the OpenRocket file. OpenRocket's export sometimes gets the fins or tubes wrong; then the helper corrects the file and stops before typing anything, because RASAero still has the wrong version open. Open the file again in RASAero (File, Open) and press the button again.</p>
+          <p class="legend" style="margin-bottom:4px">The file to open in RASAero (File, Open, then paste this path into the file name box):</p>
+          <div id="uc-cdxpath"></div>
+          <div class="row">
+            <button id="uc-openras" type="button" disabled>Open the folder</button>
+            <span class="legend" id="uc-open-note"></span>
+          </div>
           <div class="row">
             <button id="uc-sweep" type="button" class="primary" disabled>Create the 31 RASAero files</button>
             <span class="legend" id="uc-sweep-note"></span>
@@ -745,6 +751,11 @@ function ucRender() {
     ras.appendChild(t);
   }
   $('uc-sweep').disabled = !(st && !busy && st.sweepAvailable);
+  $('uc-openras').disabled = !st;
+  // the whole path of the .CDX1 on this computer, with a Copy button (only redrawn when it changes)
+  const box = $('uc-cdxpath'), folder = st && st.folders && st.folders.rasaero;
+  const full = folder ? folder + (folder.includes('\\') ? '\\' : '/') + st.cdx.path.split('/').pop() : '';
+  if (box.dataset.path !== full) { box.dataset.path = full; box.innerHTML = ''; if (full) box.appendChild(codeBox(full)); }
   $('uc-update').disabled = !(st && !busy && st.alpha.count >= 31 && st.updateAvailable);
   $('uc-sweep-note').textContent = st && st.alpha.count >= 31 ? '' : (st ? 'Step 3 stays off until all 31 files exist.' : '');
   $('uc-cancel').hidden = !busy;
@@ -849,6 +860,11 @@ function update() {
   window.addEventListener('hashchange', () => { readHash(); update(); });
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', update);
   $('uc-sweep').onclick = () => ucStart('sweep');
+  $('uc-openras').onclick = async () => {   // shows the RASAero file's folder in File Explorer
+    const note = $('uc-open-note'); note.textContent = '';
+    try { await helper('/api/open', true, { target: 'rasaero' }); note.textContent = 'Opened in File Explorer.'; }
+    catch (e) { note.textContent = e.message; }
+  };
   $('uc-update').onclick = () => ucStart('update');
   $('uc-cancel').onclick = async () => { try { await helper('/api/cancel', true); } catch (e) { ucError(e.message); } };
   update();
