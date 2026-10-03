@@ -14,9 +14,17 @@ from flight_sim.integration import (
     StateDerivative,
     TruthConfiguration,
 )
-from flight_sim.units import Scalar, UnitChecked, scalar, vector, zero_vector
+from flight_sim.units import (
+    Scalar,
+    UnitChecked,
+    matrix,
+    scalar,
+    vector,
+    zero_vector,
+)
 from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.utilities.quaternion import Quaternion
+from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
 
@@ -35,6 +43,22 @@ def test_scalar_and_vector_constructors() -> None:
     assert scalar(500.0, "kg").m_as("kg") == pytest.approx(500.0)
     assert np.allclose(vector((1.0, 2.0, 3.0), "m").m_as("m"), [1.0, 2.0, 3.0])
     assert np.allclose(zero_vector("m/s").m_as("m/s"), np.zeros(3))
+
+
+def test_matrix_constructor() -> None:
+    """The matrix constructor copies 3x3 components and attaches the units."""
+    components = np.diag((1.0, 2.0, 3.0))
+    inertia = matrix(components, "kg*m**2")
+    components[0, 0] = 5.0
+
+    assert inertia.m_as("g*m**2") == pytest.approx(1000.0 * np.diag((1.0, 2.0, 3.0)))
+
+
+@pytest.mark.parametrize("components", [np.eye(2), np.ones(3), np.ones((3, 3, 1))])
+def test_matrix_rejects_components_that_are_not_3x3(components: np.ndarray) -> None:
+    """Only 3x3 components make a matrix."""
+    with pytest.raises(ValueError, match="3x3"):
+        matrix(components, "kg*m**2")
 
 
 def test_quantities_convert_between_units() -> None:
@@ -56,6 +80,18 @@ def test_quantities_convert_between_units() -> None:
         (
             lambda: _rocket_state(inertia=zero_vector("kg*m")),
             "RocketState.inertia",
+        ),
+        (
+            lambda: MassProperties(
+                scalar(1.0, "m"), zero_vector("m"), matrix(np.eye(3), "kg*m**2")
+            ),
+            "MassProperties.mass",
+        ),
+        (
+            lambda: MassProperties(
+                scalar(1.0, "kg"), zero_vector("m"), matrix(np.eye(3), "kg*m")
+            ),
+            "MassProperties.inertia",
         ),
         (
             lambda: SimConfiguration(position_tolerance=scalar(1.0, "s")),

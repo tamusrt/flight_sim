@@ -4,12 +4,13 @@ Pint quantities may only be combined when they originate from the same
 ``UnitRegistry``, so every module imports ``ureg`` from here rather than
 building a registry of its own.
 
-The ``scalar``/``vector``/``zero_vector`` constructors exist because Pint's own
-API is largely untyped. They are the single place where Pint's ``Any`` values
-are pinned to a concrete type, which is what lets the rest of the codebase
-type-check under strict mypy.
+The ``scalar``/``vector``/``zero_vector``/``matrix`` constructors exist because
+Pint's own API is largely untyped. They are the single place where Pint's
+``Any`` values are pinned to a concrete type, which is what lets the rest of
+the codebase type-check under strict mypy.
 """
 
+from collections.abc import Sequence
 from dataclasses import fields
 from functools import cache
 from typing import (
@@ -34,6 +35,9 @@ Scalar: TypeAlias = Quantity[float]
 
 # A three-component measurement, such as a position in metres.
 Vector: TypeAlias = Quantity[np.ndarray]
+
+# A 3x3 measurement, such as an inertia tensor in kg*m**2.
+Matrix: TypeAlias = Quantity[np.ndarray]
 
 
 @cache
@@ -91,6 +95,27 @@ def zero_vector(units: str) -> Vector:
         Vector: A vector of three zeros in the given units.
     """
     return vector((0.0, 0.0, 0.0), units)
+
+
+def matrix(components: Sequence[Sequence[float]] | np.ndarray, units: str) -> Matrix:
+    """Build a 3x3 matrix quantity.
+
+    Args:
+        components (Sequence[Sequence[float]] | np.ndarray): The three rows,
+            which are copied.
+        units (str): Pint unit expression applied to every component.
+
+    Returns:
+        Matrix: The components tagged with the given units.
+
+    Raises:
+        ValueError: If the components are not 3x3.
+    """
+    values = np.array(components, dtype=float)
+    if values.shape != (3, 3):
+        raise ValueError(f"Expected 3x3 components, got shape {values.shape}")
+    result: Matrix = ureg.Quantity(values, parse_units(units))
+    return result
 
 
 class _QuantityField(NamedTuple):
