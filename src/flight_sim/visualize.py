@@ -24,6 +24,9 @@ _HEAD = (
 # Angle of attack at which the static centre of pressure is read, degrees
 _CP_ALPHA_DEG = 4.0
 
+# Width of the time window the propellant mass flow is measured over
+_MASS_FLOW_STEP_S = 0.01
+
 
 @dataclass(frozen=True)
 class RecoveryFrame:
@@ -98,11 +101,9 @@ class TelemetryLog:
         )
         thrust = float(self._properties.engine.get_thrust(time_s))
         self.rows["thrust"].append(thrust)
-        # Propellant mass flow out of the nozzle, kg/s
-        self.rows["mdot"].append(
-            -float(self._properties.engine.get_mass_flow(time_s, thrust))
-        )
-        self.rows["mass"].append(float(state.current_mass.m_as("kg")))
+        mass_properties = self._properties.mass_properties(time_s)
+        self.rows["mdot"].append(self._mass_flow(time_s))
+        self.rows["mass"].append(mass_properties.mass)
         self.rows["mach"].append(mach)
         self.rows["q"].append(0.5 * air.air_density * airspeed**2)
         self.rows["p"].append(air.pressure)
@@ -111,8 +112,15 @@ class TelemetryLog:
         self.rows["line"].append(frame.line or [0.0, 0.0, 0.0])
         self.rows["swing"].append(frame.swing_deg)
         self.rows["drag"].append(frame.drag_fraction)
-        self.rows["cg"].append(-float(state.cg_location.m_as("m")[0]))
+        self.rows["cg"].append(-float(mass_properties.cg_location[0]))
         self.rows["cp"].append(self._centre_of_pressure(mach))
+
+    def _mass_flow(self, time_s: float) -> float:
+        """Propellant mass leaving the nozzle at a time, in kg/s (never negative)."""
+        half = _MASS_FLOW_STEP_S / 2.0
+        before = self._properties.mass_properties(time_s - half).mass
+        after = self._properties.mass_properties(time_s + half).mass
+        return max((before - after) / _MASS_FLOW_STEP_S, 0.0)
 
     def _centre_of_pressure(self, mach: float) -> float:
         """Static centre of pressure in metres aft of the nose tip.

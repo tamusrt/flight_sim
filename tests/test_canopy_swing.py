@@ -96,12 +96,12 @@ def test_gusts_are_repeatable_and_horizontal() -> None:
     assert max(float(np.linalg.norm(v)) for v in values) > 0.0
 
 
-def _state(altitude_m: float, mass_kg: float = 40.0) -> RocketState:
+_MASS_KG = 40.0
+
+
+def _state(altitude_m: float) -> RocketState:
     """A rocket at rest at an altitude."""
     return RocketState(
-        current_mass=scalar(mass_kg, "kg"),
-        inertia=vector((0.2, 90.0, 90.0), "kg*m**2"),
-        cg_location=vector((-3.0, 0.0, 0.0), "m"),
         position=vector((altitude_m, 0.0, 0.0), "m"),
         velocity=vector((0.0, 0.0, 0.0), "m/s"),
     )
@@ -125,12 +125,13 @@ _CANOPY = RecoverySystem((Parachute("main", 3.0, 1.5),), body_drag_area_m2=0.01)
 def test_two_body_steady_descent_matches_the_point_mass() -> None:
     """In still air both models land at the same speed and time, near terminal."""
     config = _config()
-    point = simulate_descent(0.0, _state(600.0), config, _CANOPY)
+    point = simulate_descent(0.0, _state(600.0), config, _CANOPY, mass_kg=_MASS_KG)
     both = simulate_swing_descent(
         0.0,
         _state(600.0),
         config,
         _CANOPY,
+        mass_kg=_MASS_KG,
         swing=CanopySwing(line_length_m=8.0, turbulence=0.0),
     )
     assert both.descent.landed
@@ -147,7 +148,12 @@ def test_two_body_steady_descent_matches_the_point_mass() -> None:
 def test_rocket_hangs_nose_up_the_line() -> None:
     """The body axis shown follows the line once the canopy is out."""
     both = simulate_swing_descent(
-        0.0, _state(600.0), _config(), _CANOPY, swing=CanopySwing(line_length_m=8.0)
+        0.0,
+        _state(600.0),
+        _config(),
+        _CANOPY,
+        mass_kg=_MASS_KG,
+        swing=CanopySwing(line_length_m=8.0),
     )
     last = both.descent.states[-1]
     axis = body_to_world(last.orientation)[:, 0]
@@ -163,7 +169,9 @@ def test_a_collapsed_canopy_gives_almost_no_drag() -> None:
         no_drag_deg=0.001,
         collapsed_drag_fraction=0.0,
     )
-    fall = simulate_swing_descent(0.0, _state(300.0), _config(), _CANOPY, swing=swing)
+    fall = simulate_swing_descent(
+        0.0, _state(300.0), _config(), _CANOPY, mass_kg=_MASS_KG, swing=swing
+    )
     free = math.sqrt(2 * 300.0 / _G)
     assert fall.descent.times_s[-1] < 1.3 * free
     assert max(fall.swing.drag_fractions) <= 1.0
@@ -176,7 +184,12 @@ def test_before_the_canopy_there_is_no_line() -> None:
         (Parachute("main", 3.0, 1.5, deploy_delay_s=5.0),), body_drag_area_m2=0.01
     )
     both = simulate_swing_descent(
-        0.0, _state(300.0), _config(), delayed, swing=CanopySwing(line_length_m=8.0)
+        0.0,
+        _state(300.0),
+        _config(),
+        delayed,
+        mass_kg=_MASS_KG,
+        swing=CanopySwing(line_length_m=8.0),
     )
     assert len(both.swing.line_directions) == len(both.descent.times_s)
     assert float(np.linalg.norm(both.swing.line_directions[0])) == 0.0
@@ -188,8 +201,12 @@ def test_the_wind_swings_the_hang_a_little_and_gusts_repeat() -> None:
     """Turbulence in a steady wind swings the rocket a few degrees, repeatably."""
     swing = CanopySwing(line_length_m=8.0)
     config = _config(wind_m_s=5.0)
-    first = simulate_swing_descent(0.0, _state(400.0), config, _CANOPY, swing=swing)
-    second = simulate_swing_descent(0.0, _state(400.0), config, _CANOPY, swing=swing)
+    first = simulate_swing_descent(
+        0.0, _state(400.0), config, _CANOPY, mass_kg=_MASS_KG, swing=swing
+    )
+    second = simulate_swing_descent(
+        0.0, _state(400.0), config, _CANOPY, mass_kg=_MASS_KG, swing=swing
+    )
     # After the opening transient has died away
     settled = np.degrees(first.swing.angles_rad)[len(first.swing.angles_rad) // 2 :]
     assert 0.1 < float(settled.max()) < 30.0

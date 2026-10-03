@@ -33,7 +33,7 @@ import r3f
 
 from flight_sim.environment.atmosphere import AtmosphereConditions
 from flight_sim.integration import IntegrationConfiguration
-from flight_sim.units import vector, zero_vector
+from flight_sim.units import vector
 from flight_sim.utilities.dcm import world_to_body
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_state import RocketState
@@ -451,12 +451,13 @@ class _Descent:
         return _slerp(start, _nose_along(start, nose), min(max(progress, 0.0), 1.0))
 
 
-def simulate_descent(
+def simulate_descent(  # pylint: disable=too-many-arguments
     apogee_time_s: float,
     apogee_state: RocketState,
     config: IntegrationConfiguration,
     recovery: RecoverySystem,
     *,
+    mass_kg: float,
     max_step_s: float = 0.02,
     output_interval_s: float = 0.1,
     max_time_s: float = 3600.0,
@@ -470,9 +471,10 @@ def simulate_descent(
 
     Args:
         apogee_time_s (float): Time since ignition at apogee, in seconds.
-        apogee_state (RocketState): State at apogee; its mass is kept.
+        apogee_state (RocketState): State at apogee.
         config (IntegrationConfiguration): Atmosphere, gravity and latitude.
         recovery (RecoverySystem): Canopies and body drag.
+        mass_kg (float): Mass of the rocket, which stays the same, in kg.
         max_step_s (float): Longest integration step in seconds.
         output_interval_s (float): Spacing of the returned samples, seconds.
         max_time_s (float): Longest descent to simulate, in seconds.
@@ -484,7 +486,7 @@ def simulate_descent(
         apogee_state=apogee_state,
         config=config,
         recovery=recovery,
-        mass_kg=float(apogee_state.current_mass.m_as("kg")),
+        mass_kg=mass_kg,
         latitude_rad=float(config.truth.launch_latitude.m_as("rad")),
     )
     # Position and velocity in the world frame, then distance through the air
@@ -504,7 +506,7 @@ def simulate_descent(
                 apogee_state,
                 position=vector(values[:3], "m"),
                 velocity=vector(values[3:6], "m/s"),
-                angular_velocity=zero_vector("rad/s"),
+                angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
                 orientation=descent.display_orientation(at_s, values),
             )
         )

@@ -1,51 +1,9 @@
-"""Flight events the integrator can land a step on, and the standard ones."""
+"""Standard flight events the integrator can land a step on."""
 
-from collections.abc import Callable
-from dataclasses import dataclass
-
-import numpy as np
-
-from flight_sim.environment.launch_rail import LaunchRail
+from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import IntegrationConfiguration, derivative_computation
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
-
-
-@dataclass(frozen=True)
-class FlightEvent:
-    """A moment of the flight the integrator can land a step on exactly.
-
-    Attributes:
-        name (str): Name of the event, such as "apogee".
-        value (Callable[[float, RocketState], float]): Quantity, given the time
-            in seconds and the state, that is positive before the event and
-            zero or negative at and after it.
-    """
-
-    name: str
-    value: Callable[[float, RocketState], float]
-
-    def crossed(
-        self,
-        start_time: float,
-        start: RocketState,
-        end_time: float,
-        end: RocketState,
-    ) -> bool:
-        """Return whether the event lies within a step.
-
-        Args:
-            start_time (float): Time at the start of the step, in seconds.
-            start (RocketState): State at the start of the step.
-            end_time (float): Time at the end of the step, in seconds.
-            end (RocketState): State at the end of the step.
-
-        Returns:
-            bool: True if the value is positive at the start and zero or
-                negative at the end.
-        """
-        return self.value(start_time, start) > 0.0 >= self.value(end_time, end)
-
 
 # Vertical velocity falls through zero
 APOGEE = FlightEvent(
@@ -54,24 +12,6 @@ APOGEE = FlightEvent(
 
 # Altitude falls through zero
 IMPACT = FlightEvent("impact", lambda _time, state: float(state.position.m_as("m")[0]))
-
-
-def rail_exit(rail: LaunchRail) -> FlightEvent:
-    """Build the event at which the rocket is a rail length from the pad.
-
-    Args:
-        rail (LaunchRail): Rail the rocket launches from.
-
-    Returns:
-        FlightEvent: The event, named "rail exit".
-    """
-    rail_length = float(rail.length.m_as("m"))
-    return FlightEvent(
-        "rail exit",
-        lambda _time, state: (
-            rail_length - float(np.linalg.norm(state.position.m_as("m")))
-        ),
-    )
 
 
 def peak_vertical_velocity(

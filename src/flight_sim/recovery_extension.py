@@ -22,6 +22,7 @@ from flight_sim.flight_computer import FlightComputer, RecoveryPlan, Sample
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.recovery_motion import EjectionCharge
 from flight_sim.recovery_systems import RecoveryScheme, SingleSeparation
+from flight_sim.vehicle.mass_properties import MassPropertiesSI
 from flight_sim.visualize import RecoveryFrame, TelemetryLog
 
 _FT_TO_M = 0.3048
@@ -71,6 +72,7 @@ def plan_full_recovery(
     flight: list[Sample],
     config: IntegrationConfiguration,
     recovery: RecoverySystem | RecoveryScheme,
+    apogee_mass: MassPropertiesSI,
 ) -> RecoveryPlan:
     """Fly the descent with the flight computer, the ejection and the swing.
 
@@ -80,6 +82,8 @@ def plan_full_recovery(
         recovery (RecoverySystem | RecoveryScheme): A recovery architecture,
             which flies as it describes; a bare set of canopies flies as
             Sol Invictus's single separation, with this module's settings.
+        apogee_mass (MassPropertiesSI): The rocket's mass properties after the
+            burn.
 
     Returns:
         RecoveryPlan: The timeline and the descent flown with it.
@@ -89,7 +93,7 @@ def plan_full_recovery(
         if isinstance(recovery, RecoveryScheme)
         else _sol_invictus_scheme(recovery)
     )
-    return scheme.plan(flight, config)
+    return scheme.plan(flight, config, apogee_mass)
 
 
 def log_events(log: TelemetryLog, plan: RecoveryPlan) -> None:

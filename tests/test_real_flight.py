@@ -1,6 +1,7 @@
 """Tests for turning a Blue Raven log into viewer telemetry."""
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -8,7 +9,7 @@ import pandas as pd  # type: ignore[import-untyped]
 from flight_sim.real_flight import real_flight_telemetry
 
 
-def _write_log(path, altitude_ft, range_ft):
+def _write_log(path: Path, altitude_ft: np.ndarray, range_ft: np.ndarray) -> None:
     n = len(altitude_ft)
     time = np.arange(n) * 0.5 - 0.5
     frame = pd.DataFrame(
@@ -30,7 +31,7 @@ def _write_log(path, altitude_ft, range_ft):
     frame.to_csv(path, index=False)
 
 
-def test_unwraps_positions_and_cuts_at_touchdown(tmp_path) -> None:
+def test_unwraps_positions_and_cuts_at_touchdown(tmp_path: Path) -> None:
     """A wrapped altitude is unwrapped and the log ends at touchdown."""
     height = np.array([0, 20000, 50000, 70000, 50000, 20000, -10, -500.0])
     wrapped = (height + 32768) % 65536 - 32768
@@ -43,7 +44,7 @@ def test_unwraps_positions_and_cuts_at_touchdown(tmp_path) -> None:
     assert telemetry["t"][0] == 0.0  # type: ignore[index]
 
 
-def test_quaternions_are_unit_and_nose_up_at_zero_tilt(tmp_path) -> None:
+def test_quaternions_are_unit_and_nose_up_at_zero_tilt(tmp_path: Path) -> None:
     """With no tilt the nose is vertical."""
     height = np.array([0, 100, 300, 500, 300, 100, -10.0])
     path = tmp_path / "log.csv"

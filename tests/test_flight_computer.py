@@ -25,6 +25,7 @@ from flight_sim.vehicle.rocket_state import RocketState
 from flight_sim.visualize import TelemetryLog
 
 _G = 9.80665
+_MASS_KG = 40.0
 
 
 def _ballistic(apogee_s: float, up_to_s: float) -> list[tuple[float, RocketState]]:
@@ -36,9 +37,6 @@ def _ballistic(apogee_s: float, up_to_s: float) -> list[tuple[float, RocketState
             (
                 float(t),
                 RocketState(
-                    current_mass=scalar(40.0, "kg"),
-                    inertia=vector((0.2, 80.0, 80.0), "kg*m**2"),
-                    cg_location=vector((-3.0, 0.0, 0.0), "m"),
                     position=vector((height, 0.0, 0.0), "m"),
                     velocity=vector((_G * (apogee_s - t), 0.0, 0.0), "m/s"),
                 ),
@@ -111,7 +109,9 @@ def test_plan_puts_the_canopy_at_line_stretch_after_the_charge() -> None:
     )
     computer = FlightComputer(apogee_delay_s=1.0, main_altitude_m=600.0, lockout_s=5.0)
     flight = _ballistic(20.0, 20.0)
-    plan = plan_recovery(flight, config, recovery, computer, EjectionCharge())
+    plan = plan_recovery(
+        flight, config, recovery, computer, EjectionCharge(), mass_kg=_MASS_KG
+    )
 
     assert plan.apogee.detected_s is not None
     assert plan.fire_s == pytest.approx(plan.apogee.detected_s + 1.0)
@@ -138,13 +138,16 @@ def test_plan_with_a_swing_model_flies_the_two_body_descent() -> None:
     )
     computer = FlightComputer(apogee_delay_s=1.0, lockout_s=5.0)
     flight = _ballistic(8.0, 8.0)
-    point = plan_recovery(flight, config, recovery, computer, EjectionCharge())
+    point = plan_recovery(
+        flight, config, recovery, computer, EjectionCharge(), mass_kg=_MASS_KG
+    )
     swung = plan_recovery(
         flight,
         config,
         recovery,
         computer,
         EjectionCharge(),
+        mass_kg=_MASS_KG,
         swing=CanopySwing(line_length_m=8.0),
     )
     assert point.swing is None
@@ -177,6 +180,7 @@ def test_full_recovery_extension_logs_the_timeline_and_frames() -> None:
         recovery,
         FlightComputer(apogee_delay_s=1.0, lockout_s=5.0),
         EJECTION_CHARGE,
+        mass_kg=_MASS_KG,
         swing=swing,
     )
     drawn = list(frames(plan))

@@ -33,14 +33,9 @@ from flight_sim.descent import (
 from flight_sim.environment.atmosphere import LaunchSiteAtmosphere
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind
-from flight_sim.events import (
-    APOGEE,
-    IMPACT,
-    FlightEvent,
-    peak_vertical_velocity,
-    rail_exit,
-)
+from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
 from flight_sim.flight_computer import FlightComputer
+from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import (
     IntegrationConfiguration,
     TruthConfiguration,
@@ -53,10 +48,12 @@ from flight_sim.recovery_systems import (
     RecoveryScheme,
     ReefedSingleSeparation,
 )
-from flight_sim.units import scalar, vector, zero_vector
+from flight_sim.units import matrix, scalar, vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.utilities.quaternion import Quaternion
-from flight_sim.vehicle.mass_properties import MassPropertiesTable
+from flight_sim.vehicle.engine import PropellantGrain, solid_engine_from_csv
+from flight_sim.vehicle.mass_properties import MassProperties
+from flight_sim.vehicle.mass_table import MassPropertiesTable
 from flight_sim.vehicle.rocket_properties import RocketProperties, TrapezoidFinSet
 from flight_sim.vehicle.rocket_state import RocketState
 
@@ -141,7 +138,7 @@ class RocketProfile:  # pylint: disable=too-many-instance-attributes
     name: str
     aero_file: str
     motor_file: str
-    propellant_mass_kg: float
+    motor_diameter_m: float
     mass_properties: MassPropertiesTable
     reference_area_m2: float
     reference_length_m: float
@@ -168,7 +165,7 @@ INVICTUS = RocketProfile(
     name="Sol Invictus",
     aero_file="data/ras_alpha_files/invictus_aero.csv",
     motor_file="data/motors/IgnisSET5.eng",
-    propellant_mass_kg=PROPELLANT_MASS_KG,
+    motor_diameter_m=0.152,  # From the .eng header
     mass_properties=MASS_PROPERTIES,
     reference_area_m2=REFERENCE_AREA_M2,
     reference_length_m=0.1524,
@@ -222,7 +219,7 @@ MORPHEUS = RocketProfile(
     name="Morpheus",
     aero_file="data/ras_alpha_files/morpheus_aero.csv",
     motor_file="data/motors/Cesaroni_21062O3400-P.eng",
-    propellant_mass_kg=11.272,
+    motor_diameter_m=0.098,  # From the .eng header
     mass_properties=MassPropertiesTable(
         launch_mass_kg=28.902,
         launch_cg_m=-1.796,
@@ -302,28 +299,61 @@ def profile_for(aero_file: str) -> RocketProfile:
     return MORPHEUS if "morph" in os.path.basename(aero_file).lower() else INVICTUS
 
 
-def get_default_state(profile: RocketProfile = INVICTUS) -> RocketState:
-    """Generate the standard launchpad initial state of a rocket."""
+def get_default_state() -> RocketState:
+    """Generate the standard initial state, at rest off the rail."""
     return RocketState(
         position=vector((0.0, 0.0, 0.0), "m"),
         velocity=vector((0.0, 0.0, 0.0), "m/s"),
-        current_mass=scalar(profile.mass_properties.launch_mass_kg, "kg"),
-        inertia=vector(profile.mass_properties.launch_inertia_kg_m2, "kg*m**2"),
-        cg_location=vector((profile.mass_properties.launch_cg_m, 0.0, 0.0), "m"),
         angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
         orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
-        on_rail=True,
     )
 
 
 def get_launch_state(profile: RocketProfile = INVICTUS) -> RocketState:
     """Return the launchpad state with the rocket lying along the launch rail."""
-    state = get_default_state(profile)
-    state.orientation = profile.rail.orientation()
-    return state
+    return profile.rail.mount(get_default_state())
 
 
-def get_default_properties(
+def get_default_properties() -> RocketProperties:
+    """Build the standard aerodynamic, motor and mass properties of a test rocket.
+
+    The mass properties are placeholders: 25 kg with its CG about 1.5 m aft of
+    the nose tip at ignition, burning down to 20 kg. The rockets the team flew
+    are the profiles, which ``get_profile_properties`` builds.
+    """
+    grain = PropellantGrain(
+        mass=scalar(5.0, "kg"),
+        length=scalar(0.75, "m"),
+        outer_diameter=scalar(0.0762, "m"),
+        core_diameter=scalar(0.03, "m"),
+        cg_location=vector((-2.6, 0.0, 0.0), "m"),
+    )
+    # Thin tube of radius 0.045 m and length 0.9 m
+    casing = MassProperties(
+        mass=scalar(3.0, "kg"),
+        cg_location=vector((-2.6, 0.0, 0.0), "m"),
+        inertia=matrix(np.diag((0.0061, 0.21, 0.21)), "kg*m**2"),
+    )
+    return RocketProperties(
+        aero_table=aero_table_from_csv(
+            "data/aero/estimated_aero.csv",
+            reference_area=scalar(0.0182414692, "m**2"),
+            reference_length=scalar(0.1524, "m"),
+            reference_point=vector((0.0, 0.0, 0.0), "m"),
+            frame="missile",
+        ),
+        engine=solid_engine_from_csv(
+            "tests/test_data/standard_motor.csv", grain, casing
+        ),
+        dry_mass_properties=MassProperties(
+            mass=scalar(17.0, "kg"),
+            cg_location=vector((-1.0, 0.0, 0.0), "m"),
+            inertia=matrix(np.diag((2.4, 135.0, 135.0)), "kg*m**2"),
+        ),
+    )
+
+
+def get_profile_properties(
     profile: RocketProfile = INVICTUS, aero_file: str | None = None
 ) -> RocketProperties:
     """Build a rocket's properties, including the fins for roll.
@@ -332,15 +362,16 @@ def get_default_properties(
         profile (RocketProfile): The rocket.
         aero_file (str | None): Aero CSV to use in place of the profile's own.
     """
+    dry, casing, grain = profile.mass_properties.parts(profile.motor_diameter_m)
     return RocketProperties(
         aero_table=aero_table_from_csv(
             aero_file or profile.aero_file,
             reference_area=scalar(profile.reference_area_m2, "m**2"),
             reference_length=scalar(profile.reference_length_m, "m"),
-            reference_point=zero_vector("m"),
+            reference_point=vector((0.0, 0.0, 0.0), "m"),
         ),
-        motor_file_path=profile.motor_file,
-        propellant_mass=profile.propellant_mass_kg,
+        engine=solid_engine_from_csv(profile.motor_file, grain, casing),
+        dry_mass_properties=dry,
         fins=profile.fins,
     )
 
@@ -362,22 +393,17 @@ def get_default_config(profile: RocketProfile = INVICTUS) -> IntegrationConfigur
     )
 
 
-def telemetry_row(time_s: float, state: RocketState) -> dict[str, object]:
-    """Return the plotted values of one state."""
+def telemetry_row(
+    time_s: float, state: RocketState, mass_kg: float
+) -> dict[str, object]:
+    """Return the plotted values of one state, for a rocket weighing ``mass_kg``."""
     return {
         "Time (s)": time_s,
         "Inertial Position (m)": state.position.m_as("m"),
         "Inertial Velocity (m/s)": state.velocity.m_as("m/s"),
         "Angular Rate (rad/s)": state.angular_velocity.m_as("rad/s"),
-        "Mass (kg)": float(state.current_mass.m_as("kg")),
+        "Mass (kg)": mass_kg,
     }
-
-
-def apply_mass_properties(
-    state: RocketState, profile: RocketProfile = INVICTUS
-) -> None:
-    """Set the state's CG and inertia for the propellant left."""
-    profile.mass_properties.apply(state)
 
 
 def descend(
@@ -385,6 +411,8 @@ def descend(
     state: RocketState,
     config: IntegrationConfiguration,
     profile: RocketProfile = INVICTUS,
+    *,
+    mass_kg: float,
 ) -> DescentResult:
     """From apogee, fall under the parachute as a point mass.
 
@@ -393,11 +421,14 @@ def descend(
         state (RocketState): State at apogee.
         config (IntegrationConfiguration): Truth models and settings.
         profile (RocketProfile): The rocket, for its recovery system.
+        mass_kg (float): Mass of the rocket at apogee, in kg.
 
     Returns:
         DescentResult: The descent samples and parachute events.
     """
-    descent = simulate_descent(apogee_time_s, state, config, profile.recovery)
+    descent = simulate_descent(
+        apogee_time_s, state, config, profile.recovery, mass_kg=mass_kg
+    )
     for deployment in descent.deployments:
         print(f"{deployment.name} at {deployment.time_s:.2f} seconds")
     if descent.landed:
@@ -463,19 +494,16 @@ def parse_rocket(argv: Sequence[str]) -> tuple[RocketProfile, str]:
     return select_rocket(parser.parse_args(argv))
 
 
-def main(argv: Sequence[str] = ()) -> None:  # pylint: disable=too-many-statements
+def main(  # pylint: disable=too-many-statements,too-many-locals
+    argv: Sequence[str] = (),
+) -> None:
     """Main function to run entire flight"""
     profile, aero_file = parse_rocket(argv)
     print(f"Flying {profile.name} with {aero_file}")
-    properties = get_default_properties(profile, aero_file)
+    properties = get_profile_properties(profile, aero_file)
     state = get_launch_state(profile)
     config = get_default_config(profile)
-    events = (
-        rail_exit(profile.rail),
-        peak_vertical_velocity(properties, config),
-        APOGEE,
-        IMPACT,
-    )
+    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
 
     dt = scalar(0.01, "s")  # First step length to try
     current_time = 0.0
@@ -484,7 +512,8 @@ def main(argv: Sequence[str] = ()) -> None:  # pylint: disable=too-many-statemen
     hit: FlightEvent | None = None
 
     while True:
-        telemetry.append(telemetry_row(current_time, state))
+        mass_kg = properties.mass_properties(current_time).mass
+        telemetry.append(telemetry_row(current_time, state, mass_kg))
 
         if hit is not None:
             print(f"{hit.name} at {current_time:.2f} seconds")
@@ -496,11 +525,13 @@ def main(argv: Sequence[str] = ()) -> None:  # pylint: disable=too-many-statemen
         )
         current_time += float(dt_taken.m_as("s"))
         step_lengths.append(float(dt_taken.m_as("s")))
-        apply_mass_properties(state, profile)
 
     if hit is APOGEE and profile.scheme is not None:
-        descent = descend(current_time, state, config, profile)
-        telemetry.extend(map(telemetry_row, descent.times_s, descent.states))
+        descent = descend(current_time, state, config, profile, mass_kg=mass_kg)
+        telemetry.extend(
+            telemetry_row(t, s, mass_kg)
+            for t, s in zip(descent.times_s, descent.states, strict=True)
+        )
 
     df = pd.DataFrame(telemetry)
     time = df["Time (s)"]

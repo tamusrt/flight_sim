@@ -115,4 +115,4 @@ def test_profile_takes_conditions_from_the_saved_sim(
     # the thrust-curve file's 10 kg motor, not the 11.6 kg the saved mass would leave
     airframe = load_ork(files[0]).airframe_mass_kg
     assert profile.mass_properties.launch_mass_kg == pytest.approx(airframe + 10.0)
-    assert profile.propellant_mass_kg == pytest.approx(4.0)
+    assert profile.mass_properties.propellant_mass_kg == pytest.approx(4.0)

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from ork_fixture import write_aero_csv, write_cdx, write_eng, write_ork
@@ -62,7 +63,7 @@ def _history(site: Path, shas: list[str]) -> None:
 
 
 @pytest.fixture(name="repo")
-def fixture_repo(tmp_path: Path) -> dict[str, object]:
+def fixture_repo(tmp_path: Path) -> dict[str, Any]:
     """A git repository with the design committed twice (second time with bigger fins)."""
     folder = tmp_path / "aero_modeling"
     folder.mkdir()
@@ -88,7 +89,7 @@ def fixture_repo(tmp_path: Path) -> dict[str, object]:
 
 
 def test_history_commits_finds_the_design_by_its_file_name(
-    repo: dict[str, object],
+    repo: dict[str, Any],
 ) -> None:
     """The design is found in the History site by name, with its commits per simulation."""
     key, commits = history_commits(repo["site"], "D.ork")
@@ -97,11 +98,12 @@ def test_history_commits_finds_the_design_by_its_file_name(
     assert history_commits(repo["root"] / "nothing", "D.ork") == ("", {})
 
 
-def test_every_commit_is_flown_with_its_own_design(repo: dict[str, object]) -> None:
+def test_every_commit_is_flown_with_its_own_design(repo: dict[str, Any]) -> None:
     """Bigger fins in the second commit: more stable and less apogee, as the page would say."""
     result = jarvis_by_commit(
         repo["ork"], repo["aero"], repo["motor"], repo["site"], rasaero=repo["cdx"]
     )
+    assert result is not None
     assert result["design"] == _KEY and result["skipped"] == 0
     first, second = (result["sims"]["calm"][sha] for sha in repo["shas"])
     assert set(first) == {
@@ -122,7 +124,7 @@ def test_every_commit_is_flown_with_its_own_design(repo: dict[str, object]) -> N
 
 
 def test_a_commit_that_cannot_be_read_is_skipped_and_counted(
-    repo: dict[str, object],
+    repo: dict[str, Any],
 ) -> None:
     """A garbled design file in the history leaves a gap, not a failed build."""
     repo["ork"].write_bytes(b"not a zip")
@@ -135,11 +137,12 @@ def test_a_commit_that_cannot_be_read_is_skipped_and_counted(
         repo["root"] / "site2",
         rasaero=repo["cdx"],
     )
+    assert result is not None
     assert result["skipped"] == 1 and set(result["sims"]["calm"]) == set(repo["shas"])
 
 
 def test_a_design_the_history_does_not_have_gives_nothing(
-    repo: dict[str, object],
+    repo: dict[str, Any],
 ) -> None:
     """No History for the design: nothing to draw."""
     empty = repo["root"] / "empty_site"
@@ -149,7 +152,7 @@ def test_a_design_the_history_does_not_have_gives_nothing(
 
 
 def test_the_command_writes_the_json(
-    repo: dict[str, object], capsys: pytest.CaptureFixture[str]
+    repo: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """``python -m flight_sim.whatif.commits`` writes the file the History page loads."""
     out = repo["root"] / "by_commit.json"

@@ -3,17 +3,23 @@
 import json
 from pathlib import Path
 
-from flight_sim.__main__ import LAUNCH_RAIL, RECOVERY, get_default_state
+import pytest
+
+from flight_sim.__main__ import (
+    INVICTUS,
+    LAUNCH_RAIL,
+    RECOVERY,
+    get_default_state,
+    get_profile_properties,
+)
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.visualize import RecoveryFrame, TelemetryLog, write_viewer
 
 
-def test_viewer_page_embeds_the_logged_flight(
-    baseline_rocket_properties: RocketProperties, tmp_path: Path
-) -> None:
+def test_viewer_page_embeds_the_logged_flight(tmp_path: Path) -> None:
     """Each sample is logged and the page carries it as JSON."""
-    log = TelemetryLog(baseline_rocket_properties, IntegrationConfiguration())
+    log = TelemetryLog(get_profile_properties(INVICTUS), IntegrationConfiguration())
     state = get_default_state()
     log.record(0.0, state)
     log.record(0.5, state)
@@ -34,7 +40,9 @@ def test_viewer_page_embeds_the_logged_flight(
     assert data["q"] == [0.0, 0.0]
     # Burning at both samples, so propellant flows out of the nozzle
     assert all(m > 0.0 for m in data["mdot"])
-    assert data["cg"] == [3.298, 3.298]
+    # The CG at ignition is the profile's, then moves forward as the grain burns
+    assert data["cg"][0] == pytest.approx(3.298)
+    assert 3.109 < data["cg"][1] < 3.298
     assert len(data["cp"]) == 2
     assert data["events"] == [
         {"kind": "deploy", "name": "Main reefed", "t": 0.25, "inflation": 0.1}

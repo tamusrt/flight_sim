@@ -230,13 +230,14 @@ class RecoveryPlan:
     main_line_stretch_s: float | None = None
 
 
-def plan_recovery(
+def plan_recovery(  # pylint: disable=too-many-locals
     flight: list[Sample],
     config: IntegrationConfiguration,
     recovery: RecoverySystem,
     computer: FlightComputer,
     charge: EjectionCharge,
     *,
+    mass_kg: float,
     swing: CanopySwing | None = None,
 ) -> RecoveryPlan:
     """Fly the descent with the events where the flight computer puts them.
@@ -252,6 +253,7 @@ def plan_recovery(
         recovery (RecoverySystem): The canopies, with nominal settings.
         computer (FlightComputer): The avionics.
         charge (EjectionCharge): The separation charge and shock cord.
+        mass_kg (float): Mass of the rocket after the burn, in kg.
         swing (CanopySwing | None): When given, the descents are flown with
             the rocket swinging under its canopy instead of as a point mass.
 
@@ -264,6 +266,7 @@ def plan_recovery(
         apogee_state,
         config,
         replace(recovery, parachutes=()),
+        mass_kg=mass_kg,
         max_time_s=computer.apogee_delay_s + 30.0,
     )
     coasting = flight + list(zip(coast.times_s, coast.states, strict=True))
@@ -271,11 +274,13 @@ def plan_recovery(
     detected = detection.detected_s if detection.detected_s is not None else apogee_time
     fire = detected + computer.apogee_delay_s
 
-    separation = _eject(_state_at(coasting, fire), config, charge)
+    separation = _eject(_state_at(coasting, fire), config, charge, mass_kg)
     line_stretch = fire + separation.line_stretch_s
 
     planned = _retime(recovery, line_stretch - apogee_time, None)
-    descent, trace = _fly(apogee_time, apogee_state, config, planned, swing)
+    descent, trace = _fly(
+        apogee_time, apogee_state, config, planned, mass_kg=mass_kg, swing=swing
+    )
     command = computer.main_command(
         computer.sense(
             flight + list(zip(descent.times_s, descent.states, strict=True)), config
@@ -292,7 +297,9 @@ def plan_recovery(
             )
         )
         planned = _retime(recovery, line_stretch - apogee_time, true_altitude)
-        descent, trace = _fly(apogee_time, apogee_state, config, planned, swing)
+        descent, trace = _fly(
+            apogee_time, apogee_state, config, planned, mass_kg=mass_kg, swing=swing
+        )
     return RecoveryPlan(
         recovery=planned,
         descent=descent,
@@ -311,13 +318,20 @@ def _fly(
     apogee_state: RocketState,
     config: IntegrationConfiguration,
     recovery: RecoverySystem,
+    *,
+    mass_kg: float,
     swing: CanopySwing | None,
 ) -> tuple[DescentResult, SwingTrace | None]:
     """Fly the descent as a point mass, or with the swing when it is given."""
     if swing is None:
-        return simulate_descent(apogee_time_s, apogee_state, config, recovery), None
+        return (
+            simulate_descent(
+                apogee_time_s, apogee_state, config, recovery, mass_kg=mass_kg
+            ),
+            None,
+        )
     result = simulate_swing_descent(
-        apogee_time_s, apogee_state, config, recovery, swing=swing
+        apogee_time_s, apogee_state, config, recovery, mass_kg=mass_kg, swing=swing
     )
     return result.descent, result.swing
 
@@ -341,14 +355,15 @@ def _retime(
 
 
 def _eject(
-    state: RocketState, config: IntegrationConfiguration, charge: EjectionCharge
+    state: RocketState,
+    config: IntegrationConfiguration,
+    charge: EjectionCharge,
+    mass_kg: float,
 ) -> Separation:
     """Fire the charge in the air the rocket is flying through."""
     air, wind = air_at(config, float(state.position.m_as("m")[0]))
     airspeed = float(np.linalg.norm(state.velocity.m_as("m/s") - wind))
-    return charge.separate(
-        float(state.current_mass.m_as("kg")), airspeed, air.air_density
-    )
+    return charge.separate(mass_kg, airspeed, air.air_density)
 
 
 def _state_at(samples: list[Sample], time_s: float) -> RocketState:

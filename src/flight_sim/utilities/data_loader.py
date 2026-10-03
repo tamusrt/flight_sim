@@ -1,7 +1,6 @@
 """Functions for loading aerodynamic CSV data."""
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from itertools import pairwise
 from pathlib import Path
@@ -35,7 +34,7 @@ _AERO_COLUMNS: tuple[str, ...] = tuple(
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class AeroTable(UnitChecked):
     """Trilinear lookup of aerodynamic coefficients over Mach, alpha_tot and phi_a.
 
@@ -62,6 +61,22 @@ class AeroTable(UnitChecked):
     # Axes the table's components are along; missile-frame components are
     # rotated into body axes after interpolation
     frame: Literal["body", "missile"] = "body"
+
+    # Reference values in SI units, cached on construction
+    reference_area_m2: float = field(init=False, repr=False, compare=False)
+    reference_length_m: float = field(init=False, repr=False, compare=False)
+    reference_point_m: np.ndarray = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Cache the reference values in SI units."""
+        super().__post_init__()
+        object.__setattr__(
+            self, "reference_area_m2", float(self.reference_area.m_as("m**2"))
+        )
+        object.__setattr__(
+            self, "reference_length_m", float(self.reference_length.m_as("m"))
+        )
+        object.__setattr__(self, "reference_point_m", self.reference_point.m_as("m"))
 
     def __call__(self, mach: float, alpha: float, phi: float) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.
@@ -158,31 +173,6 @@ def aero_table_from_csv(
         reference_point=reference_point,
         frame=frame,
     )
-
-
-def time_interpolator_from_csv(
-    filepath: str, time_col: str, output_col: str
-) -> Callable[[float], float]:
-    """Read a CSV and build a 1D time-based interpolator for motor curves.
-
-    Args:
-        filepath (str): CSV holding the time and output columns.
-        time_col (str): Column of increasing sample times, in seconds.
-        output_col (str): Column to interpolate.
-
-    Returns:
-        Callable[[float], float]: Linear interpolation of the output column,
-            returning 0.0 outside the sampled time range.
-    """
-    data_frame = pd.read_csv(filepath)
-    times = data_frame[time_col].to_numpy(dtype=float)
-    outputs = data_frame[output_col].to_numpy(dtype=float)
-
-    def interpolate(time: float) -> float:
-        """Return the output column's value at the given time in seconds."""
-        return float(np.interp(time, times, outputs, left=0.0, right=0.0))
-
-    return interpolate
 
 
 def eng_to_csv(motor_file_path: str) -> str:

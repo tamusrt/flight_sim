@@ -79,5 +79,5 @@ def test_the_motor_files_masses_replace_the_saved_ones(tmp_path: Path) -> None:
         str(write_aero_csv(tmp_path / "a.csv")),
         str(tmp_path / "m.rse"),
     )
-    assert profile.propellant_mass_kg == pytest.approx(3.5)
+    assert profile.mass_properties.propellant_mass_kg == pytest.approx(3.5)
     assert profile.motor_file.endswith(".eng")

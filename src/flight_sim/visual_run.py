@@ -18,22 +18,17 @@ from flight_sim import recovery_extension
 from flight_sim.__main__ import (
     RocketProfile,
     add_rocket_arguments,
-    apply_mass_properties,
     get_default_config,
-    get_default_properties,
     get_launch_state,
+    get_profile_properties,
     select_rocket,
 )
-from flight_sim.events import (
-    APOGEE,
-    IMPACT,
-    FlightEvent,
-    peak_vertical_velocity,
-    rail_exit,
-)
+from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
+from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import IntegrationConfiguration, adaptive_step
 from flight_sim.real_flight import real_flight_telemetry
 from flight_sim.units import scalar
+from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 from flight_sim.visualize import TelemetryLog, write_viewer
 
@@ -65,15 +60,10 @@ def main() -> None:
     profile, aero_file = select_rocket(args)
     print(f"Flying {profile.name} with {aero_file}")
 
-    properties = get_default_properties(profile, aero_file)
+    properties = get_profile_properties(profile, aero_file)
     state = get_launch_state(profile)
     config = get_default_config(profile)
-    events = (
-        rail_exit(profile.rail),
-        peak_vertical_velocity(properties, config),
-        APOGEE,
-        IMPACT,
-    )
+    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
     log = TelemetryLog(properties, config)
     log.describe_rail(profile.rail)
     log.describe_recovery(profile.recovery)
@@ -97,12 +87,13 @@ def main() -> None:
             current_time, state, properties, config, dt, events=events
         )
         current_time += float(dt_taken.m_as("s"))
-        apply_mass_properties(state, profile)
         if hit is not None and hit.name == "rail exit":
             log.add_event("rail", "Rail exit", current_time)
 
     if hit is APOGEE and not args.apogee and profile.scheme is not None:
-        _log_recovery(log, flight, config, max_time, profile)
+        _log_recovery(
+            log, flight, properties, config, max_time=max_time, profile=profile
+        )
 
     real = None
     real_path = args.real or profile.flight_data
@@ -119,7 +110,9 @@ def main() -> None:
 def _log_recovery(
     log: TelemetryLog,
     flight: list[tuple[float, RocketState]],
+    properties: RocketProperties,
     config: IntegrationConfiguration,
+    *,
     max_time: float | None,
     profile: RocketProfile,
 ) -> None:
@@ -127,7 +120,8 @@ def _log_recovery(
     scheme = profile.scheme
     if scheme is None:
         return
-    plan = recovery_extension.plan_full_recovery(flight, config, scheme)
+    apogee_mass = properties.mass_properties(flight[-1][0])
+    plan = recovery_extension.plan_full_recovery(flight, config, scheme, apogee_mass)
     print(f"Recovery: {scheme.kind}")
     if plan.separation.separated:
         print(f"charge fires at {plan.fire_s:.2f} seconds")

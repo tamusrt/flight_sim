@@ -2,11 +2,13 @@
 
 import math
 from dataclasses import replace
+from typing import Any
 
 import numpy as np
 import pytest
 
 from flight_sim.descent import (
+    DescentResult,
     Parachute,
     RecoverySystem,
     ReefedParachute,
@@ -26,20 +28,24 @@ from flight_sim.vehicle.rocket_state import RocketState
 _G = 9.80665
 
 
+_MASS_KG = 40.0
+
+
 def _state(
     altitude_m: float,
     velocity_m_s: tuple[float, float, float] = (0.0, 0.0, 0.0),
-    mass_kg: float = 40.0,
 ) -> RocketState:
     """Return a rocket at an altitude, spinning slowly."""
     return RocketState(
-        current_mass=scalar(mass_kg, "kg"),
-        inertia=vector((0.2, 90.0, 90.0), "kg*m**2"),
-        cg_location=vector((-3.0, 0.0, 0.0), "m"),
         position=vector((altitude_m, 0.0, 0.0), "m"),
         velocity=vector(velocity_m_s, "m/s"),
         angular_velocity=vector((0.5, 0.0, 0.0), "rad/s"),
     )
+
+
+def _fall(*args: Any, mass_kg: float = _MASS_KG, **kwargs: Any) -> DescentResult:
+    """Fly the descent of a 40 kg rocket unless told another mass."""
+    return simulate_descent(*args, mass_kg=mass_kg, **kwargs)
 
 
 def _sea_level() -> IntegrationConfiguration:
@@ -56,7 +62,7 @@ def test_vacuum_descent_is_free_fall() -> None:
         )
     )
     recovery = RecoverySystem((Parachute("main", 3.0, 1.5),))
-    result = simulate_descent(10.0, _state(1000.0), config, recovery)
+    result = _fall(10.0, _state(1000.0), config, recovery)
 
     assert result.landed
     fall_time = result.times_s[-1] - 10.0
@@ -66,16 +72,13 @@ def test_vacuum_descent_is_free_fall() -> None:
     assert result.states[-1].position.m_as("m")[0] == 0.0
 
 
-def test_samples_are_evenly_spaced_and_carry_the_mass() -> None:
-    """Samples come every output interval and keep the apogee mass."""
+def test_samples_are_evenly_spaced_and_do_not_spin() -> None:
+    """Samples come every output interval and the point mass has no spin."""
     recovery = RecoverySystem((Parachute("drogue", 1.0, 1.5),))
-    result = simulate_descent(
-        0.0, _state(300.0), _sea_level(), recovery, output_interval_s=0.5
-    )
+    result = _fall(0.0, _state(300.0), _sea_level(), recovery, output_interval_s=0.5)
     gaps = np.diff(result.times_s[:-1])
     assert gaps == pytest.approx(0.5, abs=1e-9)
     assert result.times_s[-1] - result.times_s[-2] <= 0.5 + 1e-9
-    assert all(float(s.current_mass.m_as("kg")) == 40.0 for s in result.states)
     assert all(
         float(np.linalg.norm(s.angular_velocity.m_as("rad/s"))) == 0.0
         for s in result.states
@@ -88,7 +91,7 @@ def test_parachute_reaches_the_designed_descent_rate() -> None:
     drag_area = 2 * 40.0 * _G / (1.225 * 7.6**2)
     diameter = math.sqrt(4 * drag_area / (1.5 * math.pi))
     recovery = RecoverySystem((Parachute("main", diameter, 1.5),))
-    result = simulate_descent(0.0, _state(500.0), _sea_level(), recovery)
+    result = _fall(0.0, _state(500.0), _sea_level(), recovery)
 
     landing = result.states[-1].velocity.m_as("m/s")
     # Density rises 5% over the last 500 m, so it lands slightly slower
@@ -107,7 +110,7 @@ def test_wind_carries_the_rocket_downwind() -> None:
         )
     )
     recovery = RecoverySystem((Parachute("main", 3.0, 1.5),))
-    result = simulate_descent(0.0, _state(300.0), config, recovery)
+    result = _fall(0.0, _state(300.0), config, recovery)
 
     landing = result.states[-1]
     assert landing.velocity.m_as("m/s")[1:] == pytest.approx([5.0, -2.0], abs=1e-3)
@@ -124,9 +127,7 @@ def test_drogue_on_delay_and_main_at_altitude() -> None:
         ),
         body_drag_area_m2=0.01,
     )
-    result = simulate_descent(
-        40.0, _state(3000.0, (0.0, 50.0, 0.0)), _sea_level(), recovery
-    )
+    result = _fall(40.0, _state(3000.0, (0.0, 50.0, 0.0)), _sea_level(), recovery)
 
     drogue, main = result.deployments
     assert drogue.name == "drogue"
@@ -151,7 +152,7 @@ def test_drogue_on_delay_and_main_at_altitude() -> None:
 def test_main_opens_at_once_below_its_height() -> None:
     """A rocket that peaks below the main's height releases it at apogee."""
     recovery = RecoverySystem((Parachute("main", 3.0, 2.2, deploy_altitude_m=450.0),))
-    result = simulate_descent(20.0, _state(300.0), _sea_level(), recovery)
+    result = _fall(20.0, _state(300.0), _sea_level(), recovery)
     assert result.deployments[0].time_s == pytest.approx(20.0)
 
 
@@ -161,9 +162,9 @@ def test_opening_load_matches_a_hand_estimate() -> None:
     config = IntegrationConfiguration(
         truth=TruthConfiguration(gravity=ConstantGravity(0.0))
     )
-    heavy = _state(100.0, (-20.0, 0.0, 0.0), mass_kg=1e5)
-    result = simulate_descent(
-        0.0, heavy, config, RecoverySystem((parachute,)), max_time_s=2.0
+    heavy = _state(100.0, (-20.0, 0.0, 0.0))
+    result = _fall(
+        0.0, heavy, config, RecoverySystem((parachute,)), mass_kg=1e5, max_time_s=2.0
     )
     density = config.truth.atmosphere.conditions(100.0).air_density
     expected = 0.5 * density * 20.0**2 * parachute.drag_area_m2 / 1e5 / _G
@@ -176,7 +177,7 @@ def test_opening_load_is_below_the_instant_opening_value() -> None:
     """A light rocket slows while its canopy fills, easing the opening load."""
     parachute = Parachute("main", 3.0, 2.2)
     config = _sea_level()
-    result = simulate_descent(
+    result = _fall(
         0.0, _state(400.0, (-25.0, 0.0, 0.0)), config, RecoverySystem((parachute,))
     )
     density = config.truth.atmosphere.conditions(400.0).air_density
@@ -187,7 +188,7 @@ def test_opening_load_is_below_the_instant_opening_value() -> None:
 def test_time_limit_stops_without_landing() -> None:
     """Running out of time reports that the rocket has not landed."""
     recovery = RecoverySystem((Parachute("main", 3.0, 2.2),))
-    result = simulate_descent(0.0, _state(3000.0), _sea_level(), recovery, max_time_s=5)
+    result = _fall(0.0, _state(3000.0), _sea_level(), recovery, max_time_s=5)
     assert not result.landed
     assert result.times_s[-1] == pytest.approx(5.0)
     assert result.states[-1].position.m_as("m")[0] > 0.0
@@ -204,7 +205,7 @@ def test_display_attitude_hangs_nose_up_under_the_canopy() -> None:
         )
     )
     recovery = RecoverySystem((Parachute("main", 3.0, 2.2, deploy_delay_s=1.0),))
-    result = simulate_descent(0.0, _state(500.0), config, recovery)
+    result = _fall(0.0, _state(500.0), config, recovery)
 
     first = body_to_world(result.states[0].orientation)[:, 0]
     assert first == pytest.approx([1.0, 0.0, 0.0], abs=0.05)
@@ -223,9 +224,7 @@ def test_spill_hole_reduces_the_canopy_area() -> None:
 def test_instant_canopy_opens_at_release() -> None:
     """A zero filling distance gives the full drag area at once."""
     recovery = RecoverySystem((Parachute("main", 3.0, 2.2, fill_constant=0.0),))
-    result = simulate_descent(
-        0.0, _state(300.0, (-20.0, 0.0, 0.0)), _sea_level(), recovery
-    )
+    result = _fall(0.0, _state(300.0, (-20.0, 0.0, 0.0)), _sea_level(), recovery)
     assert result.deployments[0].inflation_time_s == pytest.approx(0.0)
     assert result.landed
 
@@ -237,7 +236,7 @@ def test_canopy_released_at_apogee_fills_over_its_distance() -> None:
     opening canopy slows the fall a little, so it takes slightly longer.
     """
     recovery = RecoverySystem((Parachute("drogue", 1.0, 2.2),))
-    result = simulate_descent(0.0, _state(3000.0), _sea_level(), recovery)
+    result = _fall(0.0, _state(3000.0), _sea_level(), recovery)
     time = result.deployments[0].inflation_time_s
     assert time is not None
     assert math.sqrt(2 * 8.0 / _G) < time < 1.5
@@ -255,7 +254,7 @@ def test_display_attitude_turns_without_rolling() -> None:
     config = IntegrationConfiguration(
         truth=TruthConfiguration(gravity=ConstantGravity(_G))
     )
-    result = simulate_descent(0.0, start, config, recovery)
+    result = _fall(0.0, start, config, recovery)
 
     first = body_to_world(result.states[0].orientation)
     assert first[:, 0] == pytest.approx([0.0, 1.0, 0.0], abs=1e-9)
@@ -313,7 +312,7 @@ def test_reefed_canopy_flies_reefed_then_disreefs_at_its_height() -> None:
     """Reefed drag down to the cut height, the full canopy below it."""
     main = _team_main()
     recovery = RecoverySystem((main,))
-    result = simulate_descent(0.0, _state(2500.0), _sea_level(), recovery)
+    result = _fall(0.0, _state(2500.0), _sea_level(), recovery)
 
     reefed, cut = result.deployments
     assert reefed.name == "main reefed"
@@ -334,9 +333,7 @@ def test_reefed_canopy_flies_reefed_then_disreefs_at_its_height() -> None:
 
 def test_reef_cut_waits_for_the_reefed_opening() -> None:
     """Starting below the cut height, the canopy still opens reefed first."""
-    result = simulate_descent(
-        0.0, _state(400.0), _sea_level(), RecoverySystem((_team_main(),))
-    )
+    result = _fall(0.0, _state(400.0), _sea_level(), RecoverySystem((_team_main(),)))
     reefed, cut = result.deployments
     assert reefed.time_s == pytest.approx(1.0)
     assert cut.time_s == pytest.approx(1.0)

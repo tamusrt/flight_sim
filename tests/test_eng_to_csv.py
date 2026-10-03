@@ -5,8 +5,23 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from flight_sim.units import matrix, scalar, vector
 from flight_sim.utilities.data_loader import eng_to_csv
-from flight_sim.vehicle.engine import solid_engine_from_csv
+from flight_sim.vehicle.engine import PropellantGrain, solid_engine_from_csv
+from flight_sim.vehicle.mass_properties import MassProperties
+
+_GRAIN = PropellantGrain(
+    mass=scalar(1.2, "kg"),
+    length=scalar(0.4, "m"),
+    outer_diameter=scalar(0.07, "m"),
+    core_diameter=scalar(0.02, "m"),
+    cg_location=vector((-1.0, 0.0, 0.0), "m"),
+)
+_CASING = MassProperties(
+    mass=scalar(1.3, "kg"),
+    cg_location=vector((-1.0, 0.0, 0.0), "m"),
+    inertia=matrix(np.diag((0.001, 0.02, 0.02)), "kg*m**2"),
+)
 
 _ENG = """; A test motor
 ; second comment
@@ -37,7 +52,7 @@ def test_engine_reads_an_eng_file(tmp_path: Path) -> None:
     """The motor model accepts the .eng file directly."""
     source = tmp_path / "motor.eng"
     source.write_text(_ENG, encoding="utf-8")
-    engine = solid_engine_from_csv(str(source), propellant_mass=1.2)
+    engine = solid_engine_from_csv(str(source), _GRAIN, _CASING)
     assert engine.get_thrust(0.05) == pytest.approx(50.0)
     assert engine.total_impulse == pytest.approx(5.0 + 44.0 + 30.0)
 

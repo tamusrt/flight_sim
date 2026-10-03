@@ -14,27 +14,38 @@ from flight_sim.integration import (
     StateDerivative,
     TruthConfiguration,
 )
-from flight_sim.units import Scalar, UnitChecked, scalar, vector, zero_vector
+from flight_sim.units import (
+    Scalar,
+    UnitChecked,
+    Vector,
+    matrix,
+    scalar,
+    vector,
+)
 from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.utilities.quaternion import Quaternion
+from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
 
 def _rocket_state(**overrides: Any) -> RocketState:
     """Return a valid RocketState with the given fields replaced."""
-    state = RocketState(
-        current_mass=scalar(25.0, "kg"),
-        inertia=vector((150.0, 150.0, 2.5), "kg*m**2"),
-        cg_location=vector((0.0, 0.0, -1.5), "m"),
-    )
-    return replace(state, **overrides)
+    return replace(RocketState(), **overrides)
 
 
 def test_scalar_and_vector_constructors() -> None:
     """The constructors attach the requested units to the requested magnitudes."""
     assert scalar(500.0, "kg").m_as("kg") == pytest.approx(500.0)
     assert np.allclose(vector((1.0, 2.0, 3.0), "m").m_as("m"), [1.0, 2.0, 3.0])
-    assert np.allclose(zero_vector("m/s").m_as("m/s"), np.zeros(3))
+
+
+def test_matrix_constructor() -> None:
+    """The matrix constructor copies the components and attaches the units."""
+    components = np.diag((1.0, 2.0, 3.0))
+    inertia = matrix(components, "kg*m**2")
+    components[0, 0] = 5.0
+
+    assert inertia.m_as("g*m**2") == pytest.approx(1000.0 * np.diag((1.0, 2.0, 3.0)))
 
 
 def test_quantities_convert_between_units() -> None:
@@ -46,16 +57,16 @@ def test_quantities_convert_between_units() -> None:
     ("factory", "field_name"),
     [
         (
-            lambda: _rocket_state(position=zero_vector("m/s")),
+            lambda: _rocket_state(position=vector((0.0, 0.0, 0.0), "m/s")),
             "RocketState.position",
         ),
         (
-            lambda: _rocket_state(current_mass=scalar(1.0, "m")),
-            "RocketState.current_mass",
-        ),
-        (
-            lambda: _rocket_state(inertia=zero_vector("kg*m")),
-            "RocketState.inertia",
+            lambda: MassProperties(
+                scalar(1.0, "kg"),
+                vector((0.0, 0.0, 0.0), "m"),
+                matrix(np.eye(3), "kg*m"),
+            ),
+            "MassProperties.inertia",
         ),
         (
             lambda: SimConfiguration(position_tolerance=scalar(1.0, "s")),
@@ -73,17 +84,16 @@ def test_quantities_convert_between_units() -> None:
                 np.zeros((2, 2, 2, 6)),
                 reference_area=scalar(1.0, "m"),
                 reference_length=scalar(1.0, "m"),
-                reference_point=zero_vector("m"),
+                reference_point=vector((0.0, 0.0, 0.0), "m"),
             ),
             "AeroTable.reference_area",
         ),
         (
             lambda: StateDerivative(
-                velocity=zero_vector("m/s"),
-                acceleration=zero_vector("m/s"),
-                angular_acceleration=zero_vector("rad/s**2"),
+                velocity=vector((0.0, 0.0, 0.0), "m/s"),
+                acceleration=vector((0.0, 0.0, 0.0), "m/s"),
+                angular_acceleration=vector((0.0, 0.0, 0.0), "rad/s**2"),
                 orientation_derivative=Quaternion(q_w=0.0),
-                mass_derivative=scalar(0.0, "kg/s"),
             ),
             "StateDerivative.acceleration",
         ),
@@ -145,3 +155,18 @@ def test_field_without_units_is_not_checked() -> None:
     instance = _UnannotatedField(scalar(1.0, "m"))
 
     assert instance.mass.check("[length]")
+
+
+@dataclass
+class _OptionalField(UnitChecked):
+    """An optional field declares its units through its annotation."""
+
+    start: Annotated[Vector | None, "m"] = None
+
+
+def test_optional_field_accepts_none_and_checks_quantities() -> None:
+    """A unit-annotated field holding None is skipped; a quantity is checked."""
+    assert _OptionalField().start is None
+    assert _OptionalField(vector((1.0, 2.0, 3.0), "m")).start is not None
+    with pytest.raises(DimensionalityError, match=re.escape("_OptionalField.start")):
+        _OptionalField(vector((1.0, 2.0, 3.0), "s"))

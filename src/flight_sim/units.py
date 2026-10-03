@@ -4,12 +4,13 @@ Pint quantities may only be combined when they originate from the same
 ``UnitRegistry``, so every module imports ``ureg`` from here rather than
 building a registry of its own.
 
-The ``scalar``/``vector``/``zero_vector`` constructors exist because Pint's own
+The ``scalar``/``vector``/``matrix`` constructors exist because Pint's own
 API is largely untyped. They are the single place where Pint's ``Any`` values
 are pinned to a concrete type, which is what lets the rest of the codebase
 type-check under strict mypy.
 """
 
+from collections.abc import Sequence
 from dataclasses import fields
 from functools import cache
 from typing import (
@@ -34,6 +35,9 @@ Scalar: TypeAlias = Quantity[float]
 
 # A three-component measurement, such as a position in metres.
 Vector: TypeAlias = Quantity[np.ndarray]
+
+# A 3x3 measurement, such as an inertia tensor in kg*m**2.
+Matrix: TypeAlias = Quantity[np.ndarray]
 
 
 @cache
@@ -81,16 +85,21 @@ def vector(components: tuple[float, float, float] | np.ndarray, units: str) -> V
     return result
 
 
-def zero_vector(units: str) -> Vector:
-    """Build a zero-valued three-dimensional vector quantity.
+def matrix(components: Sequence[Sequence[float]] | np.ndarray, units: str) -> Matrix:
+    """Build a 3x3 matrix quantity.
 
     Args:
+        components (Sequence[Sequence[float]] | np.ndarray): The three rows,
+            which are copied.
         units (str): Pint unit expression applied to every component.
 
     Returns:
-        Vector: A vector of three zeros in the given units.
+        Matrix: The components tagged with the given units.
     """
-    return vector((0.0, 0.0, 0.0), units)
+    result: Matrix = ureg.Quantity(
+        np.array(components, dtype=float), parse_units(units)
+    )
+    return result
 
 
 class _QuantityField(NamedTuple):
@@ -149,8 +158,9 @@ class UnitChecked:
     Subclasses need no ``__post_init__`` of their own.
 
     Fields without a unit annotation, such as orientations and nested
-    dataclasses, are left alone. A subclass that defines ``__post_init__``
-    must call ``super().__post_init__()`` to keep the checking.
+    dataclasses, are left alone, as are annotated fields holding None. A
+    subclass that defines ``__post_init__`` must call
+    ``super().__post_init__()`` to keep the checking.
     """
 
     def __post_init__(self) -> None:
@@ -162,8 +172,8 @@ class UnitChecked:
         """
         cls: type[Any] = type(self)
         for expected in _expected_fields(cls):
-            actual: Quantity[Any] = getattr(self, expected.name)
-            if actual.dimensionality != expected.dimensionality:
+            actual: Quantity[Any] | None = getattr(self, expected.name)
+            if actual is not None and actual.dimensionality != expected.dimensionality:
                 raise DimensionalityError(
                     actual.units,
                     expected.units,

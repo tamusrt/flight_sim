@@ -33,7 +33,7 @@ from flight_sim.descent import (
     air_at,
 )
 from flight_sim.integration import IntegrationConfiguration
-from flight_sim.units import vector, zero_vector
+from flight_sim.units import vector
 from flight_sim.utilities.dcm import body_to_world
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_state import RocketState
@@ -333,7 +333,7 @@ class _SwingDescent(_Descent):
                     state,
                     position=vector(values[:3], "m"),
                     velocity=vector(values[3:6], "m/s"),
-                    angular_velocity=zero_vector("rad/s"),
+                    angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
                     orientation=self.display_orientation(at_s, values),
                 )
             )
@@ -384,6 +384,7 @@ def simulate_swing_descent(
     config: IntegrationConfiguration,
     recovery: RecoverySystem,
     *,
+    mass_kg: float,
     swing: CanopySwing,
     max_time_s: float = 3600.0,
 ) -> SwingDescentResult:
@@ -396,9 +397,10 @@ def simulate_swing_descent(
 
     Args:
         apogee_time_s (float): Time since ignition at apogee, in seconds.
-        apogee_state (RocketState): State at apogee; its mass is kept.
+        apogee_state (RocketState): State at apogee.
         config (IntegrationConfiguration): Atmosphere, gravity and latitude.
         recovery (RecoverySystem): Canopies and body drag.
+        mass_kg (float): Mass of the rocket, which stays the same, in kg.
         swing (CanopySwing): The two-body model.
         max_time_s (float): Longest descent to simulate, in seconds.
 
@@ -420,7 +422,7 @@ def simulate_swing_descent(
         apogee_state=apogee_state,
         config=config,
         recovery=recovery,
-        mass_kg=float(apogee_state.current_mass.m_as("kg")),
+        mass_kg=mass_kg,
         latitude_rad=float(config.truth.launch_latitude.m_as("rad")),
         swing=swing,
         gusts=Gusts(swing, ground_wind),

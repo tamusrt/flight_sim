@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from ork_fixture import write_aero_csv, write_cdx, write_eng, write_ork, write_rse
@@ -23,7 +24,7 @@ _ENGINE = Path(__file__).parents[1] / "src" / "flight_sim" / "whatif" / "engine.
 
 
 @pytest.fixture(name="data")
-def fixture_data(tmp_path: Path) -> dict[str, object]:
+def fixture_data(tmp_path: Path) -> dict[str, Any]:
     """Page data built from the synthetic design."""
     return build_data(
         write_ork(tmp_path / "t.ork"),
@@ -52,7 +53,7 @@ def test_thrust_curve_is_read(tmp_path: Path) -> None:
     assert pairs[0] == [0.0, 0.0] and pairs[-1] == [4.0, 0.0]
 
 
-def test_data_holds_the_design_and_its_references(data: dict[str, object]) -> None:
+def test_data_holds_the_design_and_its_references(data: dict[str, Any]) -> None:
     """Data holds the design and its references."""
     assert data["defaultSim"] == "calm"
     base = data["base"]
@@ -66,7 +67,7 @@ def test_data_holds_the_design_and_its_references(data: dict[str, object]) -> No
     json.dumps(data)  # must serialise
 
 
-def test_data_holds_the_descent_and_the_6dof_landing(data: dict[str, object]) -> None:
+def test_data_holds_the_descent_and_the_6dof_landing(data: dict[str, Any]) -> None:
     """The original descent is in the data, and the 6-DOF run ends on the ground."""
     recovery = data["base"]["recovery"]
     assert "Sol Invictus" in recovery["label"] and recovery["bodyCdA"] > 0.0
@@ -147,7 +148,7 @@ def test_rse_motor_is_flown_and_described(tmp_path: Path) -> None:
 
 
 def test_page_is_one_file_with_the_data_and_engine(
-    tmp_path: Path, data: dict[str, object]
+    tmp_path: Path, data: dict[str, Any]
 ) -> None:
     """Page is one file with the data and engine."""
     html = write_page(data, tmp_path / "out").read_text(encoding="utf-8")
@@ -161,7 +162,7 @@ def test_page_is_one_file_with_the_data_and_engine(
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_engine_flies_the_design_and_responds_to_geometry(
-    tmp_path: Path, data: dict[str, object]
+    tmp_path: Path, data: dict[str, Any]
 ) -> None:
     """Engine flies the design and responds to geometry."""
     (tmp_path / "data.json").write_text(json.dumps(data), encoding="utf-8")

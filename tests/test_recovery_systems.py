@@ -18,7 +18,9 @@ from flight_sim.recovery_systems import (
     ReefedSingleSeparation,
     SingleDeploy,
 )
-from flight_sim.units import scalar, vector
+from flight_sim.units import vector
+from flight_sim.vehicle.mass_properties import MassPropertiesSI
+from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 from flight_sim.visualize import TelemetryLog
 
@@ -27,6 +29,11 @@ _CONFIG = IntegrationConfiguration(
     truth=TruthConfiguration(gravity=ConstantGravity(_G))
 )
 _COMPUTER = FlightComputer(apogee_delay_s=1.0, lockout_s=5.0, main_altitude_m=200.0)
+# The 40 kg rocket the ballistic flights stand for, its CG 3 m aft of the nose tip
+_APOGEE_MASS = MassPropertiesSI(
+    40.0, np.array([-3.0, 0.0, 0.0]), np.diag((0.2, 80.0, 80.0))
+)
+
 _DROGUE = Parachute("drogue", diameter_m=0.9, drag_coefficient=0.8)
 _MAIN = Parachute("main", diameter_m=2.4, drag_coefficient=2.2, deploy_altitude_m=100.0)
 _CHARGE = BlackPowderCharge(2.0, 0.12, 0.2).ejection(
@@ -48,9 +55,6 @@ def _ballistic(apogee_s: float) -> list[tuple[float, RocketState]]:
             (
                 float(t),
                 RocketState(
-                    current_mass=scalar(40.0, "kg"),
-                    inertia=vector((0.2, 80.0, 80.0), "kg*m**2"),
-                    cg_location=vector((-3.0, 0.0, 0.0), "m"),
                     position=vector(
                         (_G * apogee_s * t - 0.5 * _G * t**2, 0.0, 0.0), "m"
                     ),
@@ -99,9 +103,15 @@ def test_single_deploy_flies_as_plan_recovery_does() -> None:
     recovery = RecoverySystem((Parachute("main", 3.0, 1.5),), body_drag_area_m2=0.01)
     flight = _ballistic(12.0)
     scheme = SingleDeploy(recovery, _COMPUTER, EJECTION_CHARGE)
-    plan = scheme.plan(flight, _CONFIG)
+    plan = scheme.plan(flight, _CONFIG, _APOGEE_MASS)
     expected = plan_recovery(
-        flight, _CONFIG, recovery, _COMPUTER, EJECTION_CHARGE, swing=scheme.swing(3.0)
+        flight,
+        _CONFIG,
+        recovery,
+        _COMPUTER,
+        EJECTION_CHARGE,
+        mass_kg=_APOGEE_MASS.mass,
+        swing=scheme.swing(3.0),
     )
     assert plan.fire_s == expected.fire_s
     assert plan.descent.times_s[-1] == expected.descent.times_s[-1]
@@ -118,7 +128,7 @@ def test_dual_deploy_releases_the_drogue_then_the_main_on_a_second_separation() 
         _CHARGE,
         main_delay_s=1.0,
     )
-    plan = scheme.plan(_ballistic(12.0), _CONFIG)
+    plan = scheme.plan(_ballistic(12.0), _CONFIG, _APOGEE_MASS)
     drogue, main = plan.descent.deployments
     assert drogue.name == "drogue" and main.name == "main"
     assert drogue.time_s == pytest.approx(plan.line_stretch_s, abs=0.2)
@@ -151,7 +161,7 @@ def test_drogueless_falls_until_the_main_separation() -> None:
         _CHARGE,
         main_delay_s=0.5,
     )
-    plan = scheme.plan(_ballistic(12.0), _CONFIG)
+    plan = scheme.plan(_ballistic(12.0), _CONFIG, _APOGEE_MASS)
     assert not plan.separation.separated and math.isinf(plan.line_stretch_s)
     assert [d.name for d in plan.descent.deployments] == ["main"]
     assert plan.main_line_stretch_s is not None
@@ -184,5 +194,5 @@ def test_each_class_refuses_the_wrong_canopies_and_charges(build: object) -> Non
         build()  # type: ignore[operator]
 
 
-def _log_properties():  # type: ignore[no-untyped-def]
+def _log_properties() -> RocketProperties:
     return get_default_properties()

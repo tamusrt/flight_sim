@@ -52,6 +52,7 @@ from flight_sim.recovery_motion import (
     NoseSwing,
     Separation,
 )
+from flight_sim.vehicle.mass_properties import MassPropertiesSI
 from flight_sim.visualize import RecoveryFrame
 
 _KG_PER_LB = 0.45359237
@@ -157,9 +158,19 @@ class RecoveryScheme(ABC):
 
     @abstractmethod
     def plan(
-        self, flight: list[Sample], config: IntegrationConfiguration
+        self,
+        flight: list[Sample],
+        config: IntegrationConfiguration,
+        apogee_mass: MassPropertiesSI,
     ) -> RecoveryPlan:
-        """Fly the descent with the events where this scheme puts them."""
+        """Fly the descent with the events where this scheme puts them.
+
+        Args:
+            flight (list[Sample]): The ascent, ending at the true apogee.
+            config (IntegrationConfiguration): Atmosphere and gravity.
+            apogee_mass (MassPropertiesSI): The rocket's mass properties after
+                the burn, which stay the same through the descent.
+        """
 
     @abstractmethod
     def frames(self, plan: RecoveryPlan) -> Iterator[tuple[float, RecoveryFrame]]:
@@ -219,18 +230,21 @@ class SingleSeparation(RecoveryScheme):
         )
 
     def plan(
-        self, flight: list[Sample], config: IntegrationConfiguration
+        self,
+        flight: list[Sample],
+        config: IntegrationConfiguration,
+        apogee_mass: MassPropertiesSI,
     ) -> RecoveryPlan:
         """Fly the descent as ``plan_recovery`` does, with this scheme's parts."""
         assert self.apogee_charge is not None
-        apogee = flight[-1][1]
         return plan_recovery(
             flight,
             config,
             self.recovery,
             self.computer,
             self.apogee_charge,
-            swing=self.swing(-float(apogee.cg_location.m_as("m")[0])),
+            mass_kg=apogee_mass.mass,
+            swing=self.swing(-float(apogee_mass.cg_location[0])),
         )
 
     def frames(self, plan: RecoveryPlan) -> Iterator[tuple[float, RecoveryFrame]]:
@@ -327,7 +341,11 @@ class _MainSeparation(RecoveryScheme):
         raise NotImplementedError
 
     def _apogee_event(
-        self, coasting: list[Sample], config: IntegrationConfiguration, detected: float
+        self,
+        coasting: list[Sample],
+        config: IntegrationConfiguration,
+        detected: float,
+        mass_kg: float,
     ) -> tuple[float, Separation, float]:
         """Charge time, separation and line stretch of the apogee event."""
         fire = detected + self.computer.apogee_delay_s
@@ -337,7 +355,9 @@ class _MainSeparation(RecoveryScheme):
                 Separation(False, 0.0, math.inf, 0.0, 0.0, [0.0], [0.0]),
                 math.inf,
             )
-        separation = _eject(_state_at(coasting, fire), config, self.apogee_charge)
+        separation = _eject(
+            _state_at(coasting, fire), config, self.apogee_charge, mass_kg
+        )
         return fire, separation, fire + separation.line_stretch_s
 
     def _canopies_at(
@@ -352,17 +372,22 @@ class _MainSeparation(RecoveryScheme):
         return replace(self.recovery, parachutes=tuple(released))
 
     def plan(  # pylint: disable=too-many-locals
-        self, flight: list[Sample], config: IntegrationConfiguration
+        self,
+        flight: list[Sample],
+        config: IntegrationConfiguration,
+        apogee_mass: MassPropertiesSI,
     ) -> RecoveryPlan:
         """Fly the descent: apogee event, then the main on its own separation."""
         assert self.main_charge is not None
         apogee_time, apogee_state = flight[-1]
         computer = self.computer
+        mass_kg = apogee_mass.mass
         coast = simulate_descent(
             apogee_time,
             apogee_state,
             config,
             replace(self.recovery, parachutes=()),
+            mass_kg=mass_kg,
             max_time_s=computer.apogee_delay_s + 30.0,
         )
         coasting = flight + list(zip(coast.times_s, coast.states, strict=True))
@@ -370,12 +395,14 @@ class _MainSeparation(RecoveryScheme):
         detected = (
             detection.detected_s if detection.detected_s is not None else apogee_time
         )
-        fire, separation, stretch = self._apogee_event(coasting, config, detected)
+        fire, separation, stretch = self._apogee_event(
+            coasting, config, detected, mass_kg
+        )
 
         def fly(release_altitude_m: float) -> tuple[RecoverySystem, DescentResult]:
             recovery = self._canopies_at(stretch - apogee_time, release_altitude_m)
             return recovery, simulate_descent(
-                apogee_time, apogee_state, config, recovery
+                apogee_time, apogee_state, config, recovery, mass_kg=mass_kg
             )
 
         _, held = fly(_NEVER_M)
@@ -391,7 +418,9 @@ class _MainSeparation(RecoveryScheme):
         if command is not None:
             main_fire = command + self.main_delay_s
             index = int(np.argmin(np.abs(np.array(held.times_s) - main_fire)))
-            main_separation = _eject(held.states[index], config, self.main_charge)
+            main_separation = _eject(
+                held.states[index], config, self.main_charge, mass_kg
+            )
             main_stretch = main_fire + main_separation.line_stretch_s
             release = float(np.interp(main_stretch, held.times_s, altitudes))
         recovery, descent = fly(release)

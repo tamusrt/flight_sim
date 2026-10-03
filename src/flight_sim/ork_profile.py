@@ -38,7 +38,7 @@ from flight_sim.ork import (
 from flight_sim.recovery_extension import EJECTION_CHARGE, FLIGHT_COMPUTER
 from flight_sim.recovery_systems import ReefedSingleSeparation
 from flight_sim.units import scalar
-from flight_sim.vehicle.mass_properties import MassPropertiesTable
+from flight_sim.vehicle.mass_table import MassPropertiesTable
 from flight_sim.vehicle.rocket_properties import TrapezoidFinSet
 
 _LAPSE_K_PER_M = 0.0065
@@ -146,7 +146,8 @@ def profile_from_ork(  # pylint: disable=too-many-locals
     sim_name = sim if sim is not None else next(iter(ork.sims))
     saved = ork.sims[sim_name]
     cond = saved.conditions
-    motor = motor or motor_with_file(saved_motor(ork, sim_name), load_motor(motor_eng))
+    motor_file = load_motor(motor_eng)
+    motor = motor or motor_with_file(saved_motor(ork, sim_name), motor_file)
     roll_ratio = float(saved.series["Rotational moment of inertia"][0]) / float(
         saved.series["Mass"][0]
     )
@@ -156,7 +157,7 @@ def profile_from_ork(  # pylint: disable=too-many-locals
         name=name or ork.name,
         aero_file=aero_csv,
         motor_file=_sim_eng(motor_eng),
-        propellant_mass_kg=motor.propellant_kg,
+        motor_diameter_m=motor_file.diameter_mm / 1000.0,
         mass_properties=table_from(ork, motor, roll_ratio),
         reference_area_m2=ork.reference_area_m2,
         reference_length_m=ork.reference_diameter_m,

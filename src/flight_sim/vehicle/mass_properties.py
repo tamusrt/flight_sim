@@ -1,46 +1,79 @@
-"""Mass, centre of gravity and inertia of the vehicle through the burn."""
+"""Mass, center of gravity and inertia of the rocket's parts."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import reduce
+from typing import Annotated, NamedTuple
 
 import numpy as np
 
-from flight_sim.units import vector
-from flight_sim.vehicle.rocket_state import RocketState
+from flight_sim.units import Matrix, Scalar, UnitChecked, Vector
+
+_IDENTITY = np.eye(3)
+
+
+class MassPropertiesSI(NamedTuple):
+    """Mass properties of a part, as plain SI values."""
+
+    mass: float  # kg
+    cg_location: np.ndarray  # m, from the nose tip in body axes, so aft is -X
+    inertia: np.ndarray  # kg*m**2, 3x3 about the part's own CG in body axes
 
 
 @dataclass(frozen=True)
-class MassPropertiesTable:
-    """Centre of gravity and inertia at ignition and at burnout.
+class MassProperties(UnitChecked):
+    """Mass, CG and inertia of a part of the rocket."""
 
-    Between the two, both are interpolated linearly in the mass, which
-    holds while the propellant burns down roughly uniformly in place.
-    Lengths are in metres from the nose tip along the body X axis (negative
-    aft), inertias are the body-axis diagonal in kg*m**2.
-    """
+    mass: Annotated[Scalar, "kg"]
 
-    launch_mass_kg: float
-    launch_cg_m: float
-    launch_inertia_kg_m2: tuple[float, float, float]
-    burnout_mass_kg: float
-    burnout_cg_m: float
-    burnout_inertia_kg_m2: tuple[float, float, float]
+    # From the nose tip in body axes, so aft is -X
+    cg_location: Annotated[Vector, "m"]
 
-    def burned_fraction(self, mass_kg: float) -> float:
-        """Return the share of the propellant burned at a mass, from 0 to 1."""
-        span = self.launch_mass_kg - self.burnout_mass_kg
-        if span <= 0.0:
-            return 1.0
-        return float(np.clip((self.launch_mass_kg - mass_kg) / span, 0.0, 1.0))
+    # About the part's own CG, in body axes
+    inertia: Annotated[Matrix, "kg*m**2"]
 
-    def apply(self, state: RocketState) -> None:
-        """Set the state's CG and inertia from its current mass, in place.
+    si: MassPropertiesSI = field(init=False, repr=False, compare=False)
 
-        Args:
-            state (RocketState): State to update.
+    def __post_init__(self) -> None:
+        """Check the inertia and cache the values in SI units.
+
+        Raises:
+            ValueError: If the inertia is not symmetric.
         """
-        fraction = self.burned_fraction(float(state.current_mass.m_as("kg")))
-        cg = self.launch_cg_m + fraction * (self.burnout_cg_m - self.launch_cg_m)
-        launch = np.asarray(self.launch_inertia_kg_m2)
-        burnout = np.asarray(self.burnout_inertia_kg_m2)
-        state.cg_location = vector((cg, 0.0, 0.0), "m")
-        state.inertia = vector(launch + fraction * (burnout - launch), "kg*m**2")
+        super().__post_init__()
+        inertia = self.inertia.m_as("kg*m**2")
+        if not np.allclose(inertia, inertia.T):
+            raise ValueError(f"Inertia must be symmetric, got {inertia.tolist()}")
+        si = MassPropertiesSI(
+            float(self.mass.m_as("kg")), self.cg_location.m_as("m"), inertia
+        )
+        object.__setattr__(self, "si", si)
+
+
+def _combine_pair(a: MassPropertiesSI, b: MassPropertiesSI) -> MassPropertiesSI:
+    """Combine two parts, using their reduced mass for the parallel-axis term."""
+    mass = a.mass + b.mass
+    offset = a.cg_location - b.cg_location
+    inertia = a.inertia + b.inertia
+    inertia += (a.mass * b.mass / mass) * (
+        float(offset @ offset) * _IDENTITY - np.outer(offset, offset)
+    )
+    return MassPropertiesSI(mass, b.cg_location + (a.mass / mass) * offset, inertia)
+
+
+def combine(*parts: MassPropertiesSI) -> MassPropertiesSI:
+    """Combine parts into one body by the parallel-axis theorem.
+
+    Args:
+        *parts (MassPropertiesSI): Parts in the same body axes.
+
+    Returns:
+        MassPropertiesSI: Total mass, mass-weighted CG, and inertia about
+            that CG.
+
+    Raises:
+        ValueError: If the total mass is not positive.
+    """
+    mass = sum(part.mass for part in parts)
+    if not mass > 0.0:
+        raise ValueError(f"Total mass must be positive, got {mass} kg")
+    return reduce(_combine_pair, parts)

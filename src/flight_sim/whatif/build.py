@@ -25,16 +25,15 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 import numpy as np
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 
 from flight_sim.__main__ import (
-    apply_mass_properties,
     get_default_config,
-    get_default_properties,
     get_launch_state,
+    get_profile_properties,
 )
 from flight_sim.descent import DescentResult, ReefedParachute, simulate_descent
-from flight_sim.events import APOGEE, rail_exit
+from flight_sim.events import APOGEE
 from flight_sim.integration import adaptive_step
 from flight_sim.motor_file import load_motor
 from flight_sim.ork import OrkRocket, SavedSim, load_ork, saved_motor
@@ -215,10 +214,10 @@ def _landing(descent: DescentResult, mass_kg: float) -> dict[str, Any]:
 
 def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
     """Fly the 6-DOF sim to apogee, then down under the descent (coarse record)."""
-    properties = get_default_properties(profile)
+    properties = get_profile_properties(profile)
     state = get_launch_state(profile)
     config = get_default_config(profile)
-    events = (rail_exit(profile.rail), APOGEE)
+    events = (APOGEE,)
     dt = scalar(0.01, "s")
     time = 0.0
     rows = []
@@ -233,20 +232,19 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
             time, state, properties, config, dt, events=events
         )
         time += float(taken.m_as("s"))
-        apply_mass_properties(state, profile)
         if hit is APOGEE:
             rows.append(_row(time, state))
             break
     data = np.array(rows)
-    top = int(data[:, 1].argmax())
+    top = int(np.argmax(data[:, 1]))
     result: dict[str, Any] = {
         "apogee": round(float(data[top, 1]), 1),
         "apogeeT": round(float(data[top, 0]), 2),
         "vmax": round(float(data[:, 2].max()), 1),
     }
     if profile.scheme is not None and hit is APOGEE:
-        mass = float(state.current_mass.m_as("kg"))
-        descent = simulate_descent(time, state, config, profile.recovery)
+        mass = properties.mass_properties(time).mass
+        descent = simulate_descent(time, state, config, profile.recovery, mass_kg=mass)
         # one sample a second of the way down (the descent is sampled every 0.1 s)
         rows += [
             _row(t, s)
