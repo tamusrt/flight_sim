@@ -72,3 +72,21 @@ def test_recovery_frame_is_logged_beside_the_state(
     assert log.rows["nose_dir"][1] == [0.0, 0.0, 1.0]
     assert log.rows["swing"] == [0.0, 12.0]
     assert log.rows["drag"] == [1.0, 0.5]
+
+
+def test_viewer_page_names_the_openrocket_run_to_load(tmp_path: Path) -> None:
+    """With an OpenRocket simulation named, the page offers to load its path."""
+    log = TelemetryLog(get_profile_properties(INVICTUS), IntegrationConfiguration())
+    log.record(0.0, get_default_state())
+    source = {"ork": "2027_OR.ork", "sim": "average"}
+
+    with_or = write_viewer(
+        log, tmp_path / "a.html", open_browser=False, openrocket=source
+    )
+    without = write_viewer(log, tmp_path / "b.html", open_browser=False)
+
+    text = with_or.read_text(encoding="utf-8")
+    start = text.index("window.OPENROCKET_SOURCE=") + len("window.OPENROCKET_SOURCE=")
+    assert json.loads(text[start : text.index(";</script>", start)]) == source
+    assert "window.OPENROCKET_SOURCE=" not in without.read_text(encoding="utf-8")
+    assert 'id="orBtn"' in text

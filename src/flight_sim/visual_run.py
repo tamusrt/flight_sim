@@ -103,7 +103,19 @@ def main() -> None:
         print(f"Loaded real flight from {real_path}")
     elif args.real is not None:
         parser.error(f"flight log not found: {args.real}")
-    written = write_viewer(log, args.output, open_browser=not args.no_open, real=real)
+    # the OpenRocket run of the same simulation, which the dynamics site can show
+    openrocket = (
+        {"ork": os.path.basename(args.ork), "sim": args.ork_sim}
+        if args.ork is not None and args.ork_sim is not None
+        else None
+    )
+    written = write_viewer(
+        log,
+        args.output,
+        open_browser=not args.no_open,
+        real=real,
+        openrocket=openrocket,
+    )
     print(f"Viewer written to {written}")
 
 

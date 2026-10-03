@@ -35,6 +35,7 @@ h1,h2{margin:0;font-weight:500}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button.on{background:var(--accent);color:var(--accent-fg)}
 .btn{border:1px solid var(--line)}
+.btn.warnbtn{border-color:#d9a56f;color:#d9a56f}
 .chip{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
 .chip input{accent-color:var(--accent);margin:0}
 .fld{display:inline-flex;align-items:center;gap:6px}
@@ -122,6 +123,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <label class="chip" id="conjWrap" hidden title="Use the conjugate of the attitude quaternion in the loaded log. Try this if the rocket turns the wrong way."><input type="checkbox" id="conj">Conjugate q</label>
       <label class="btn" title="Replay a flight log (JSON) instead of the simulation">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
       <label class="btn" id="realBtn" hidden>Showing simulation</label>
+      <label class="btn" id="orBtn" hidden title="Add OpenRocket's simulated flight path for the same launch condition, from the latest results on the History tab">Load OpenRocket</label>
     </div>
   </header>
 
@@ -144,6 +146,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <span class="lg"><b class="sym">◐</b>CG (center of gravity) <b class="sym">◎</b>CP (center of pressure)</span>
       <span class="lg"><i style="--c:var(--air)"></i>Mach cone / vapor</span>
       <span class="lg"><i style="--c:var(--phi)"></i>Shock cords and parachute</span>
+      <span class="lg" id="orLegend" hidden><i style="--c:#e0606a"></i>OpenRocket flight path</span>
     </div>
   </section>
 
@@ -1181,6 +1184,57 @@ tNow=-2; prevT=tNow; /* opens 2 s before launch */
 setView('follow'); cam.dist=cam.distT; /* and starts at its framing, with no zoom in from far away */
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
 window.__viewer={set:function(t){tNow=t;prevT=t},view:setView,cam:cam,camera:camera,rocketLength:ROCKET_LEN,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
+/* ---------- OpenRocket's flight path for the same launch condition ----------
+   On the dynamics site the History tab keeps OpenRocket's newest run of every simulation (data.json lists them,
+   flights/<id>.js holds the time series). Loading it here, rather than copying it in when this page is built,
+   means the path is always OpenRocket's latest run: a new .ork push updates it without rebuilding this page. */
+(function(){
+  var src=window.OPENROCKET_SOURCE, btn=$('orBtn'); if(!src||!btn) return;
+  btn.hidden=false;
+  var pts=null, lb=null, state='idle';
+  function setText(t,title){ btn.textContent=t; if(title) btn.title=title; }
+  function siteRoot(){ var p=location.pathname, i=p.indexOf('/predictions/'); return i<0?null:p.slice(0,i+1); }
+  function fail(msg){ state='idle'; setText('Load OpenRocket',msg); btn.classList.add('warnbtn'); console.warn('OpenRocket path: '+msg);
+    var n=$('scaleNote'), was=n.textContent; n.textContent=msg; setTimeout(function(){ if(n.textContent===msg) n.textContent=was; },6000); }
+  function draw(v){
+    var c=v.cols||{}, alt=c.altitude, ex=c.position_x, no=c.position_y;
+    if(!alt||!ex||!no) return fail('OpenRocket\'s results for this condition have no position data.');
+    var a=[], top=0, ti=0;
+    for(var i=0;i<alt.length;i++){ if(alt[i]==null||ex[i]==null||no[i]==null) continue; a.push(alt[i],ex[i],no[i]); if(alt[i]>top){ top=alt[i]; ti=a.length/3-1; } }
+    if(a.length<6) return fail('OpenRocket\'s results for this condition have no flight path.');
+    var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(a),3));
+    pts=new THREE.Points(g,new THREE.PointsMaterial({color:0xe0606a,size:3.5,sizeAttenuation:false,transparent:true,opacity:.85}));
+    pts.frustumCulled=false; G.trail.add(pts);
+    lb=makeLabel('OPENROCKET APOGEE','#e0606a',G.trail); lb.position.set(a[3*ti],a[3*ti+1],a[3*ti+2]);
+    state='on'; btn.classList.remove('warnbtn');
+    setText('Hide OpenRocket','OpenRocket path from '+src.ork+' · '+src.sim+(v.short?' (design commit '+v.short+')':'')+'. Click to hide.');
+    $('orLegend').hidden=false;
+  }
+  function load(){
+    var root=siteRoot();
+    if(!root) return fail('OpenRocket results are only available on the dynamics site, not in a local copy of this page.');
+    state='loading'; setText('Loading OpenRocket…');
+    fetch(root+'data.json',{cache:'no-store'}).then(function(r){ if(!r.ok) throw new Error('the History data is missing ('+r.status+')'); return r.json(); })
+    .then(function(data){
+      var design=Object.keys(data.designs||{}).filter(function(k){ return k.split('/').pop()===src.ork; })[0];
+      var id=design&&(design+'|'+src.sim), script=id&&(data.flights||{})[id];
+      if(!script) throw new Error('the History tab has no OpenRocket run of "'+src.sim+'" in '+src.ork);
+      return new Promise(function(ok,bad){
+        window.__flight=function(fid,payload){ if(fid===id) ok(payload); };
+        var el=document.createElement('script'); el.src=root+script+'?v='+encodeURIComponent(data.generated||'');
+        el.onerror=function(){ bad(new Error('could not load '+script)); }; document.head.appendChild(el);
+      });
+    })
+    .then(function(payload){ var v=payload&&payload.versions&&payload.versions[0]; if(!v) throw new Error('no OpenRocket flight data'); draw(v); })
+    .catch(function(e){ fail('Could not load OpenRocket: '+e.message+'.'); });
+  }
+  btn.onclick=function(){
+    if(state==='loading') return;
+    if(!pts) return load();
+    pts.visible=lb.visible=!pts.visible; $('orLegend').hidden=!pts.visible;
+    setText(pts.visible?'Hide OpenRocket':'Show OpenRocket');
+  };
+})();
 requestAnimationFrame(tick);
 })();
 </script>

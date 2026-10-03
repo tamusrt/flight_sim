@@ -193,6 +193,7 @@ def write_viewer(
     output: str | Path = "flight.html",
     open_browser: bool = True,
     real: dict[str, Any] | None = None,
+    openrocket: dict[str, str] | None = None,
 ) -> Path:
     """Write a self-contained viewer page for the logged flight and open it.
 
@@ -202,6 +203,9 @@ def write_viewer(
         open_browser (bool): Whether to open the page.
         real (dict[str, Any] | None): Telemetry of the real flight; when given
             the viewer gets a button that toggles between it and the sim.
+        openrocket (dict[str, str] | None): ``{"ork": file name, "sim": name}``
+            of the OpenRocket simulation to offer next to the flight; on the
+            dynamics site the viewer loads its path from the History tab's data.
     """
     scripts = (
         f"<script>window.TELEMETRY={log.to_json()};"
@@ -212,6 +216,9 @@ def write_viewer(
             f"<script>window.REAL_TELEMETRY={json.dumps(real)};"
             "window.REAL_TELEMETRY_NAME='real flight';</script>"
         )
+    if openrocket is not None:
+        source = json.dumps(openrocket)
+        scripts += f"<script>window.OPENROCKET_SOURCE={source};</script>"
     page = _TEMPLATE.read_text(encoding="utf-8").replace("<!--TELEMETRY-->", scripts)
     output = Path(output).resolve()
     output.write_text(_HEAD + page + "</body></html>", encoding="utf-8")
