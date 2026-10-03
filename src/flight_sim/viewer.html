@@ -340,7 +340,7 @@ var HALO_TEX=(function(){ var w=256,h=64,c=document.createElement('canvas'); c.w
 var halos=[];
 function addHalo(sec){
   var box=new THREE.Box3().setFromObject(sec), r=Math.max(Math.abs(box.min.y),Math.abs(box.max.y),Math.abs(box.min.z),Math.abs(box.max.z));
-  var m=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({map:HALO_TEX,color:0xffd9a8,transparent:true,opacity:0.6,
+  var m=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({map:HALO_TEX,color:0xffd9a8,transparent:true,opacity:0.12,
     depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide}));
   m.renderOrder=-1; m.raycast=function(){}; m.userData={x0:box.min.x,x1:box.max.x,r:r}; sec.add(m); halos.push(m);
 }
