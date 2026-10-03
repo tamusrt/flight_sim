@@ -40,6 +40,7 @@ from flight_sim.motor_file import load_motor
 from flight_sim.ork import OrkRocket, SavedSim, load_ork, saved_motor
 from flight_sim.ork_profile import motor_with_file, pad_pressure_pa, profile_from_ork
 from flight_sim.units import scalar
+from flight_sim.whatif.history import from_history, from_saved, load_history
 
 _HERE = Path(__file__).parent
 _ALPHAS = (0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30)
@@ -181,22 +182,6 @@ def _preset(sim: SavedSim) -> dict[str, float]:
     }
 
 
-def _or_series(sim: SavedSim) -> dict[str, Any]:
-    s = sim.series
-    t = s["Time"]
-    keep = (t <= sim.summary["timetoapogee"]) & (np.arange(len(t)) % 10 == 0)
-    cal = s["Stability margin calibers"]
-    return {
-        "summary": sim.summary,
-        "t": [round(float(v), 2) for v in t[keep]],
-        "alt": [round(float(v), 1) for v in s["Altitude"][keep]],
-        "v": [round(float(v), 1) for v in s["Total velocity"][keep]],
-        "mach": [round(float(v), 3) for v in s["Mach number"][keep]],
-        "acc": [round(float(v) / 9.80665, 2) for v in s["Total acceleration"][keep]],
-        "margin": [None if np.isnan(v) else round(float(v), 2) for v in cal[keep]],
-    }
-
-
 def _row(time: float, state: Any) -> tuple[float, float, float]:
     """Time, height above the pad and speed of one sample."""
     return (
@@ -310,7 +295,7 @@ def _recovery_data(profile: Any) -> dict[str, Any] | None:
     }
 
 
-def build_data(  # pylint: disable=too-many-locals
+def build_data(  # pylint: disable=too-many-locals,too-many-arguments
     ork_path: Path,
     aero_csv: Path,
     motor_path: Path,
@@ -319,8 +304,14 @@ def build_data(  # pylint: disable=too-many-locals
     *,
     rasaero: Path | None = None,
     motor_note: str = "",
+    history_site: Path | None = None,
+    history_motor: str = "",
 ) -> dict[str, Any]:
-    """Everything the page needs, as one JSON-able dict."""
+    """Everything the page needs, as one JSON-able dict.
+
+    OpenRocket's numbers come from the History site in ``history_site`` when it has
+    this design, and otherwise from the results saved in the design file.
+    """
 
     ork = load_ork(ork_path)
     default_sim = sim if sim in ork.sims else next(iter(ork.sims))
@@ -336,6 +327,11 @@ def build_data(  # pylint: disable=too-many-locals
     six = {n: _six_dof(profile) for n, profile in profiles.items()}
     base = _base(ork, aero, motor, motor_file.thrust)
     base["recovery"] = _recovery_data(profiles[default_sim])
+    history = {} if history_site is None else load_history(history_site, ork_path.name)
+    openrocket = {
+        n: (from_history(history[n]) if n in history else None) or from_saved(s)
+        for n, s in ork.sims.items()
+    }
     return {
         "name": name,
         "design": ork.name,
@@ -362,7 +358,8 @@ def build_data(  # pylint: disable=too-many-locals
         "defaultSim": default_sim,
         "base": base,
         "presets": sims,
-        "openrocket": {n: _or_series(s) for n, s in ork.sims.items()},
+        "openrocket": openrocket,
+        "openrocketMotor": history_motor,
         "sixdof": six,
     }
 
@@ -405,6 +402,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--sim", default=None, help="saved OpenRocket sim for the default launch"
     )
+    parser.add_argument(
+        "--history-site",
+        default=None,
+        help="the History site folder (data.json, flights/) to take OpenRocket from",
+    )
+    parser.add_argument(
+        "--history-motor",
+        default="",
+        help="motor file the History runs use (warns when Jarvis flies another)",
+    )
     parser.add_argument("--no-viewer", action="store_true")
     parser.add_argument(
         "--rasaero",
@@ -423,6 +430,8 @@ def main(argv: list[str] | None = None) -> None:
         args.sim,
         rasaero=None if args.rasaero is None else Path(args.rasaero),
         motor_note=args.motor_note,
+        history_site=None if args.history_site is None else Path(args.history_site),
+        history_motor=args.history_motor,
     )
     print(f"predictions page: {write_page(data, out)}")
     if not args.no_viewer:

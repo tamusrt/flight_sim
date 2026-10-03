@@ -296,7 +296,7 @@
     let t = 0, x = 0, y = 0, vx = 0, vy = 0, th = tilt0, om = 0;
     let onRail = true, railS = 0;
     const out = { t: [], alt: [], y: [], v: [], vup: [], mach: [], acc: [], aoa: [], marginCal: [], q: [], cd: [], mass: [] };
-    const sum = { apogee: 0, apogeeT: 0, vmax: 0, machMax: 0, accMax: 0, qMax: 0, railV: NaN, railT: NaN, marginRail: NaN, marginMin: Infinity,
+    const sum = { apogee: 0, apogeeT: 0, vmax: 0, machMax: 0, accMax: 0, qMax: 0, railV: NaN, railT: NaN, marginRail: NaN, marginMin: Infinity, marginLo: Infinity, marginHi: -Infinity,
       burnoutAlt: NaN, burnoutV: NaN, drift: 0, aoaMax: 0, marginBurnout: NaN };
     const dt = opt.dt || 0.01, rec = opt.record === false ? 0 : (opt.every || 0.1);
     let nextRec = 0, ax = 0, ay = 0;
@@ -372,6 +372,7 @@
       if (aKin > sum.accMax && t > 0.2) sum.accMax = aKin;
       if (e.q > sum.qMax) sum.qMax = e.q;
       if (mrg < sum.marginMin) sum.marginMin = mrg;
+      if (e.V > 30) { if (mrg < sum.marginLo) sum.marginLo = mrg; if (mrg > sum.marginHi) sum.marginHi = mrg; }   // the History page's window: moving faster than 30 m/s
       if (e.aoa * 57.2958 > sum.aoaMax && e.V > 30) sum.aoaMax = e.aoa * 57.2958;
       if (isNaN(sum.burnoutAlt) && t >= burnEnd) { sum.burnoutAlt = x; sum.burnoutV = Math.hypot(vx, vy); sum.marginBurnout = mrg; }
       if (rec && t >= nextRec) {
@@ -384,6 +385,7 @@
       if (vx < 0 && t > 1) break;
     }
     out.nAscent = out.t.length;
+    if (sum.marginLo === Infinity) { sum.marginLo = sum.marginMin; sum.marginHi = sum.marginMin; }
     if (opt.descent !== false && base.recovery && vx < 0 && sum.apogee > 0) {
       const d = descend(base.recovery, massAt(geo, 1).m, cond, wy, { t, x, y, vx, vy }, opt.descentEvery || 0.5, rec > 0);
       out.d = d.out; sum.land = d.sum;

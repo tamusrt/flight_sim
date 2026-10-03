@@ -59,7 +59,9 @@ def test_data_holds_the_design_and_its_references(data: dict[str, object]) -> No
     assert base["fins"]["count"] == 4
     assert base["motor"]["prop"] == pytest.approx(4.0)
     assert data["presets"]["calm"]["railAngleDeg"] == pytest.approx(5.0)
-    assert data["openrocket"]["calm"]["summary"]["maxaltitude"] == pytest.approx(3000.0)
+    saved = data["openrocket"]["calm"]
+    assert saved["source"] == "file" and saved["m"]["apogee"] == pytest.approx(3000.0)
+    assert saved["m"]["railV"] == pytest.approx(25.0) and saved["t"][0] == 0.0
     assert data["sixdof"]["calm"]["apogee"] > 100.0
     json.dumps(data)  # must serialise
 
@@ -154,6 +156,7 @@ def test_page_is_one_file_with_the_data_and_engine(
     assert "WhatIf" in html and "/*ENGINE*/" not in html
     assert 'type="range"' not in html and "'range'" not in html  # no sliders
     assert 'id="updatecsv"' in html and "/api/status" in html
+    assert 'id="weather"' in html and "climbOnly" in html  # apogee in every weather
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
@@ -185,7 +188,7 @@ b.refGeometry = W.applyChange(b, wide);  // a table made for bigger fins than th
 const lighter = W.fly(b, c0, cond).sum.apogee;
 delete b.refGeometry;
 console.log(JSON.stringify({{base, big: bigOut, lighter, land: full.sum.land, lastAlt: full.out.d.alt[full.out.d.alt.length - 1],
-  ascent: full.out.nAscent, nT: full.out.t.length, noLand: none.sum.land === undefined, noD: none.out.d === undefined,
+  window: [base.marginMin, base.marginLo, base.marginHi], ascent: full.out.nAscent, nT: full.out.t.length, noLand: none.sum.land === undefined, noD: none.out.d === undefined, noApogee: none.sum.apogee,
   nose: {{cg: nose.cg0, cp: nose.cpBarrowman, m: nose.marginRail}},
   mass: W.massAt(b.geometry, 0).m}}));
 """,
@@ -198,6 +201,10 @@ console.log(JSON.stringify({{base, big: bigOut, lighter, land: full.sum.land, la
     )
     base = out["base"]
     assert base["apogee"] > 100.0 and base["apogeeT"] > 1.0
+    low, window_low, window_high = out[
+        "window"
+    ]  # the stability window of the History page
+    assert low <= window_low <= window_high
     # airframe from the component model plus the motor file's 10 kg
     assert out["mass"] == pytest.approx(
         load_ork(tmp_path / "t.ork").airframe_mass_kg + 10.0, rel=1e-6
@@ -222,3 +229,5 @@ console.log(JSON.stringify({{base, big: bigOut, lighter, land: full.sum.land, la
     assert (
         out["ascent"] == out["nT"] and out["noLand"] and out["noD"]
     )  # descent can be switched off
+    # the climb-only run the weather table uses reaches the same apogee as the full run
+    assert out["noApogee"] == pytest.approx(base["apogee"])

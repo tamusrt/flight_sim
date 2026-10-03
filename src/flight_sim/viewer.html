@@ -1,4 +1,4 @@
-<title>Flight Viewer</title>
+<title>Vision</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
@@ -107,7 +107,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 
 <div class="app">
   <header class="top">
-    <div class="ttl"><h1>Flight Viewer</h1></div>
+    <div class="ttl"><h1>Vision</h1></div>
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
       <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket's midpoint back at the centre of the view">Centre</button></div>
@@ -118,7 +118,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <label class="chip"><input type="checkbox" data-k="vec">Vectors</label>
       <label class="chip"><input type="checkbox" data-k="trail" checked>Path</label>
       <label class="chip"><input type="checkbox" data-k="aero" checked>Aero</label>
-      <label class="chip"><input type="checkbox" data-k="pad">Pad</label>
+      <label class="chip"><input type="checkbox" data-k="pad" checked>Pad</label>
       <label class="chip" id="conjWrap" hidden><input type="checkbox" id="conj">Conjugate q</label>
       <label class="btn">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
       <label class="btn" id="realBtn" hidden>Showing simulation</label>
@@ -321,29 +321,32 @@ var plCore=new THREE.Mesh(new THREE.ConeGeometry(1,1,20,1,true),new THREE.MeshBa
 plCore.geometry.rotateZ(-Math.PI/2); plCore.geometry.translate(0.5,0,0); plume.add(plCore);
 var diamonds=[]; for(var di=0;di<4;di++){ var dm=new THREE.Mesh(new THREE.SphereGeometry(1,12,8),new THREE.MeshBasicMaterial({color:0xf3e6c8,transparent:true,opacity:.5,depthWrite:false,blending:THREE.AdditiveBlending})); plume.add(dm); diamonds.push(dm); }
 
-/* ---------- launch tower (scaled with the rocket): see-through square tower with a rail on each corner and
-   five guide plates whose circular cut-outs clear the fins; stand legs and blast deflector ---------- */
+/* ---------- launch tower (scaled with the rocket): a slim see-through square tower with a rail on each corner and
+   five sets of small corner guides (the fins pass between them); stand legs and a small blast deflector.
+   Everything is sized from the rocket (6 in body, 0.15 m), so none of it dwarfs it. ---------- */
 var padHw=new THREE.Group(); padHw.matrixAutoUpdate=false; G.pad=padHw; root.add(padHw);
 var railMat=new THREE.MeshLambertMaterial({color:0xb8bcc2}), steel=new THREE.MeshLambertMaterial({color:0x5d6168});
-var TOWER={half:0.34, hole:0.30, plate:0.0127, plates:5, rail:0.0381};   /* hole radius > fin tip radius 0.267 m */
-var tower=new THREE.Group(); tower.matrixAutoUpdate=false; padHw.add(tower); var towerLen=-1;
+var TOWER={half:0.17, block:0.06, plate:0.0127, plates:5, rail:0.0254};   /* the fins (tips 0.267 m out) pass between the corner guides */
+var tower=new THREE.Group(); tower.matrixAutoUpdate=false; padHw.add(tower); var towerLen=-1, towerPlates=[];
+var STAND={spread:0.45, top:0.33, leg:0.015, deflector:0.3};   /* stand legs: spread, leg radius and deflector side in metres at rocket scale 1 (they scale); the legs meet the tower this fraction up its true length */
 function buildTower(len){
   while(tower.children.length){ var c=tower.children.pop(); if(c.geometry) c.geometry.dispose(); }
+  towerPlates=[];
   var h=TOWER.half, shell=new THREE.Mesh(new THREE.BoxGeometry(len,2*h,2*h),new THREE.MeshBasicMaterial({color:0xaab4c2,transparent:true,opacity:0.07,depthWrite:false,side:THREE.DoubleSide}));
   shell.position.x=len/2; tower.add(shell);
   var edges=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(len,2*h,2*h)),new THREE.LineBasicMaterial({color:0x8a93a6,transparent:true,opacity:0.5}));
   edges.position.x=len/2; tower.add(edges);
   [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(function(s){ var r=new THREE.Mesh(new THREE.BoxGeometry(len,TOWER.rail,TOWER.rail),railMat);
     r.position.set(len/2,s[0]*(h-TOWER.rail/2),s[1]*(h-TOWER.rail/2)); tower.add(r); });
-  var sh=new THREE.Shape(); sh.moveTo(-h,-h); sh.lineTo(h,-h); sh.lineTo(h,h); sh.lineTo(-h,h); sh.lineTo(-h,-h);
-  var hole=new THREE.Path(); hole.absarc(0,0,TOWER.hole,0,TAU,true); sh.holes.push(hole);
-  var pg=new THREE.ExtrudeGeometry(sh,{depth:TOWER.plate,bevelEnabled:false,curveSegments:40}); pg.rotateY(Math.PI/2);
-  var plateMat=new THREE.MeshLambertMaterial({color:0x9aa0a8,transparent:true,opacity:0.85,side:THREE.DoubleSide});
-  for(var k=1;k<=TOWER.plates;k++){ var pm=new THREE.Mesh(pg,plateMat); pm.position.x=len*k/TOWER.plates-TOWER.plate; tower.add(pm); }
+  var b=TOWER.block, plateMat=new THREE.MeshLambertMaterial({color:0x9aa0a8}), bg=new THREE.BoxGeometry(TOWER.plate,b,b);
+  for(var k=1;k<=TOWER.plates;k++){ var at=len*k/TOWER.plates;
+    [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(function(s2){ var pm=new THREE.Mesh(bg,plateMat);
+      pm.userData.at=at; pm.userData.cy=s2[0]*(h-b/2); pm.userData.cz=s2[1]*(h-b/2);
+      pm.position.set(at-TOWER.plate/2,pm.userData.cy,pm.userData.cz); tower.add(pm); towerPlates.push(pm); }); }
   towerLen=len;
 }
-var legs=[0,1,2].map(function(){ var m=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,1,8),steel); padHw.add(m); return m; });
-var deflector=new THREE.Mesh(new THREE.BoxGeometry(0.012,1.2,1.2),steel); padHw.add(deflector);
+var legs=[0,1,2].map(function(){ var m=new THREE.Mesh(new THREE.CylinderGeometry(STAND.leg,STAND.leg,1,8),steel); padHw.add(m); return m; });
+var deflector=new THREE.Mesh(new THREE.BoxGeometry(0.012,STAND.deflector,STAND.deflector),steel); padHw.add(deflector);
 var railLb=makeLabel('LAUNCH TOWER','#c8ccd2',G.pad);
 var RAIL={length:10, dir:new V3(1,0,0), tilt:0, base:new V3(), side:new V3(0,1,0), y0:new V3(0,1,0), z0:new V3(0,0,1)};
 
@@ -537,7 +540,7 @@ function recoPhase(t){ var st=null; events.forEach(function(e){ if(e.t>t) return
   if(st===null) return 'Free fall ↓'; if(st==='sep') return 'Separation ↓'; if(st==='open') return 'Under main ↓';
   return /reefed$/i.test(st.name||'')?'Under reefed main ↓':'Under '+(st.name||'canopy').toLowerCase()+' ↓'; }
 var events=[], bars=[], apoIdx=0, REC={dep:null,cut:null,rail:null}, POST=12, NOSE_MASS=4.0, CANOPY_MASS=0.71, CORD_VIS=0.35;
-var vis={world:true,body:true,missile:false,vec:false,trail:true,aero:true,pad:false};
+var vis={world:true,body:true,missile:false,vec:false,trail:true,aero:true,pad:true};
 
 function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p; return (n<=1?1:n<=1.5?1.5:n<=2?2:n<=3?3:n<=5?5:10)*p; }
 function fmt(v,dp){ return v.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
@@ -727,13 +730,15 @@ function evt(k){ for(var i=0;i<events.length;i++) if(events[i].k===k) return eve
 
 function drawPad(sc,pos,cg){
   /* tower on the rocket's axis as it stands on the pad, square faces aligned with the fins */
-  /* the tower keeps its true height and only its width scales, so the rail ends where it really does */
+  /* the tower keeps its true height whatever the rocket scale: only its width, the rails' and plates' thickness, the stand and
+     the deflector scale with the rocket, so even a very long rail never stretches the stand or the plates out of shape */
   var d=RAIL.dir, L=RAIL.length;
   if(towerLen!==RAIL.length) buildTower(RAIL.length);
   basis.makeBasis(d,RAIL.y0,RAIL.z0); basis.setPosition(w1.set(0.02,0,0));
   tower.matrix.copy(basis).multiply(mS.makeScale(1,sc,sc)); tower.matrixWorldNeedsUpdate=true;
+  towerPlates.forEach(function(pm){ pm.scale.x=sc; pm.position.x=pm.userData.at-TOWER.plate*sc/2; });   /* guides keep their true spacing, their thickness scales */
   /* three-legged stand meeting the tower at a third of its length */
-  var top=w3.set(0.02,0,0).addScaledVector(d,L*0.33), spread=L*0.16*sc;
+  var top=w3.set(0.02,0,0).addScaledVector(d,L*STAND.top), spread=STAND.spread*sc;
   for(var i=0;i<3;i++){ var a=i*TAU/3+0.5, g=new V3(0.02,spread*Math.cos(a),spread*Math.sin(a)), dir=new V3().subVectors(top,g), len=dir.length(); dir.normalize();
     orient(legs[i],dir,len,sc,g.clone().addScaledVector(dir,len/2)); }
   deflector.position.set(0.012,0,0); deflector.scale.set(1,sc,sc);
