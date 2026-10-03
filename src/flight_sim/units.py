@@ -174,8 +174,9 @@ class UnitChecked:
     Subclasses need no ``__post_init__`` of their own.
 
     Fields without a unit annotation, such as orientations and nested
-    dataclasses, are left alone. A subclass that defines ``__post_init__``
-    must call ``super().__post_init__()`` to keep the checking.
+    dataclasses, are left alone, as are annotated fields holding None. A
+    subclass that defines ``__post_init__`` must call
+    ``super().__post_init__()`` to keep the checking.
     """
 
     def __post_init__(self) -> None:
@@ -187,8 +188,8 @@ class UnitChecked:
         """
         cls: type[Any] = type(self)
         for expected in _expected_fields(cls):
-            actual: Quantity[Any] = getattr(self, expected.name)
-            if actual.dimensionality != expected.dimensionality:
+            actual: Quantity[Any] | None = getattr(self, expected.name)
+            if actual is not None and actual.dimensionality != expected.dimensionality:
                 raise DimensionalityError(
                     actual.units,
                     expected.units,

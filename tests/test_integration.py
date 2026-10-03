@@ -348,9 +348,7 @@ _RAIL = LaunchRail(
 
 def _rail_state() -> RocketState:
     """Return the default rocket at rest on the test rail."""
-    state = get_default_state()
-    state.orientation = _RAIL.orientation()
-    return state
+    return _RAIL.mount(get_default_state())
 
 
 def test_rail_guides_the_rocket_up_it(
@@ -368,7 +366,7 @@ def test_rail_guides_the_rocket_up_it(
     next_state = step(0.0, state, baseline_rocket_properties, config, scalar(0.2, "s"))
 
     position = next_state.position.m_as("m")
-    assert next_state.on_rail
+    assert next_state.rail_start is not None
     assert float(position @ rail) > 0.0
     assert np.cross(rail, position) == pytest.approx(np.zeros(3), abs=1e-12)
     assert next_state.angular_velocity.m_as("rad/s") == pytest.approx(np.zeros(3))
@@ -390,9 +388,143 @@ def test_rail_holds_an_unpowered_rocket_on_the_pad(
         scalar(1.0, "s"),
     )
 
-    assert next_state.on_rail
+    assert next_state.rail_start is not None
     assert next_state.position.m_as("m") == pytest.approx(np.zeros(3))
     assert next_state.velocity.m_as("m/s") == pytest.approx(np.zeros(3))
+
+
+def _incline_rail(friction_coefficient: float) -> LaunchRail:
+    """Return a long 60 degree rail with the given friction."""
+    return LaunchRail(
+        length=scalar(20.0, "m"),
+        elevation=scalar(60.0, "deg"),
+        friction_coefficient=friction_coefficient,
+    )
+
+
+@pytest.mark.parametrize("friction_coefficient", [0.0, 0.2])
+def test_friction_slows_the_run_up_the_rail(
+    baseline_rocket_properties: RocketProperties, friction_coefficient: float
+) -> None:
+    """A coasting rocket slides up an incline decelerated by g*(sin + mu*cos)."""
+    rail = _incline_rail(friction_coefficient)
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(
+            atmosphere=VacuumAtmosphere(),
+            gravity=ConstantGravity(9.81),
+            launch_rail=rail,
+        )
+    )
+    # Mount the rail here, then start one metre up it, sliding up at 5 m/s
+    foot = np.array([300.0, 40.0, -10.0])
+    state = rail.mount(replace(get_default_state(), position=vector(foot, "m")))
+    start = foot + rail.direction()
+    state.position = vector(start, "m")
+    state.velocity = vector(5.0 * rail.direction(), "m/s")
+    after_burnout, dt = 100.0, 0.2
+
+    next_state = step(
+        after_burnout, state, baseline_rocket_properties, config, scalar(dt, "s")
+    )
+
+    elevation = np.radians(60.0)
+    deceleration = 9.81 * (np.sin(elevation) + friction_coefficient * np.cos(elevation))
+    distance = 5.0 * dt - 0.5 * deceleration * dt**2
+    speed = 5.0 - deceleration * dt
+    assert next_state.position.m_as("m") == pytest.approx(
+        start + distance * rail.direction()
+    )
+    assert next_state.velocity.m_as("m/s") == pytest.approx(speed * rail.direction())
+
+
+@pytest.mark.parametrize(("friction_coefficient", "held"), [(1.0, True), (0.3, False)])
+def test_static_friction_holds_a_rocket_at_rest_on_a_shallow_rail(
+    baseline_rocket_properties: RocketProperties,
+    friction_coefficient: float,
+    held: bool,
+) -> None:
+    """At rest on a 30 degree rail, friction above tan(30 deg) stops it sliding."""
+    rail = LaunchRail(
+        length=scalar(20.0, "m"),
+        elevation=scalar(30.0, "deg"),
+        friction_coefficient=friction_coefficient,
+    )
+    config = IntegrationConfiguration(
+        truth=TruthConfiguration(atmosphere=VacuumAtmosphere(), launch_rail=rail)
+    )
+    # Mount at the origin, then start one metre up the rail
+    state = rail.mount(get_default_state())
+    state.position = vector(rail.direction(), "m")
+    after_burnout = 100.0
+
+    next_state = step(
+        after_burnout, state, baseline_rocket_properties, config, scalar(0.5, "s")
+    )
+
+    distance = rail.distance_along(next_state.position.m_as("m"), np.zeros(3))
+    if held:
+        assert distance == 1.0
+        assert next_state.velocity.m_as("m/s") == pytest.approx(np.zeros(3))
+    else:
+        assert distance < 1.0
+
+
+def test_large_friction_holds_a_thrusting_rocket_on_the_pad(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Friction from the weight across a 45 degree rail can outmatch the thrust."""
+    rail = LaunchRail(
+        length=scalar(5.0, "m"),
+        elevation=scalar(45.0, "deg"),
+        friction_coefficient=20.0,
+    )
+    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
+    assert baseline_rocket_properties.engine.get_thrust(0.0) > 0.0
+
+    next_state = step(
+        0.0,
+        rail.mount(get_default_state()),
+        baseline_rocket_properties,
+        config,
+        scalar(0.5, "s"),
+    )
+
+    assert next_state.position.m_as("m") == pytest.approx(np.zeros(3))
+    assert next_state.velocity.m_as("m/s") == pytest.approx(np.zeros(3))
+
+
+def test_rail_does_not_affect_a_free_rocket(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A state off the rail integrates exactly as with no rail configured."""
+    state = replace(
+        get_default_state(),
+        position=vector((1500.0, 200.0, -100.0), "m"),
+        velocity=vector((150.0, 20.0, 10.0), "m/s"),
+        angular_velocity=vector((0.1, 0.2, -0.1), "rad/s"),
+        orientation=_RAIL.orientation(),
+    )
+    with_rail = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=_RAIL))
+
+    def advance(config: IntegrationConfiguration) -> tuple[np.ndarray, float, object]:
+        """Return the state array, step length and event after one adaptive step."""
+        next_state, dt_taken, _next_dt, hit = adaptive_step(
+            1.0, state, baseline_rocket_properties, config, scalar(0.5, "s")
+        )
+        values = np.concatenate(
+            (
+                next_state.position.m_as("m"),
+                next_state.velocity.m_as("m/s"),
+                next_state.angular_velocity.m_as("rad/s"),
+            )
+        )
+        return values, float(dt_taken.m_as("s")), hit
+
+    free_values, free_dt, free_hit = advance(_CONFIG)
+    rail_values, rail_dt, rail_hit = advance(with_rail)
+    assert np.array_equal(rail_values, free_values)
+    assert rail_dt == free_dt
+    assert rail_hit is free_hit is None
 
 
 def test_default_rocket_turns_over_and_lands_nose_first() -> None:
@@ -400,8 +532,7 @@ def test_default_rocket_turns_over_and_lands_nose_first() -> None:
     rail = LaunchRail(length=scalar(17.0, "ft"), elevation=scalar(85.0, "deg"))
     properties = get_default_properties()
     config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
-    state = get_default_state()
-    state.orientation = rail.orientation()
+    state = rail.mount(get_default_state())
 
     time = 0.0
     dt = scalar(0.01, "s")

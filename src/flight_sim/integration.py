@@ -7,8 +7,8 @@ return arrays in SI units.
 import math
 import warnings
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, NamedTuple
+from dataclasses import dataclass, field, replace
+from typing import Annotated, NamedTuple
 
 import numpy as np
 
@@ -16,15 +16,13 @@ from flight_sim.environment.atmosphere import AtmosphereModel, StandardAtmospher
 from flight_sim.environment.gravity import GravityModel, WGS84Gravity
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind, WindModel
+from flight_sim.flight_event import FlightEvent
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
 from flight_sim.utilities.dcm import aero_angles, body_to_world
 from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_rates
 from flight_sim.vehicle.engine import Engine
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
-
-if TYPE_CHECKING:
-    from flight_sim.events import FlightEvent
 
 # Layout of the state array: metres, m/s, rad/s, quaternion, kilograms
 _POSITION = slice(0, 3)
@@ -148,9 +146,8 @@ class _StepInputs(NamedTuple):
     elevation_m: float
     inertia: np.ndarray  # kg*m**2, body axes
     cg_location: np.ndarray  # m, from the nose tip in body axes
-    rail_length_m: float
-    rail_direction: np.ndarray  # World frame, up the rail
-    on_rail: bool
+    rail: LaunchRail | None  # Holding the rocket for the whole step
+    rail_start_m: np.ndarray  # World frame, the rail's foot
     absolute_tolerance: np.ndarray  # One per state component, SI units
     relative_tolerance: float
     min_dt_s: float
@@ -163,7 +160,6 @@ def _step_inputs(
 ) -> _StepInputs:
     """Collect the models and constants of one step."""
     truth, sim = config.truth, config.sim
-    rail = truth.launch_rail
     return _StepInputs(
         properties=properties,
         atmosphere=truth.atmosphere,
@@ -173,9 +169,10 @@ def _step_inputs(
         elevation_m=float(truth.launch_elevation.m_as("m")),
         inertia=state.inertia.m_as("kg*m**2"),
         cg_location=state.cg_location.m_as("m"),
-        rail_length_m=float(rail.length.m_as("m")) if rail else 0.0,
-        rail_direction=rail.direction() if rail else np.zeros(3),
-        on_rail=state.on_rail,
+        rail=truth.launch_rail if state.rail_start is not None else None,
+        rail_start_m=(
+            state.rail_start.m_as("m") if state.rail_start is not None else np.zeros(3)
+        ),
         absolute_tolerance=np.repeat(
             [
                 float(sim.position_tolerance.m_as("m")),
@@ -189,12 +186,6 @@ def _step_inputs(
         relative_tolerance=sim.relative_tolerance,
         min_dt_s=float(sim.min_time_step.m_as("s")),
     )
-
-
-def _on_rail(values: np.ndarray, inputs: _StepInputs) -> bool:
-    """Return whether the rail still holds a rocket in the given state."""
-    distance_from_pad = float(np.linalg.norm(values[_POSITION]))
-    return inputs.on_rail and distance_from_pad < inputs.rail_length_m
 
 
 def _pack(state: RocketState) -> np.ndarray:
@@ -216,17 +207,13 @@ def _pack(state: RocketState) -> np.ndarray:
     )
 
 
-def _unpack(
-    values: np.ndarray, template: RocketState, inputs: _StepInputs
-) -> RocketState:
+def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
     """Rebuild a RocketState from an SI array.
 
     Args:
         values (np.ndarray): Integrated fields in the layout ``_pack`` produces.
         template (RocketState): State supplying the fields the integrator
-            holds constant: inertia and CG location.
-        inputs (_StepInputs): Constants of the step, which decide whether
-            the rail still holds the rocket.
+            holds constant: inertia, CG location and the rail start.
 
     Returns:
         RocketState: The integrated fields combined with the template's
@@ -241,7 +228,7 @@ def _unpack(
         current_mass=scalar(float(values[_MASS]), "kg"),
         inertia=template.inertia,
         cg_location=template.cg_location,
-        on_rail=_on_rail(values, inputs),
+        rail_start=template.rail_start,
     )
 
 
@@ -308,6 +295,48 @@ def _aero_loads(
     return force_body, torque_body
 
 
+def _rail_acceleration(
+    position: np.ndarray,
+    velocity: np.ndarray,
+    acceleration: np.ndarray,
+    rail: LaunchRail,
+    rail_start: np.ndarray,
+) -> np.ndarray:
+    """Constrain an acceleration to a rocket sliding along the rail.
+
+    The rail cancels the acceleration across it. Friction proportional to
+    that normal load opposes the sliding, or holds a rocket at rest whose
+    push along the rail it can match. The foot of the rail stops any push
+    down past it.
+
+    Args:
+        position (np.ndarray): Position in the world frame in m.
+        velocity (np.ndarray): Velocity in the world frame in m/s.
+        acceleration (np.ndarray): Acceleration from the applied forces in
+            the world frame in m/s**2.
+        rail (LaunchRail): Rail holding the rocket.
+        rail_start (np.ndarray): World-frame position of the rail's foot in m.
+
+    Returns:
+        np.ndarray: Acceleration along the rail in the world frame in m/s**2.
+    """
+    direction = rail.direction()
+    along = float(acceleration @ direction)
+    across = acceleration - along * direction
+    friction = rail.friction_coefficient * math.sqrt(float(across @ across))
+    speed = float(velocity @ direction)
+    if speed > 0.0:
+        along -= friction
+    elif speed < 0.0:
+        along += friction
+    else:
+        # Static friction holds the rocket but never pushes it back
+        along = math.copysign(max(abs(along) - friction, 0.0), along)
+    if rail.distance_along(position, rail_start) <= 0.0:
+        along = max(along, 0.0)
+    return along * direction
+
+
 def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.ndarray:
     """Compute the time derivative of a state array.
 
@@ -347,13 +376,10 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
         body_torque - cross(angular_velocity, inputs.inertia * angular_velocity)
     ) / inputs.inertia
 
-    if _on_rail(values, inputs):
-        # The rail cancels all but the push along it, and the pad any push into it
-        rail = inputs.rail_direction
-        along_rail = float(acceleration @ rail)
-        if float(values[_POSITION] @ rail) <= 0.0:
-            along_rail = max(along_rail, 0.0)
-        acceleration = along_rail * rail
+    if inputs.rail is not None:
+        acceleration = _rail_acceleration(
+            values[_POSITION], velocity, acceleration, inputs.rail, inputs.rail_start_m
+        )
         angular_acceleration = np.zeros(3)
 
     rates = np.empty(_STATE_SIZE)
@@ -486,8 +512,8 @@ def adaptive_step(
     config: IntegrationConfiguration,
     dt: Scalar,
     *,
-    events: Sequence["FlightEvent"] = (),
-) -> tuple[RocketState, Scalar, Scalar, "FlightEvent | None"]:
+    events: Sequence[FlightEvent] = (),
+) -> tuple[RocketState, Scalar, Scalar, FlightEvent | None]:
     """Advance the rocket state by one step whose length the error sets.
 
     The step is ``dt`` or shorter: RKF45 shrinks it until the error in every
@@ -495,6 +521,10 @@ def adaptive_step(
     first of ``events`` it crosses. Pass the returned next step length back
     in on the following call so step lengths adapt to the flight. Inertia
     and CG location are held constant across the step.
+
+    While the state is on the configured launch rail, the rail's
+    ``exit_event`` is checked before ``events``. A step ending on it returns
+    the state off the rail, with ``rail_start`` None.
 
     Args:
         time (float): Time since ignition in seconds, for the thrust curve.
@@ -513,8 +543,9 @@ def adaptive_step(
     values, dt_taken, next_dt = _adaptive_step(
         time, _pack(state), float(dt.m_as("s")), inputs
     )
-    next_state = _unpack(values, state, inputs)
-    for event in events:
+    next_state = _unpack(values, state)
+    rail_events = (inputs.rail.exit_event,) if inputs.rail is not None else ()
+    for event in (*rail_events, *events):
         if event.crossed(time, state, time + dt_taken, next_state):
             next_state, dt_to_event = locate_event(
                 time,
@@ -525,6 +556,8 @@ def adaptive_step(
                 dt=scalar(dt_taken, "s"),
                 event=event.value,
             )
+            if event in rail_events:
+                next_state = replace(next_state, rail_start=None)
             return next_state, dt_to_event, scalar(next_dt, "s"), event
     return next_state, scalar(dt_taken, "s"), scalar(next_dt, "s"), None
 
@@ -538,7 +571,7 @@ def step(
 ) -> RocketState:
     """Advance the rocket state by exactly ``dt`` using adaptive RKF45 steps.
 
-    Inertia and CG location are held constant across the step.
+    Inertia, CG location and the rail start are held constant across the step.
 
     Args:
         time (float): Time since ignition in seconds, for the thrust curve.
@@ -566,7 +599,7 @@ def step(
         )
         time_simulated += dt_taken
 
-    return _unpack(current_values, state, inputs)
+    return _unpack(current_values, state)
 
 
 def locate_event(

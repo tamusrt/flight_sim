@@ -7,13 +7,8 @@ import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from flight_sim.environment.launch_rail import LaunchRail
-from flight_sim.events import (
-    APOGEE,
-    IMPACT,
-    FlightEvent,
-    peak_vertical_velocity,
-    rail_exit,
-)
+from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
+from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import (
     IntegrationConfiguration,
     TruthConfiguration,
@@ -36,7 +31,6 @@ def get_default_state() -> RocketState:
         cg_location=vector((-1.5, 0.0, 0.0), "m"),
         angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
         orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
-        on_rail=True,
     )
 
 
@@ -63,15 +57,9 @@ def main() -> None:  # pylint: disable=too-many-statements
         elevation=scalar(85.0, "deg"),
         azimuth=scalar(0.0, "deg"),
     )
-    state = get_default_state()
-    state.orientation = rail.orientation()
+    state = rail.mount(get_default_state())
     config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
-    events = (
-        rail_exit(rail),
-        peak_vertical_velocity(properties, config),
-        APOGEE,
-        IMPACT,
-    )
+    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
 
     dt = scalar(0.01, "s")  # First step length to try
     current_time = 0.0

@@ -1,5 +1,7 @@
 """Flight event tests."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -7,13 +9,8 @@ from flight_sim.__main__ import get_default_state
 from flight_sim.environment.atmosphere import VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.environment.launch_rail import LaunchRail
-from flight_sim.events import (
-    APOGEE,
-    IMPACT,
-    FlightEvent,
-    peak_vertical_velocity,
-    rail_exit,
-)
+from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
+from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import (
     IntegrationConfiguration,
     TruthConfiguration,
@@ -122,28 +119,36 @@ def test_peak_vertical_velocity_lands_where_acceleration_is_zero(
     assert peak.value(time, state) == pytest.approx(0.0, abs=1e-6)
 
 
+@pytest.mark.parametrize(
+    "start", [(0.0, 0.0, 0.0), (500.0, 30.0, -20.0)], ids=["pad", "mid-air"]
+)
 def test_rail_exit_lands_where_the_rail_releases_the_rocket(
-    baseline_rocket_properties: RocketProperties,
+    baseline_rocket_properties: RocketProperties, start: tuple[float, float, float]
 ) -> None:
-    """Stepping up the rail ends a step a rail length from the pad, off the rail."""
-    rail = LaunchRail(length=scalar(2.0, "m"))
+    """Without being asked, a step ends a rail length up from the mount and leaves."""
+    rail = LaunchRail(
+        length=scalar(2.0, "m"),
+        elevation=scalar(80.0, "deg"),
+        azimuth=scalar(90.0, "deg"),
+    )
     config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
-    exit_rail = rail_exit(rail)
-    state = get_default_state()
+    state = rail.mount(replace(get_default_state(), position=vector(start, "m")))
 
     time = 0.0
     dt = scalar(0.1, "s")
     hit = None
     while hit is None:
         state, dt_taken, dt, hit = adaptive_step(
-            time, state, baseline_rocket_properties, config, dt, events=(exit_rail,)
+            time, state, baseline_rocket_properties, config, dt
         )
         time += float(dt_taken.m_as("s"))
         assert time < 1.0
 
-    assert hit is exit_rail
-    assert np.linalg.norm(state.position.m_as("m")) == pytest.approx(2.0)
-    assert not state.on_rail
+    assert hit is rail.exit_event
+    assert state.position.m_as("m") == pytest.approx(
+        np.array(start) + 2.0 * rail.direction()
+    )
+    assert state.rail_start is None
 
 
 def test_flight_event_is_immutable() -> None:

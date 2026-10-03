@@ -17,6 +17,7 @@ from flight_sim.integration import (
 from flight_sim.units import (
     Scalar,
     UnitChecked,
+    Vector,
     matrix,
     scalar,
     vector,
@@ -181,3 +182,18 @@ def test_field_without_units_is_not_checked() -> None:
     instance = _UnannotatedField(scalar(1.0, "m"))
 
     assert instance.mass.check("[length]")
+
+
+@dataclass
+class _OptionalField(UnitChecked):
+    """An optional field declares its units through its annotation."""
+
+    start: Annotated[Vector | None, "m"] = None
+
+
+def test_optional_field_accepts_none_and_checks_quantities() -> None:
+    """A unit-annotated field holding None is skipped; a quantity is checked."""
+    assert _OptionalField().start is None
+    assert _OptionalField(vector((1.0, 2.0, 3.0), "m")).start is not None
+    with pytest.raises(DimensionalityError, match=re.escape("_OptionalField.start")):
+        _OptionalField(vector((1.0, 2.0, 3.0), "s"))
