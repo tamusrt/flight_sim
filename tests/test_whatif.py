@@ -2,9 +2,11 @@
 # pylint: disable=line-too-long
 """Tests for the predictions page: its data, its page and its flight model."""
 
+import argparse
 import json
 import shutil
 import subprocess
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -12,12 +14,16 @@ import pytest
 from ork_fixture import write_aero_csv, write_cdx, write_eng, write_ork, write_rse
 
 from flight_sim.ork import load_ork
+from flight_sim.whatif import build
 from flight_sim.whatif.build import (
     build_data,
     read_rasaero_geometry,
     read_thrust,
     reduce_aero,
+    slug,
+    viewer_paths,
     write_page,
+    write_viewers,
 )
 
 _ENGINE = Path(__file__).parents[1] / "src" / "flight_sim" / "whatif" / "engine.js"
@@ -82,6 +88,116 @@ def test_data_holds_the_descent_and_the_6dof_landing(data: dict[str, Any]) -> No
     ]
     # the 6-DOF record carries on down to the ground
     assert data["sixdof"]["calm"]["alt"][-1] == pytest.approx(0.0, abs=1.0)
+
+
+def test_jarvis_is_the_6dof_flight_with_every_figure_the_page_shows(
+    data: dict[str, Any],
+) -> None:
+    """The figures and lines of Jarvis all come from the one detailed flight."""
+    jarvis = data["sixdof"]["calm"]
+    for key in (
+        "apogee", "apogeeT", "vmax", "machMax", "qMax", "accMax", "marginLo",
+        "marginHi", "burnoutAlt", "aoaMax", "drift", "mass0", "mass1", "cg0", "cp",
+    ):  # fmt: skip
+        assert isinstance(jarvis[key], float | int), key
+    assert jarvis["mass0"] >= jarvis["mass1"] > 0.0
+    assert jarvis["marginLo"] <= jarvis["marginHi"]
+    assert jarvis["railV"] > 0.0 and jarvis["marginRail"] is not None
+    assert 0.0 < jarvis["burnoutAlt"] <= jarvis["apogee"]
+    assert jarvis["machMax"] > 0.0 and jarvis["qMax"] > 0.0
+    # a row at most every tenth of a second on the way up, and every line has one value a row
+    times = jarvis["t"]
+    assert times[0] == 0.0 and all(b > a for a, b in pairwise(times))
+    slots = [int(t / 0.1 + 1e-6) for t in times[:20]]  # one row per tenth of a second
+    assert all(b > a for a, b in pairwise(slots))
+    lines = ("alt", "v", "mach", "acc", "marginCal")
+    assert all(len(jarvis[key]) == len(times) for key in lines)
+    climb = [a for a in jarvis["alt"] if a is not None]
+    assert max(climb) == pytest.approx(jarvis["apogee"], rel=0.01, abs=0.5)
+    assert 0.0 < jarvis["apogeeT"] <= times[-1]
+    # the way down has a height and a speed only
+    assert jarvis["mach"][-1] is None and jarvis["marginCal"][-1] is None
+    assert jarvis["alt"][-1] == pytest.approx(0.0, abs=1.0)
+    json.dumps(jarvis)  # no NaN gets into the page
+
+
+def test_burnout_is_where_the_thrust_ends(tmp_path: Path) -> None:
+    """A motor that burns out on the way up loses its propellant by then."""
+    motor = tmp_path / "short.eng"
+    motor.write_text(
+        "T 100 1000 0 1.0 10.0 X\n0.0 0\n0.01 800\n0.99 800\n1.0 0\n",
+        encoding="utf-8",
+    )
+    jarvis = build_data(
+        write_ork(tmp_path / "t.ork"),
+        write_aero_csv(tmp_path / "t.csv"),
+        motor,
+        "Test rocket",
+        "calm",
+    )["sixdof"]["calm"]
+    assert jarvis["mass0"] - jarvis["mass1"] == pytest.approx(1.0, abs=0.05)
+    assert 0.0 < jarvis["burnoutAlt"] < jarvis["apogee"]
+
+
+def test_every_saved_simulation_gets_its_own_vision_page(data: dict[str, Any]) -> None:
+    """The page data says where Vision plays each saved condition."""
+    assert data["viewers"] == {"calm": "viewer/calm/index.html"}
+
+
+@pytest.mark.parametrize(
+    ("name", "folder"),
+    [
+        ("average", "average"),
+        ("No wind (worst)", "no-wind-worst"),
+        ("  Best / 10 m/s ", "best-10-m-s"),
+        ("???", "sim"),
+    ],
+)
+def test_a_name_becomes_a_folder_name(name: str, folder: str) -> None:
+    """Folder names are lower case letters and digits with single dashes."""
+    assert slug(name) == folder
+
+
+def test_names_that_make_the_same_folder_are_told_apart() -> None:
+    """Two conditions never share a Vision page."""
+    paths = viewer_paths(["Worst", "worst", "worst!", "Best"])
+    assert paths == {
+        "Worst": "viewer/worst/index.html",
+        "worst": "viewer/worst-2/index.html",
+        "worst!": "viewer/worst-3/index.html",
+        "Best": "viewer/best/index.html",
+    }
+
+
+def test_every_condition_is_written_and_listed_for_the_history_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One viewer per condition, the default one also at ``viewer/index.html``."""
+    flown: list[str] = []
+
+    def fake(_args: argparse.Namespace, target: Path, sim: str) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"flight of {sim}", encoding="utf-8")
+        flown.append(sim)
+
+    monkeypatch.setattr(build, "_write_one_viewer", fake)
+    paths = viewer_paths(["average", "Worst case", "best"])
+    args = argparse.Namespace(ork=str(tmp_path / "Design 1.ork"))
+    first = write_viewers(args, tmp_path, paths, "Worst case")
+    assert sorted(flown) == ["Worst case", "average", "best"]
+    assert first == tmp_path / "viewer" / "index.html"
+    assert first.read_text(encoding="utf-8") == "flight of Worst case"
+    assert (tmp_path / "viewer" / "best" / "index.html").is_file()
+    manifest = json.loads((tmp_path / "viewer" / "sims.json").read_text("utf-8"))
+    assert manifest == {
+        "ork": "Design 1.ork",
+        "default": "Worst case",
+        "sims": {
+            "average": "average/index.html",
+            "Worst case": "worst-case/index.html",
+            "best": "best/index.html",
+        },
+    }
 
 
 def test_rasaero_geometry_is_read_in_metres(tmp_path: Path) -> None:

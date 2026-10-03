@@ -49,6 +49,27 @@ class RecoveryFrame:
     drag_fraction: float = 1.0
 
 
+def static_centre_of_pressure(properties: RocketProperties, mach: float) -> float:
+    """Static centre of pressure in metres aft of the nose tip.
+
+    The table's pitching moment about the nose is CMy = x_cp * Cz / L,
+    read at a small angle of attack where Cz is not zero.
+
+    Args:
+        properties (RocketProperties): The rocket, with its aero table.
+        mach (float): Mach number.
+
+    Returns:
+        float: Distance from the nose tip in metres, or NaN when the table gives
+            no normal force there.
+    """
+    coefficients = properties.aero_table(mach, _CP_ALPHA_DEG, 0.0)
+    if coefficients.cz == 0.0:
+        return float("nan")
+    length = float(properties.aero_table.reference_length.m_as("m"))
+    return coefficients.cmy * length / coefficients.cz
+
+
 class TelemetryLog:
     """Collects one row per sample, in SI units, plus what the viewer draws.
 
@@ -123,16 +144,7 @@ class TelemetryLog:
         return max((before - after) / _MASS_FLOW_STEP_S, 0.0)
 
     def _centre_of_pressure(self, mach: float) -> float:
-        """Static centre of pressure in metres aft of the nose tip.
-
-        The table's pitching moment about the nose is CMy = x_cp * Cz / L,
-        read at a small angle of attack where Cz is not zero.
-        """
-        coefficients = self._properties.aero_table(mach, _CP_ALPHA_DEG, 0.0)
-        if coefficients.cz == 0.0:
-            return float("nan")
-        length = float(self._properties.aero_table.reference_length.m_as("m"))
-        return coefficients.cmy * length / coefficients.cz
+        return static_centre_of_pressure(self._properties, mach)
 
     def add_event(self, kind: str, name: str, time_s: float, **extra: float) -> None:
         """Note a flight event for the timeline, such as "rail exit"."""

@@ -5,11 +5,11 @@ Usage::
     python -m flight_sim.whatif.build --ork D.ork --aero D_aero.csv \\
         --motor D.eng|D.rse --out site/predictions [--name "SRT14"] [--sim average]
 
-The page (``index.html``) shows the predictions of the committed design from a
-quick flight model, up to the apogee and down to the ground under the original
-(Sol Invictus) descent; ``viewer/index.html`` is the full 6-DOF flight in 3D,
-flown from the design as committed. Both come from the same ``.ork``, RASAero CSV and
-thrust curve.
+The page (``index.html``) shows the predictions of the committed design: Jarvis is
+the full 6-DOF flight, up to the apogee and down to the ground under the original
+(Sol Invictus) descent, and ``viewer/<name>/index.html`` plays each saved simulation's
+flight in 3D (Vision). The RASAero line is a quick flight model on the RASAero table.
+All come from the same ``.ork``, RASAero CSV and thrust curve.
 """
 
 from __future__ import annotations
@@ -17,8 +17,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import re
+import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -32,13 +36,15 @@ from flight_sim.__main__ import (
     get_launch_state,
     get_profile_properties,
 )
-from flight_sim.descent import DescentResult, ReefedParachute, simulate_descent
+from flight_sim.descent import DescentResult, ReefedParachute, air_at, simulate_descent
 from flight_sim.events import APOGEE
 from flight_sim.integration import adaptive_step
 from flight_sim.motor_file import load_motor
 from flight_sim.ork import OrkRocket, SavedSim, load_ork, saved_motor
 from flight_sim.ork_profile import motor_with_file, pad_pressure_pa, profile_from_ork
 from flight_sim.units import scalar
+from flight_sim.utilities.dcm import aero_angles, body_to_world
+from flight_sim.visualize import TelemetryLog, static_centre_of_pressure
 from flight_sim.whatif.history import from_history, from_saved, load_history
 
 _HERE = Path(__file__).parent
@@ -212,41 +218,172 @@ def _landing(descent: DescentResult, mass_kg: float) -> dict[str, Any]:
     }
 
 
+# A row of the climb every tenth of a second, and one of the way down every second
+_CLIMB_STEP_S = 0.1
+# The History page measures stability and angle of attack above this speed
+_FAST_M_S = 30.0
+_G0 = 9.80665
+
+
+def _rounded(value: float, digits: int) -> float | None:
+    """A number rounded, or None for NaN (which JSON cannot hold)."""
+    return None if math.isnan(value) else round(float(value), digits)
+
+
+class _Climb:  # pylint: disable=too-many-instance-attributes
+    """The climb of the 6-DOF flight: a row every 0.1 s, and the figures of the flight.
+
+    Everything the page shows for Jarvis is taken from here, so it is the flight
+    that Vision plays back.
+    """
+
+    def __init__(self, properties: Any, config: Any) -> None:
+        self.properties = properties
+        self.config = config
+        self.diameter = float(properties.aero_table.reference_length_m)
+        self.log = TelemetryLog(properties, config)
+        self.velocities: list[np.ndarray] = []
+        self.rows: list[
+            tuple[float, float, float, float, float]
+        ] = []  # t, altitude, speed, Mach, margin
+        self.q_max = 0.0
+        self.aoa_max = 0.0
+        self.fast_margins: list[float] = []
+        self.rail_speed: float | None = None
+        self.rail_margin: float | None = None
+        self.burnout: tuple[float, float, float] | None = None  # time, altitude, mass
+        self.drift = 0.0
+
+    def margin(self, state: Any, time: float) -> float:
+        """Stability in calibers: (centre of pressure - CG) over the diameter."""
+        position = float(state.position.m_as("m")[0])
+        air, wind = air_at(self.config, position)
+        speed = float(np.linalg.norm(state.velocity.m_as("m/s") - wind))
+        cp = static_centre_of_pressure(self.properties, speed / air.speed_of_sound)
+        cg = -float(self.properties.mass_properties(time).cg_location[0])
+        return (cp - cg) / self.diameter
+
+    def add(self, time: float, state: Any) -> None:
+        """Record the state at a time."""
+        self.log.record(time, state)
+        position = state.position.m_as("m")
+        velocity = state.velocity.m_as("m/s")
+        speed = float(np.linalg.norm(velocity))
+        mach = float(self.log.rows["mach"][-1])
+        margin = self.margin(state, time)
+        self.velocities.append(velocity)
+        self.rows.append((time, float(position[0]), speed, mach, margin))
+        self.q_max = max(self.q_max, float(self.log.rows["q"][-1]))
+        if speed > _FAST_M_S:
+            _, wind = air_at(self.config, float(position[0]))
+            airspeed_body = body_to_world(state.orientation).T @ (velocity - wind)
+            self.aoa_max = max(
+                self.aoa_max, math.degrees(aero_angles(airspeed_body)[0])
+            )
+            if not math.isnan(margin):
+                self.fast_margins.append(margin)
+        burnt_out = time > 0.5 and self.properties.engine.get_thrust(time) <= 0.0
+        if self.burnout is None and burnt_out:
+            mass = self.properties.mass_properties(time).mass
+            self.burnout = (time, float(position[0]), mass)
+        self.drift = float(np.hypot(position[1], position[2]))
+
+    def accelerations(self) -> list[float]:
+        """The acceleration in g at each row, from the change in velocity."""
+        out = [0.0]
+        for i in range(1, len(self.rows)):
+            step = self.rows[i][0] - self.rows[i - 1][0]
+            change = float(np.linalg.norm(self.velocities[i] - self.velocities[i - 1]))
+            out.append(change / step / _G0 if step > 1e-9 else out[-1])
+        return out
+
+    def figures(self) -> dict[str, Any]:
+        """The figures of the flight the page's tables show."""
+        data = np.array([row[:4] for row in self.rows])
+        accelerations = self.accelerations()
+        margins = [m for m in (r[4] for r in self.rows) if not math.isnan(m)]
+        window = self.fast_margins or margins
+        mass0 = self.properties.mass_properties(0.0)
+        last = self.rows[-1]
+        burnout = self.burnout or (
+            last[0],
+            last[1],
+            self.properties.mass_properties(last[0]).mass,
+        )  # still burning when the climb ends
+        top = int(np.argmax(data[:, 1]))
+        later = [
+            a for a, row in zip(accelerations, self.rows, strict=True) if row[0] > 0.2
+        ]
+        return {
+            "apogee": round(float(data[top, 1]), 1),
+            "apogeeT": round(float(data[top, 0]), 2),
+            "vmax": round(float(data[:, 2].max()), 1),
+            "machMax": round(float(data[:, 3].max()), 3),
+            "qMax": round(self.q_max, 1),
+            "accMax": round(max(later, default=0.0), 2),
+            "railV": None if self.rail_speed is None else round(self.rail_speed, 1),
+            "marginRail": None
+            if self.rail_margin is None
+            else round(self.rail_margin, 3),
+            "marginLo": round(min(window), 3) if window else None,
+            "marginHi": round(max(window), 3) if window else None,
+            "burnoutAlt": round(burnout[1], 1),
+            "aoaMax": round(self.aoa_max, 1),
+            "drift": round(self.drift, 1),
+            "mass0": round(mass0.mass, 3),
+            "mass1": round(burnout[2], 3),
+            "cg0": round(-float(mass0.cg_location[0]), 3),
+            "cp": round(static_centre_of_pressure(self.properties, 0.3), 3),
+        }
+
+    def series(self) -> dict[str, list[Any]]:
+        """The rows as lists for the page."""
+        return {
+            "t": [round(r[0], 3) for r in self.rows],
+            "alt": [round(r[1], 1) for r in self.rows],
+            "v": [round(r[2], 1) for r in self.rows],
+            "mach": [_rounded(r[3], 3) for r in self.rows],
+            "acc": [round(a, 2) for a in self.accelerations()],
+            "marginCal": [_rounded(r[4], 3) for r in self.rows],
+        }
+
+
 def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
-    """Fly the 6-DOF sim to apogee, then down under the descent (coarse record)."""
+    """Fly the 6-DOF sim to apogee, then down under the descent.
+
+    This is Jarvis: every number and line the page shows for it comes from this flight.
+    """
     properties = get_profile_properties(profile)
     state = get_launch_state(profile)
     config = get_default_config(profile)
-    events = (APOGEE,)
+    climb = _Climb(properties, config)
     dt = scalar(0.01, "s")
     time = 0.0
-    rows = []
     next_sample = 0.0
     while True:
-        if time >= next_sample:
-            next_sample += 0.5
-            rows.append(_row(time, state))
+        if time >= next_sample - 1e-9:
+            climb.add(time, state)
+            while next_sample <= time + 1e-9:  # one row per 0.1 s, however big the step
+                next_sample += _CLIMB_STEP_S
         if time > 400:
             break
         state, taken, dt, hit = adaptive_step(
-            time, state, properties, config, dt, events=events
+            time, state, properties, config, dt, events=(APOGEE,)
         )
         time += float(taken.m_as("s"))
+        if hit is not None and hit.name == "rail exit":
+            climb.rail_speed = float(np.linalg.norm(state.velocity.m_as("m/s")))
+            climb.rail_margin = climb.margin(state, time)
         if hit is APOGEE:
-            rows.append(_row(time, state))
+            climb.add(time, state)
             break
-    data = np.array(rows)
-    top = int(np.argmax(data[:, 1]))
-    result: dict[str, Any] = {
-        "apogee": round(float(data[top, 1]), 1),
-        "apogeeT": round(float(data[top, 0]), 2),
-        "vmax": round(float(data[:, 2].max()), 1),
-    }
+    result: dict[str, Any] = climb.figures()
+    series = climb.series()
     if profile.scheme is not None and hit is APOGEE:
         mass = properties.mass_properties(time).mass
         descent = simulate_descent(time, state, config, profile.recovery, mass_kg=mass)
         # one sample a second of the way down (the descent is sampled every 0.1 s)
-        rows += [
+        down = [
             _row(t, s)
             for i, (t, s) in enumerate(
                 zip(descent.times_s, descent.states, strict=True)
@@ -254,10 +391,16 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
             if i % 10 == 9 or i == len(descent.times_s) - 1
         ]
         result["landing"] = _landing(descent, mass)
-        data = np.array(rows)
-    result["t"] = [round(float(v), 2) for v in data[:, 0]]
-    result["alt"] = [round(float(v), 1) for v in data[:, 1]]
-    result["v"] = [round(float(v), 1) for v in data[:, 2]]
+        series["t"] += [round(float(r[0]), 2) for r in down]
+        series["alt"] += [round(float(r[1]), 1) for r in down]
+        series["v"] += [round(float(r[2]), 1) for r in down]
+        for key in (
+            "mach",
+            "acc",
+            "marginCal",
+        ):  # the way down has only height and speed
+            series[key] += [None] * len(down)
+    result.update(series)
     return result
 
 
@@ -291,6 +434,29 @@ def _recovery_data(profile: Any) -> dict[str, Any] | None:
             for stage in recovery.stages
         ],
     }
+
+
+def slug(name: str) -> str:
+    """A name as a folder name: lower case letters and digits, with single dashes."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "sim"
+
+
+def viewer_paths(sims: list[str]) -> dict[str, str]:
+    """Where each saved simulation's 3D flight is, relative to the folder of the page.
+
+    Two names that make the same folder name are told apart by a number.
+    """
+    paths: dict[str, str] = {}
+    used: set[str] = set()
+    for sim in sims:
+        folder = base = slug(sim)
+        number = 2
+        while folder in used:
+            folder = f"{base}-{number}"
+            number += 1
+        used.add(folder)
+        paths[sim] = f"viewer/{folder}/index.html"
+    return paths
 
 
 def build_data(  # pylint: disable=too-many-locals,too-many-arguments
@@ -359,6 +525,7 @@ def build_data(  # pylint: disable=too-many-locals,too-many-arguments
         "openrocket": openrocket,
         "openrocketMotor": history_motor,
         "sixdof": six,
+        "viewers": viewer_paths(list(ork.sims)),
     }
 
 
@@ -375,17 +542,44 @@ def write_page(data: dict[str, Any], out_dir: Path) -> Path:
     return target
 
 
-def write_viewer(args: argparse.Namespace, out_dir: Path, sim: str) -> Path:
-    """Fly the 6-DOF sim, down to the ground, and write the 3D viewer page."""
-    target = out_dir / "viewer" / "index.html"
+def _write_one_viewer(args: argparse.Namespace, target: Path, sim: str) -> None:
+    """Fly one saved simulation to the ground and write its 3D viewer page."""
     target.parent.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable, "-m", "flight_sim.visual_run", "--no-open",
         "--ork", args.ork, "--aero", args.aero, "--motor", args.motor,
-        "--ork-sim", sim, "--name", args.name, "--output", str(target),
+        "--ork-sim", sim, "--name", f"{args.name} · {sim}", "--output", str(target),
     ]  # fmt: skip
     subprocess.run(command, check=True)
-    return target
+
+
+def write_viewers(
+    args: argparse.Namespace, out_dir: Path, paths: dict[str, str], default: str
+) -> Path:
+    """Write the 3D viewer of every saved simulation, for Vision to follow.
+
+    ``viewer/<name>/index.html`` is one simulation's flight;
+    ``viewer/index.html`` is the default simulation's, as it always was;
+    ``viewer/sims.json`` lists them for the History page.
+    """
+    names = list(paths)
+    with ThreadPoolExecutor(max_workers=min(len(names), 4)) as pool:
+        list(
+            pool.map(
+                lambda sim: _write_one_viewer(args, out_dir / paths[sim], sim), names
+            )
+        )
+    first = out_dir / "viewer" / "index.html"
+    shutil.copyfile(out_dir / paths[default], first)
+    manifest = {
+        "ork": Path(args.ork).name,
+        "default": default,
+        "sims": {sim: path.removeprefix("viewer/") for sim, path in paths.items()},
+    }
+    (out_dir / "viewer" / "sims.json").write_text(
+        json.dumps(manifest, indent=1), encoding="utf-8"
+    )
+    return first
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -433,7 +627,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(f"predictions page: {write_page(data, out)}")
     if not args.no_viewer:
-        print(f"3D viewer: {write_viewer(args, out, data['defaultSim'])}")
+        shown = write_viewers(args, out, data["viewers"], data["defaultSim"])
+        print(f"3D viewers: {shown.parent} ({len(data['viewers'])} flights)")
 
 
 if __name__ == "__main__":

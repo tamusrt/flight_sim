@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Jarvis predictions</title>
+<title>JARVIS predictions</title>
 <script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js" charset="utf-8"></script>
 <style>
   :root { color-scheme: light dark; --bg:#fff; --fg:#1f2328; --muted:#59636e; --card:#f6f8fa; --line:#d0d7de;
@@ -114,10 +114,10 @@
 </head>
 <body>
 <header>
-  <h1 id="title">Jarvis predictions</h1>
+  <h1 id="title">JARVIS predictions</h1>
   <div class="tabs">
     <a href="../#tab=history">History</a><a href="../#tab=flight">Flight plots</a><a href="../#tab=changelog">Changelog</a>
-    <button type="button" id="tab-pred" class="on">Predictions</button><button type="button" id="tab-vision">Vision</button>
+    <button type="button" id="tab-pred" class="on">JARVIS predictions</button><button type="button" id="tab-vision">Vision</button>
   </div>
   <span class="sub" id="sub"></span>
   <span class="hctl">
@@ -138,7 +138,7 @@
     <p class="legend" id="weathernote"></p>
     <h2 class="sec">The climb</h2>
     <div class="tablewrap"><table id="climb"></table></div>
-    <p class="legend">The grey <b>difference</b> row is Jarvis minus OpenRocket: a percentage for apogee, speed, Mach and Max-Q, and the stability number's own units for the three stability columns.</p>
+    <p class="legend">The grey <b>difference</b> rows are Jarvis against OpenRocket and Jarvis against RASAero: a percentage for apogee, speed, Mach and Max-Q, and the stability number's own units for the three stability columns.</p>
     <h2 class="sec">The way down</h2>
     <div class="tablewrap"><table id="descent"></table></div>
     <p class="legend" id="descentnote"></p>
@@ -146,16 +146,16 @@
       <div class="tablewrap"><table id="more"></table></div>
     </details>
     <details><summary class="big" id="geomsum">Does the RASAero table match the rocket?</summary>
-      <p class="legend">RASAero measures the rocket from its own save file. If the OpenRocket design has changed since then, the table is out of date and Jarvis only corrects for it roughly.</p>
+      <p class="legend">RASAero measures the rocket from its own save file. If the OpenRocket design has changed since then, the table is out of date: Jarvis still flies the new masses, but with the aerodynamics of the old rocket, until you run Update CSV.</p>
       <div class="tablewrap"><table id="geometry"></table></div>
     </details>
     <details><summary class="big">What these numbers are, and what Jarvis does not do</summary>
-      <p class="legend">Jarvis is our flight simulator. Its quick model flies the OpenRocket design on the RASAero table, up to the top and then down to the ground. <b>Jarvis, detailed</b> is the same flight in the full simulator that Vision plays back. The <b>OpenRocket</b> lines are OpenRocket's own run of the same design. If the lines are far apart, do not trust any of them yet: find out why.</p>
+      <p class="legend">Jarvis is our flight simulator. The <b>Jarvis</b> lines are its full flight of the OpenRocket design on the RASAero table, up to the top and then down to the ground. It is the same flight Vision plays back. The <b>OpenRocket</b> lines are OpenRocket's own run of the same design. The <b>RASAero</b> lines are a quick flight on the RASAero table alone, for the rocket as RASAero last saw it. If the lines are far apart, do not trust any of them yet: find out why.</p>
       <ul class="legend">
         <li>The motor is the newest motor file in the thrust-curve folder. A longer or heavier rocket does not get more fuel.</li>
         <li>The way down uses the Sol Invictus parachutes as a stand-in, because the OpenRocket file has no parachutes yet. OpenRocket's landing numbers are left out for the same reason.</li>
         <li>Not checked: fin flutter, the loads on the fins and rail buttons, and spin.</li>
-        <li>The quick model flies in one flat plane (up, sideways, tilt). Crosswind effects and coning only show up in Vision.</li>
+        <li>The RASAero line is flown in one flat plane (up, sideways, tilt). Crosswind effects and coning only show up in Jarvis and Vision.</li>
         <li>If the table above shows a big change in the rocket's shape (about a quarter or more in a fin size, a different fin count, nose shape or body width, or a new boat-tail), run Update CSV.</li>
       </ul>
     </details>
@@ -171,22 +171,14 @@
         </div>
         <div class="ucstep">
           <h4>1. Start the helper</h4>
-          <p>Open your <b>dynamics</b> folder in File Explorer. Click the address bar at the top, type <code>cmd</code> and press Enter. A black window opens in the right folder. Paste this into it and press Enter. Leave the window open.</p>
-          <div class="code" data-code="python tools\whatif\local_helper.py"></div>
+          <p>Open a terminal (type <b>cmd</b> in the Start menu), paste these two lines and press Enter. The first goes to the dynamics folder. Leave the window open.</p>
+          <div class="code" data-code="cd dynamics&#10;python tools\whatif\local_helper.py"></div>
+          <p class="legend">If your dynamics folder is not in the folder the terminal opens in, put its full path after <code>cd</code>.</p>
           <p id="uc-helper"></p>
         </div>
         <div class="ucstep">
-          <h4>2. Save the rocket in RASAero</h4>
-          <p>Open RASAero II with the current rocket and save it over <code id="uc-cdx">rasaero.CDX1</code>.</p>
-          <div class="row">
-            <button id="uc-open-ras" type="button" disabled>Open the RASAero folder</button>
-            <button id="uc-open-repo" type="button" disabled>Open the dynamics folder</button>
-            <span class="legend" id="uc-open-note"></span>
-          </div>
-        </div>
-        <div class="ucstep">
-          <h4>3. Make the 31 RASAero files</h4>
-          <p>Click inside the RASAero window so it is the last window you used, then come back here and press the button. After that, do not touch the keyboard or mouse. To stop, move the mouse into a corner of the screen.</p>
+          <h4>2. Make the 31 RASAero files</h4>
+          <p>Open RASAero II with the current rocket, saved over <code id="uc-cdx">rasaero.CDX1</code>. Click inside the RASAero window so it is the last window you used, then come back here and press the button. After that, do not touch the keyboard or mouse. To stop, move the mouse into a corner of the screen.</p>
           <div class="row">
             <label class="toggle"><input type="checkbox" id="uc-ready"> RASAero is open with the current rocket and is the last window I used</label>
           </div>
@@ -196,8 +188,8 @@
           </div>
         </div>
         <div class="ucstep">
-          <h4>4. Update the CSV and rebuild</h4>
-          <p>Turns the 31 files into the table, rebuilds Jarvis and runs the detailed flight again.</p>
+          <h4>3. Update the CSV and rebuild</h4>
+          <p>Turns the 31 files into the table, rebuilds Jarvis and flies every kind of weather again.</p>
           <div class="row"><button id="uc-update" type="button" class="primary" disabled>Update the CSV and rebuild this page</button></div>
         </div>
         <div><button id="uc-cancel" type="button" hidden>Cancel</button></div>
@@ -216,7 +208,9 @@ const DATA = /*DATA*/null;
 const W = WhatIf;
 const $ = (id) => document.getElementById(id);
 const FT = 0.3048, IN = 0.0254, LB = 0.45359237, G0 = 9.80665;
-const PALETTE = ['#0969da', '#e16f24', '#1a7f37', '#8250df', '#cf222e', '#0598a3', '#bf8700', '#d1478e'];
+// Each line has its own colour (Jarvis blue, OpenRocket red, RASAero green). When several conditions are ticked they are told apart by how light the colour is.
+const HUE = { j: 211, or: 355, ras: 140 };
+const SHADES = () => (isDark() ? [64, 80, 50, 90] : [42, 62, 28, 74]);
 const embedded = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
 document.body.classList.toggle('embedded', embedded);
 
@@ -232,7 +226,7 @@ const refChange = DATA.refChange || design;
 base.refGeometry = W.applyChange(base, refChange);
 const SIMS = Object.keys(DATA.presets);
 const state = { sel: new Set([DATA.defaultSim]), metric: 'alt', view: 'abs', units: 'imperial', stab: 'pct',
-                lines: { j: true, jd: true, or: true }, whole: true, tab: 'pred' };
+                lines: { j: true, or: true, ras: true }, whole: true, tab: 'pred' };
 
 const U = {
   len: () => state.units === 'imperial' ? { f: 1 / IN, u: 'in', d: 2 } : { f: 1000, u: 'mm', d: 1 },
@@ -247,24 +241,28 @@ const signed = (v, d) => (v >= 0 ? '+' : '') + v.toFixed(d);
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const isDark = () => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 const colorOf = new Map();
-function assignColors() { colorOf.clear(); let i = 0; for (const s of SIMS) if (state.sel.has(s)) colorOf.set(s, PALETTE[i++ % PALETTE.length]); }
+function lineColor(src, sim) {
+  const shades = SHADES(), i = Math.max(ticked().indexOf(sim), 0);
+  return 'hsl(' + HUE[src] + ', 78%, ' + shades[i % shades.length] + '%)';
+}
+function assignColors() { colorOf.clear(); for (const s of ticked()) colorOf.set(s, lineColor('j', s)); }
 const ticked = () => SIMS.filter((s) => state.sel.has(s));
 
 /* ---------- running Jarvis ---------- */
+// Jarvis is the full flight (DATA.sixdof). The RASAero line is the quick model on the RASAero table, for the rocket as RASAero last saw it.
 const cache = {};
-// Only the climb, to the highest point: no way down and no 3D. That is enough to compare the apogee in every kind of weather
+// Only the climb, to the highest point: no way down. That is enough to compare the apogee in every kind of weather
 const climbRuns = {};
 function climbOnly(sim) {
-  if (!climbRuns[sim]) climbRuns[sim] = W.fly(base, design, savedCond(sim), { descent: false });
+  if (!climbRuns[sim]) climbRuns[sim] = W.fly(base, refChange, savedCond(sim), { descent: false });
   return climbRuns[sim];
 }
 const savedCond = (sim) => Object.assign({}, DATA.presets[sim], { leanIntoWind: true });
-// kind 'design' = the OpenRocket design as it is now; 'ref' = the rocket RASAero was last run for
-function runFor(kind, sim) {
-  const key = kind + '|' + sim;
-  if (!cache[key]) cache[key] = W.fly(base, kind === 'ref' ? refChange : design, savedCond(sim), { every: 0.1 });
-  return cache[key];
+function runFor(sim) {
+  if (!cache[sim]) cache[sim] = W.fly(base, refChange, savedCond(sim), { every: 0.1 });
+  return cache[sim];
 }
+const sixOf = (sim) => DATA.sixdof[sim];
 // stability in calibers, or as a percentage of the body length
 const MARGIN = (cal, geo) => (cal === null || cal === undefined ? null : state.stab === 'pct' ? cal * base.diameter / (geo || base.geometry).length * 100 : cal);
 const marginUnit = () => (state.stab === 'pct' ? '% L' : 'cal');
@@ -274,17 +272,17 @@ const orOf = (sim) => DATA.openrocket[sim];
 /* ---------- the three lines ---------- */
 const LINES = [
   { key: 'j', name: 'Jarvis', dash: 'solid', width: 2.5, dashSvg: '' },
-  { key: 'jd', name: 'Jarvis, detailed', dash: 'dot', width: 2.5, dashSvg: '2,3' },
   { key: 'or', name: 'OpenRocket', dash: 'dash', width: 2, dashSvg: '6,3' },
+  { key: 'ras', name: 'RASAero', dash: 'dot', width: 2.5, dashSvg: '2,3' },
 ];
 // the chart buttons: what each line holds for them (null = that line has no such numbers)
 const METRICS = [
-  { key: 'alt', label: 'Altitude', j: 'alt', jd: 'alt', or: 'alt', unit: () => U.alt() },
-  { key: 'v', label: 'Speed', j: 'v', jd: 'v', or: 'v', unit: () => U.vel() },
-  { key: 'mach', label: 'Mach', j: 'mach', jd: null, or: 'mach', unit: () => ({ f: 1, u: '', d: 2 }) },
-  { key: 'acc', label: 'Acceleration', j: 'acc', jd: null, or: 'acc', unit: () => ({ f: 1, u: 'g', d: 1 }) },
-  { key: 'margin', label: 'Stability', j: 'marginCal', jd: null, or: 'margin', unit: () => ({ f: 1, u: marginUnit(), d: marginDec() }) },
-  { key: 'drag', label: 'Drag', j: 'drag', jd: null, or: 'drag', unit: () => ({ f: 1, u: '', d: 2 }) },
+  { key: 'alt', label: 'Altitude', j: 'alt', or: 'alt', ras: 'alt', unit: () => U.alt() },
+  { key: 'v', label: 'Speed', j: 'v', or: 'v', ras: 'v', unit: () => U.vel() },
+  { key: 'mach', label: 'Mach', j: 'mach', or: 'mach', ras: 'mach', unit: () => ({ f: 1, u: '', d: 2 }) },
+  { key: 'acc', label: 'Acceleration', j: 'acc', or: 'acc', ras: 'acc', unit: () => ({ f: 1, u: 'g', d: 1 }) },
+  { key: 'margin', label: 'Stability', j: 'marginCal', or: 'margin', ras: 'marginCal', unit: () => ({ f: 1, u: marginUnit(), d: marginDec() }) },
+  { key: 'drag', label: 'Drag', j: 'drag', or: 'drag', ras: null, unit: () => ({ f: 1, u: '', d: 2 }) },   // Jarvis and RASAero fly the same table, so they share one drag line
 ];
 const metricOf = (key) => METRICS.find((m) => m.key === key);
 
@@ -294,25 +292,27 @@ function pick(sim, src, M) {
   if (!field) return null;
   const U1 = M.unit();
   const scale = (a) => a.map((v) => (v === null || v === undefined ? null : v * U1.f));
-  if (src === 'j') {
-    const out = runFor('design', sim).out;
-    if (M.key === 'alt' || M.key === 'v') {
+  const wholeFlight = M.key === 'alt' || M.key === 'v';
+  if (src === 'j') {   // the full flight; its way down has only height and speed
+    const six = sixOf(sim), climb = six.t.filter((t) => t <= six.apogeeT + 1e-6).length;
+    const n = state.whole && wholeFlight ? six.t.length : climb;
+    if (M.key === 'margin') {   // only while moving fast, as on the History page
+      return { x: six.t.slice(0, n), y: six.marginCal.slice(0, n).map((c, i) => (c === null || six.v[i] < 30 ? null : MARGIN(c, base.geometry))) };
+    }
+    return { x: six.t.slice(0, n), y: scale(six[field].slice(0, n)) };
+  }
+  if (src === 'ras') {   // the quick model on the RASAero table
+    const out = runFor(sim).out;
+    if (wholeFlight) {
       const all = (k) => (state.whole && out.d ? out[k].concat(out.d[k]) : out[k].slice(0, out.nAscent));
       return { x: all('t'), y: scale(all(field)) };
     }
-    if (M.key === 'margin') {   // only while moving fast, as on the History page
-      return { x: out.t, y: out.marginCal.map((c, i) => (out.v[i] < 30 ? null : MARGIN(c, runFor('design', sim).geo))) };
-    }
+    if (M.key === 'margin') return { x: out.t, y: out.marginCal.map((c, i) => (out.v[i] < 30 ? null : MARGIN(c, base.refGeometry))) };
     return { x: out.t, y: scale(out[field]) };
-  }
-  if (src === 'jd') {
-    const six = DATA.sixdof[sim];
-    const n = state.whole ? six.t.length : six.t.filter((t) => t <= six.apogeeT + 1e-6).length;
-    return { x: six.t.slice(0, n), y: scale(six[field].slice(0, n)) };
   }
   const o = orOf(sim);
   if (!o) return null;
-  if (M.key === 'margin') return { x: o.t, y: o.margin.map((c, i) => (c === null || o.v[i] < 30 ? null : MARGIN(c, runFor('design', sim).geo))) };
+  if (M.key === 'margin') return { x: o.t, y: o.margin.map((c, i) => (c === null || o.v[i] < 30 ? null : MARGIN(c, base.geometry))) };
   return { x: o.t, y: scale(o[field]) };
 }
 function interp(xs, ys, x) {   // straight-line value of ys at x, or null outside the data or in a gap
@@ -336,39 +336,42 @@ function baseLayout(xTitle, yTitle) {
            yaxis: { title: { text: yTitle }, gridcolor: grid, zeroline: true, zerolinecolor: grid, automargin: true } };
 }
 function showEmpty(text) { empty.hidden = !text; empty.textContent = text || ''; if (text) Plotly.purge(plotDiv); }
+// the line the others are measured from in the two difference views
+const refLine = () => (state.view === 'diffras' ? 'ras' : 'or');
+const refName = () => LINES.find((l) => l.key === refLine()).name;
+const isDiff = () => state.view === 'diff' || state.view === 'diffras';
 function drawChart() {
   const M = metricOf(state.metric), U1 = M.unit(), sims = ticked();
-  const diff = state.view === 'diff' && M.key !== 'drag';
+  const diff = isDiff() && M.key !== 'drag', ref = refLine();
   if (!sims.length) return showEmpty('Tick a set of conditions in the list on the left.');
-  const wanted = LINES.filter((l) => (diff ? l.key !== 'or' : state.lines[l.key]));
-  if (!wanted.length) return showEmpty('Turn on at least one line in the list on the left.');
+  const wanted = LINES.filter((l) => state.lines[l.key] && !(diff && l.key === ref));
+  if (!wanted.length) return showEmpty(diff ? 'Turn on a line other than ' + refName() + ' in the list on the left.' : 'Turn on at least one line in the list on the left.');
   const traces = [], multi = sims.length > 1;
   const note = [];
   if (M.key === 'drag') return drawDrag(sims, wanted, multi);
   for (const sim of sims) {
-    const col = colorOf.get(sim);
     for (const L of wanted) {
       let p = pick(sim, L.key, M);
       if (!p || !p.x.length) { if (!note.includes(L.name)) note.push(L.name); continue; }
       let y = p.y;
       if (diff) {
-        const o = pick(sim, 'or', M);
+        const o = pick(sim, ref, M);
         if (!o) continue;
-        const xs = [], ys = [];   // only where OpenRocket has numbers to compare with
+        const xs = [], ys = [];   // only where the reference line has numbers to compare with
         p.x.forEach((x, i) => { const r = interp(o.x, o.y, x); if (r !== null && p.y[i] !== null) { xs.push(x); ys.push(p.y[i] - r); } });
         if (!xs.length) continue;
         p = { x: xs, y: ys };
         y = ys;
       }
       traces.push({ type: 'scatter', mode: 'lines', name: (multi ? sim + ' · ' : '') + L.name, x: p.x, y,
-                    line: { color: col, width: L.width, dash: L.dash },
+                    line: { color: lineColor(L.key, sim), width: L.width, dash: L.dash },
                     hovertemplate: `${multi ? sim + ' · ' : ''}${L.name}: %{y:.${U1.d + (diff ? 1 : 0)}f}${U1.u ? ' ' + U1.u : ''}<extra></extra>` });
     }
   }
   $('chartnote').textContent = note.length ? note.join(', ') + (note.length > 1 ? ' have' : ' has') + ' no ' + M.label.toLowerCase() + ' numbers, so ' + (note.length > 1 ? 'they are' : 'it is') + ' not drawn.' : '';
   if (!traces.length) return showEmpty('Nothing to draw for this choice.');
   empty.hidden = true;
-  const yTitle = (diff ? 'Jarvis minus OpenRocket: ' : '') + M.label + (U1.u ? ` (${U1.u})` : '');
+  const yTitle = (diff ? 'Difference from ' + refName() + ': ' : '') + M.label + (U1.u ? ` (${U1.u})` : '');
   const layout = baseLayout('time (s)', yTitle);
   layout.showlegend = true;
   Plotly.react(plotDiv, traces, layout, plotConfig);
@@ -378,26 +381,20 @@ function drawDrag(sims, wanted, multi) {
   const M = metricOf('drag'), traces = [];
   const has = (k) => wanted.some((l) => l.key === k);
   for (const sim of sims) {
-    const col = colorOf.get(sim);
-    if (has('j')) {
-      const c = W.dragCurve(base, design, savedCond(sim), 0);
-      traces.push({ type: 'scatter', mode: 'lines', name: (multi ? sim + ' · ' : '') + 'Jarvis', x: c.map((p) => p[0]), y: c.map((p) => p[1]),
-                    line: { color: col, width: 2.5 }, hovertemplate: 'Jarvis: %{y:.3f} at Mach %{x:.2f}<extra></extra>' });
+    if (has('j')) {   // the RASAero table, which is what Jarvis flies
+      const c = W.dragCurve(base, refChange, savedCond(sim), 0);
+      traces.push({ type: 'scatter', mode: 'lines', name: (multi ? sim + ' · ' : '') + 'Jarvis (RASAero table)', x: c.map((p) => p[0]), y: c.map((p) => p[1]),
+                    line: { color: lineColor('j', sim), width: 2.5 }, hovertemplate: 'Jarvis: %{y:.3f} at Mach %{x:.2f}<extra></extra>' });
     }
     const o = orOf(sim);
     if (has('or') && o && o.cd && o.mach) {
       const x = [], y = [];
       o.t.forEach((t, i) => { if (t > 0.6 && o.cd[i] !== null && o.mach[i] !== null) { x.push(o.mach[i]); y.push(o.cd[i]); } });
       if (x.length) traces.push({ type: 'scatter', mode: 'lines', name: (multi ? sim + ' · ' : '') + 'OpenRocket', x, y,
-                                  line: { color: col, width: 2, dash: 'dash' }, hovertemplate: 'OpenRocket: %{y:.3f} at Mach %{x:.2f}<extra></extra>' });
+                                  line: { color: lineColor('or', sim), width: 2, dash: 'dash' }, hovertemplate: 'OpenRocket: %{y:.3f} at Mach %{x:.2f}<extra></extra>' });
     }
   }
-  if (has('j') && refDiffs().length) {
-    const c = W.dragCurve(base, refChange, savedCond(sims[0]), 0);
-    traces.push({ type: 'scatter', mode: 'lines', name: 'RASAero table, before Jarvis corrects it', x: c.map((p) => p[0]), y: c.map((p) => p[1]),
-                  line: { color: css('--muted'), width: 1.5, dash: 'dashdot' }, hovertemplate: 'RASAero table: %{y:.3f} at Mach %{x:.2f}<extra></extra>' });
-  }
-  $('chartnote').textContent = 'Axial drag coefficient on the body area. Jarvis and the RASAero table are at zero angle of attack. OpenRocket\'s line is its drag along the real flight.';
+  $('chartnote').textContent = 'Axial drag coefficient on the body area. The Jarvis line is the RASAero table at zero angle of attack, which is what Jarvis and the RASAero line both fly, so they share one line. OpenRocket\'s line is its drag along the real flight.';
   if (!traces.length) return showEmpty('Nothing to draw for this choice.');
   empty.hidden = true;
   const layout = baseLayout('Mach', 'Drag coefficient');
@@ -416,7 +413,7 @@ function dashIcon(dashSvg) {
 function buildNav() {
   nav.innerHTML = '';
   const tools = document.createElement('div'); tools.className = 'navtools';
-  const bNone = document.createElement('button'); bNone.textContent = 'Clear'; bNone.onclick = () => { state.sel.clear(); update(); };
+  const bNone = document.createElement('button'); bNone.textContent = 'Clear'; bNone.onclick = () => { state.sel.clear(); update(); shareSel(); };
   const cap = document.createElement('span'); cap.id = 'navcap'; cap.className = 'lbl';
   tools.append(bNone, cap); nav.appendChild(tools);
   const d = document.createElement('div'); d.className = 'design';
@@ -425,13 +422,13 @@ function buildNav() {
   const name = document.createElement('span'); name.className = 'name'; name.textContent = 'RASAero.Orks'; name.title = DATA.name + ': Jarvis predictions made from the RASAero table and the OpenRocket design file ' + DATA.design;
   const mini = document.createElement('span'); mini.className = 'mini'; mini.textContent = String(SIMS.length);
   const all = document.createElement('button'); all.textContent = 'all'; all.title = 'Tick every set of conditions';
-  all.onclick = (e) => { e.stopPropagation(); const every = SIMS.every((s) => state.sel.has(s)); SIMS.forEach((s) => (every ? state.sel.delete(s) : state.sel.add(s))); update(); };
+  all.onclick = (e) => { e.stopPropagation(); const every = SIMS.every((s) => state.sel.has(s)); SIMS.forEach((s) => (every ? state.sel.delete(s) : state.sel.add(s))); update(); shareSel(); };
   head.append(caret, name, mini, all); head.onclick = () => d.classList.toggle('closed');
   const list = document.createElement('div'); list.className = 'sims';
   for (const sim of SIMS) {
     const row = document.createElement('label'); row.className = 'sim'; row.dataset.id = sim;
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = state.sel.has(sim);
-    cb.onchange = () => { cb.checked ? state.sel.add(sim) : state.sel.delete(sim); update(); };
+    cb.onchange = () => { cb.checked ? state.sel.add(sim) : state.sel.delete(sim); update(); shareSel(); };
     const sw = document.createElement('span'); sw.className = 'swatch';
     const lab = document.createElement('span'); lab.className = 'label'; lab.textContent = sim; lab.title = windText(sim);
     const val = document.createElement('span'); val.className = 'val';
@@ -465,23 +462,24 @@ function refreshNav() {
     const sim = row.dataset.id;
     row.querySelector('input').checked = state.sel.has(sim);
     row.querySelector('.swatch').style.background = colorOf.get(sim) || css('--line');
-    row.querySelector('.val').textContent = fmt(climbOnly(sim).sum.apogee * A.f, 0) + ' ' + A.u;
+    row.querySelector('.val').textContent = fmt(sixOf(sim).apogee * A.f, 0) + ' ' + A.u;
   }
   const M = metricOf(state.metric);
   for (const row of nav.querySelectorAll('.line[data-line]')) {
     const L = row.dataset.line;
-    const na = (L !== 'j' && !M[L]) || (L === 'or' && state.view === 'diff' && M.key !== 'drag');
+    const asRef = isDiff() && M.key !== 'drag' && L === refLine();
+    const na = (L !== 'j' && !M[L]) || asRef;
     row.classList.toggle('na', na);
-    row.title = na ? (L === 'or' ? 'In the difference view OpenRocket is what the other lines are compared with.' : 'This line has no ' + M.label.toLowerCase() + ' numbers.') : '';
+    row.title = asRef ? 'In this view ' + refName() + ' is what the other lines are compared with.' : na ? (M.key === 'drag' ? 'Jarvis and RASAero fly the same table, so they share the Jarvis line.' : 'This line has no ' + M.label.toLowerCase() + ' numbers.') : '';
     row.querySelector('input').checked = state.lines[L];
   }
   const hint = nav.querySelector('.navhint');
-  if (hint) hint.textContent = 'Jarvis is the quick model. Jarvis, detailed is the full simulation (Vision plays it back). OpenRocket is the History tab\'s run.';
+  if (hint) hint.textContent = 'Jarvis is the full simulation (Vision plays it back). OpenRocket is the History tab\'s run. RASAero is a quick flight on the RASAero table alone.';
   $('whole').checked = state.whole;
 }
 
 /* ---------- the chart buttons ---------- */
-const VIEWS = [['abs', 'Value'], ['diff', 'Jarvis minus OpenRocket']];
+const VIEWS = [['abs', 'Value'], ['diff', 'Difference from OpenRocket'], ['diffras', 'Difference from RASAero']];
 function buildMetrics() {
   const row = $('metrics'); row.innerHTML = '';
   for (const m of METRICS) { const b = document.createElement('button'); b.textContent = m.label; b.className = m.key === state.metric ? 'on' : ''; b.onclick = () => { state.metric = m.key; update(); }; row.appendChild(b); }
@@ -489,8 +487,8 @@ function buildMetrics() {
   const lab = document.createElement('span'); lab.className = 'toggle'; lab.textContent = 'view'; row.appendChild(lab);
   for (const [key, text] of VIEWS) {
     const b = document.createElement('button'); b.textContent = text; b.className = key === state.view ? 'on' : '';
-    b.title = key === 'abs' ? 'Each line as it is' : 'How far Jarvis is from OpenRocket at each moment';
-    b.disabled = key === 'diff' && state.metric === 'drag';
+    b.title = key === 'abs' ? 'Each line as it is' : 'How far each line is from ' + (key === 'diff' ? 'OpenRocket' : 'RASAero') + ' at each moment';
+    b.disabled = key !== 'abs' && state.metric === 'drag';
     b.onclick = () => { state.view = key; update(); }; row.appendChild(b);
   }
 }
@@ -500,71 +498,74 @@ function buildMetrics() {
 function climbVals(src, sim) {
   const A = U.alt(), V = U.vel(), Q = U.q();
   if (src === 'j') {
-    const run = runFor('design', sim), s = run.sum, g = run.geo;
+    const z = sixOf(sim), g = base.geometry;
+    return [z.apogee * A.f, z.vmax * V.f, z.machMax, z.qMax * Q.f, MARGIN(z.marginRail, g), MARGIN(z.marginLo, g), MARGIN(z.marginHi, g)];
+  }
+  if (src === 'ras') {
+    const s = runFor(sim).sum, g = base.refGeometry;
     return [s.apogee * A.f, s.vmax * V.f, s.machMax, s.qMax * Q.f, MARGIN(s.marginRail, g), MARGIN(s.marginLo, g), MARGIN(s.marginHi, g)];
   }
-  if (src === 'jd') { const z = DATA.sixdof[sim]; return [z.apogee * A.f, z.vmax * V.f, null, null, null, null, null]; }
   const o = orOf(sim);
   if (!o) return null;
-  const m = o.m, g = runFor('design', sim).geo, n = (v, f) => (v === null || v === undefined ? null : v * f);
+  const m = o.m, g = base.geometry, n = (v, f) => (v === null || v === undefined ? null : v * f);
   return [n(m.apogee, A.f), n(m.vmax, V.f), m.machMax, n(m.qMax, Q.f), MARGIN(m.marginRail, g), MARGIN(m.marginLo, g), MARGIN(m.marginHi, g)];
 }
+const swatch = (src, sim) => '<span class="sw" style="background:' + lineColor(src, sim) + '"></span>';
 function drawClimb() {
   const A = U.alt(), V = U.vel(), Q = U.q(), sims = ticked();
   const cols = [['Apogee', A.u, 0], ['Top speed', V.u, 0], ['Max Mach', '', 2], ['Max-Q', Q.u, 1],
                 ['Off-the-rail stability', marginUnit(), marginDec()], ['Minimum stability', marginUnit(), marginDec()], ['Maximum stability', marginUnit(), marginDec()]];
   if (!sims.length) { $('climb').innerHTML = ''; return; }
   let h = '<thead><tr><th>Conditions and line</th>' + cols.map((c) => '<th>' + c[0] + (c[1] ? ' (' + c[1].replace(' ', '\u00a0') + ')' : '') + '</th>').join('') + '</tr></thead><tbody>';
-  const multi = sims.length > 1;
   for (const sim of sims) {
-    const sw = '<span class="sw" style="background:' + colorOf.get(sim) + '"></span>';
-    const jv = climbVals('j', sim), ov = climbVals('or', sim), dv = climbVals('jd', sim);
-    const row = (label, vals) => '<tr><td>' + sw + sim + ' · ' + label + '</td>' + cols.map((c, i) => '<td>' + fmt(vals[i], c[2]) + '</td>').join('') + '</tr>';
-    h += row('Jarvis', jv);
-    h += row('Jarvis, detailed', dv);
-    if (ov) {
-      h += row('OpenRocket', ov);
-      h += '<tr class="diffrow"><td>' + sim + ' · difference</td>' + cols.map((c, i) => {
-        if (jv[i] === null || ov[i] === null || jv[i] === undefined || ov[i] === undefined) return '<td>–</td>';
-        const d = i < 4 ? (ov[i] ? (jv[i] / ov[i] - 1) * 100 : null) : jv[i] - ov[i];
-        if (d === null) return '<td>–</td>';
-        return '<td>' + signed(d, i < 4 ? 1 : c[2]) + (i < 4 ? '%' : '') + '</td>';
-      }).join('') + '</tr>';
-    }
+    const jv = climbVals('j', sim), ov = climbVals('or', sim), rv = climbVals('ras', sim);
+    const row = (src, label, vals) => '<tr><td>' + swatch(src, sim) + sim + ' · ' + label + '</td>' + cols.map((c, i) => '<td>' + fmt(vals[i], c[2]) + '</td>').join('') + '</tr>';
+    // Jarvis against another line: a percentage for the first four columns, the stability's own units after that
+    const diff = (label, other) => '<tr class="diffrow"><td>' + sim + ' · ' + label + '</td>' + cols.map((c, i) => {
+      if (jv[i] === null || other[i] === null || jv[i] === undefined || other[i] === undefined) return '<td>–</td>';
+      const d = i < 4 ? (other[i] ? (jv[i] / other[i] - 1) * 100 : null) : jv[i] - other[i];
+      if (d === null) return '<td>–</td>';
+      return '<td>' + signed(d, i < 4 ? 1 : c[2]) + (i < 4 ? '%' : '') + '</td>';
+    }).join('') + '</tr>';
+    h += row('j', 'Jarvis', jv);
+    if (ov) h += row('or', 'OpenRocket', ov);
+    h += row('ras', 'RASAero', rv);
+    if (ov) h += diff('Jarvis against OpenRocket', ov);
+    h += diff('Jarvis against RASAero', rv);
   }
   $('climb').innerHTML = h + '</tbody>';
 }
 function drawWeather() {
   const A = U.alt(), ref = ticked()[0] || DATA.defaultSim;
-  const rows = SIMS.map((sim) => ({ sim, j: climbOnly(sim).sum.apogee, o: orOf(sim) ? orOf(sim).m.apogee : null }));
+  const rows = SIMS.map((sim) => ({ sim, j: sixOf(sim).apogee, o: orOf(sim) ? orOf(sim).m.apogee : null, r: climbOnly(sim).sum.apogee }));
   const hasOr = rows.some((r) => r.o !== null && r.o !== undefined);
-  const top = Math.max(...rows.map((r) => Math.max(r.j, r.o || 0)));
+  const top = Math.max(...rows.map((r) => Math.max(r.j, r.o || 0, r.r)));
   const refJ = rows.find((r) => r.sim === ref).j;
   let h = '<thead><tr><th>Kind of weather</th><th>Jarvis apogee (' + A.u + ')</th><th></th><th>Compared with ' + ref + ' (' + A.u + ')</th>' +
-    (hasOr ? '<th>OpenRocket apogee (' + A.u + ')</th><th>Jarvis vs OpenRocket</th>' : '') + '</tr></thead><tbody>';
+    (hasOr ? '<th>OpenRocket apogee (' + A.u + ')</th><th>Jarvis vs OpenRocket</th>' : '') +
+    '<th>RASAero apogee (' + A.u + ')</th><th>Jarvis vs RASAero</th></tr></thead><tbody>';
   for (const r of rows) {
-    const colour = colorOf.get(r.sim) || css('--flat');
+    const colour = state.sel.has(r.sim) ? lineColor('j', r.sim) : css('--flat');
     const sw = '<span class="sw" style="background:' + colour + '"></span>';
     const vs = r.sim === ref ? 'this one' : signed((r.j - refJ) * A.f, 0) + '<span class="d">' + signed((r.j / refJ - 1) * 100, 1) + '%</span>';
     h += '<tr class="' + (r.sim === ref ? 'refrow' : '') + '" title="' + windText(r.sim) + '"><td>' + sw + r.sim + '</td><td>' + fmt(r.j * A.f, 0) + '</td>' +
       '<td class="barcell"><div class="apbar"><i style="width:' + (r.j / top * 100).toFixed(1) + '%;background:' + colour + '"></i></div></td><td>' + vs + '</td>' +
-      (hasOr ? '<td>' + (r.o ? fmt(r.o * A.f, 0) : '–') + '</td><td>' + (r.o ? signed((r.j / r.o - 1) * 100, 1) + '%' : '–') + '</td>' : '') + '</tr>';
+      (hasOr ? '<td>' + (r.o ? fmt(r.o * A.f, 0) : '–') + '</td><td>' + (r.o ? signed((r.j / r.o - 1) * 100, 1) + '%' : '–') + '</td>' : '') +
+      '<td>' + fmt(r.r * A.f, 0) + '</td><td>' + signed((r.j / r.r - 1) * 100, 1) + '%</td></tr>';
   }
   $('weather').innerHTML = h + '</tbody>';
-  $('weathernote').textContent = 'Jarvis flies the rocket as it is now through each kind of weather, up to its highest point only (no way down, no 3D), so this is quick. ' +
+  $('weathernote').textContent = 'The highest point in each kind of weather: Jarvis\'s full flight, OpenRocket\'s run and the RASAero line. ' +
     'The bars share one scale. The first condition you tick on the left is the one the others are compared with. Hover a row for its wind and rail.';
 }
 function drawDescent() {
   const sims = ticked(), A = U.alt(), V = U.vel();
-  const any = sims.some((s) => runFor('design', s).sum.land);
+  const any = sims.some((s) => sixOf(s).landing);
   if (!sims.length || !any) { $('descent').innerHTML = ''; $('descentnote').textContent = sims.length ? 'No descent was set up for this rocket.' : ''; return; }
   const cols = [['Time to landing', 's', 0], ['Descent rate at landing', V.u, 1], ['Distance from the pad', A.u, 0], ['Peak parachute load', 'g', 1]];
   let h = '<thead><tr><th>Conditions and line</th>' + cols.map((c) => '<th>' + c[0] + ' (' + c[1] + ')</th>').join('') + '</tr></thead><tbody>';
   for (const sim of sims) {
-    const sw = '<span class="sw" style="background:' + colorOf.get(sim) + '"></span>';
-    const land = runFor('design', sim).sum.land, z = DATA.sixdof[sim].landing;
-    if (land) h += '<tr><td>' + sw + sim + ' · Jarvis</td><td>' + fmt(land.t, 0) + '</td><td>' + fmt(land.vVert * V.f, 1) + '</td><td>' + fmt(land.drift * A.f, 0) + '</td><td>' + fmt(land.peakG, 1) + '</td></tr>';
-    if (z) h += '<tr><td>' + sw + sim + ' · Jarvis, detailed</td><td>' + fmt(z.t, 0) + '</td><td>' + fmt(z.vVert * V.f, 1) + '</td><td>' + fmt(z.drift * A.f, 0) + '</td><td>' + fmt(z.peakG, 1) + '</td></tr>';
+    const z = sixOf(sim).landing;
+    if (z) h += '<tr><td>' + swatch('j', sim) + sim + ' · Jarvis</td><td>' + fmt(z.t, 0) + '</td><td>' + fmt(z.vVert * V.f, 1) + '</td><td>' + fmt(z.drift * A.f, 0) + '</td><td>' + fmt(z.peakG, 1) + '</td></tr>';
   }
   $('descent').innerHTML = h + '</tbody>';
   $('descentnote').textContent = (base.recovery ? 'The way down: ' + base.recovery.label + '. ' : '') + 'OpenRocket is left out here because its design file has no parachutes.';
@@ -572,24 +573,28 @@ function drawDescent() {
 function drawMore() {
   const sim = ticked()[0];
   if (!sim) { $('more').innerHTML = ''; return; }
-  const run = runFor('design', sim), s = run.sum, o = orOf(sim), om = o ? o.m : {};
+  const z = sixOf(sim), r = runFor(sim).sum, o = orOf(sim), om = o ? o.m : {};
   const A = U.alt(), V = U.vel(), M = U.mass(), L = U.length();
+  const geo = base.geometry, refGeo = base.refGeometry;
+  const rail = (v) => (v === undefined || v === null || Number.isNaN(v) ? null : v * V.f);
+  // label, Jarvis, OpenRocket (undefined = it has none), RASAero, unit, decimals
   const rows = [
-    ['Time to apogee', s.apogeeT, 1, om.apogeeT, 's'],
-    ['Max acceleration', s.accMax, 1, om.accMax, 'g'],
-    ['Speed leaving the rail', s.railV * V.f, 0, om.railV === undefined || om.railV === null ? undefined : om.railV * V.f, V.u],
-    ['Altitude at burnout', s.burnoutAlt * A.f, 0, undefined, A.u],
-    ['Biggest angle of attack', s.aoaMax, 1, undefined, '°'],
-    ['Sideways drift at apogee', s.drift * A.f, 0, undefined, A.u],
-    ['Mass at liftoff', s.mass0 * M.f, 2, undefined, M.u],
-    ['Mass at burnout', s.mass1 * M.f, 2, undefined, M.u],
-    ['Centre of gravity at liftoff (from the nose)', s.cg0 * L.f, 2, undefined, L.u],
-    ['Centre of pressure (from the nose)', s.cpBarrowman * L.f, 2, undefined, L.u],
-    ['Rocket length', s.length * L.f, 2, undefined, L.u],
-    ['Mass of the fins', s.finMass * M.f, 2, undefined, M.u],
+    ['Time to apogee', z.apogeeT, om.apogeeT, r.apogeeT, 's', 1],
+    ['Max acceleration', z.accMax, om.accMax, r.accMax, 'g', 1],
+    ['Speed leaving the rail', rail(z.railV), rail(om.railV), rail(r.railV), V.u, 0],
+    ['Altitude at burnout', z.burnoutAlt * A.f, undefined, r.burnoutAlt * A.f, A.u, 0],
+    ['Biggest angle of attack', z.aoaMax, undefined, r.aoaMax, '°', 1],
+    ['Sideways drift at apogee', z.drift * A.f, undefined, r.drift * A.f, A.u, 0],
+    ['Mass at liftoff', z.mass0 * M.f, undefined, r.mass0 * M.f, M.u, 2],
+    ['Mass at burnout', z.mass1 * M.f, undefined, r.mass1 * M.f, M.u, 2],
+    ['Centre of gravity at liftoff (from the nose)', z.cg0 * L.f, undefined, r.cg0 * L.f, L.u, 2],
+    ['Centre of pressure (from the nose)', z.cp * L.f, undefined, r.cpBarrowman * L.f, L.u, 2],
+    ['Rocket length', geo.length * L.f, undefined, refGeo.length * L.f, L.u, 2],
+    ['Mass of the fins', geo.finMass * M.f, undefined, refGeo.finMass * M.f, M.u, 2],
   ];
-  let h = '<thead><tr><th>' + sim + '</th><th>Jarvis</th><th>OpenRocket</th></tr></thead><tbody>';
-  rows.forEach(([label, j, d, orv, u]) => { h += '<tr><td>' + label + ' <span class="d">' + u + '</span></td><td>' + fmt(j, d) + '</td><td>' + (orv === undefined || orv === null ? '–' : fmt(orv, d)) + '</td></tr>'; });
+  let h = '<thead><tr><th>' + sim + '</th><th>Jarvis</th><th>OpenRocket</th><th>RASAero</th></tr></thead><tbody>';
+  const cell = (v, d) => '<td>' + (v === undefined || v === null ? '–' : fmt(v, d)) + '</td>';
+  rows.forEach(([label, j, orv, ras, u, d]) => { h += '<tr><td>' + label + ' <span class="d">' + u + '</span></td>' + cell(j, d) + cell(orv, d) + cell(ras, d) + '</tr>'; });
   $('more').innerHTML = h + '</tbody>';
 }
 
@@ -648,14 +653,14 @@ const stem = (name) => String(name || '').replace(/\.[^.]*$/, '');
 function warnings() {
   const out = [], sims = ticked(), multi = sims.length > 1, M = U.mass();
   for (const sim of sims) {
-    const s = runFor('design', sim).sum, pre = multi ? sim + ': ' : '';
-    if (s.marginLo < 1.0) out.push(['bad', pre + 'Stability falls to ' + fmt(s.marginLo, 2) + ' calibers during the climb. The team minimum is 1.0.']);
-    else if (s.marginRail < 1.5) out.push(['bad', pre + 'Stability just after the rail is ' + fmt(s.marginRail, 2) + ' calibers. The team minimum is 1.5.']);
-    if (s.marginLo > 6) out.push(['', pre + 'Stability is above 6 calibers. The rocket may turn hard into the wind.']);
-    if (s.railV < 15.24) out.push(['bad', pre + 'The speed leaving the rail is ' + fmt(s.railV / FT, 0) + ' ft/s. The team minimum is 50 ft/s.']);
+    const s = sixOf(sim), pre = multi ? sim + ': ' : '';
+    if (s.marginLo !== null && s.marginLo < 1.0) out.push(['bad', pre + 'Stability falls to ' + fmt(s.marginLo, 2) + ' calibers during the climb. The team minimum is 1.0.']);
+    else if (s.marginRail !== null && s.marginRail < 1.5) out.push(['bad', pre + 'Stability just after the rail is ' + fmt(s.marginRail, 2) + ' calibers. The team minimum is 1.5.']);
+    if (s.marginLo !== null && s.marginLo > 6) out.push(['', pre + 'Stability is above 6 calibers. The rocket may turn hard into the wind.']);
+    if (s.railV !== null && s.railV < 15.24) out.push(['bad', pre + 'The speed leaving the rail is ' + fmt(s.railV / FT, 0) + ' ft/s. The team minimum is 50 ft/s.']);
   }
   const diffs = refDiffs();
-  if (diffs.length) out.push(['', 'The RASAero table is out of date. The OpenRocket file has changed since RASAero was run: ' + diffs.join('; ') + '. The numbers are rough until you run Update CSV (bottom of this page).']);
+  if (diffs.length) out.push(['', 'The RASAero table is out of date. The OpenRocket file has changed since RASAero was run: ' + diffs.join('; ') + '. Jarvis flies the new masses with the old rocket\'s aerodynamics until you run Update CSV (bottom of this page).']);
   const chk = tableCheck();
   if (chk) out.push(['bad', chk]);
   if (refBig().length) out.push(['', 'Big change from the rocket RASAero was run for (' + refBig().join('; ') + '). Run Update CSV before you rely on these numbers.']);
@@ -684,11 +689,6 @@ function drawNotes() {
   bits.push('Motor: ' + DATA.files.motor + (mf && mf.note ? ' (' + mf.note + ')' : '') + ', ' + fmt(mf.impulse, 0) + ' N·s over ' + fmt(mf.burnS, 1) + ' s.');
   const first = ticked().map(orOf).find((o) => o);
   if (first) bits.push(first.label + '.');
-  const sim = ticked()[0];
-  if (sim) {
-    const six = DATA.sixdof[sim], j = runFor('ref', sim).sum;
-    bits.push('Jarvis quick against Jarvis detailed, apogee: ' + signed((j.apogee / six.apogee - 1) * 100, 1) + '%.');
-  }
   bits.push(refDiffs().length ? 'The RASAero table is out of date.' : 'The RASAero table matches the rocket.');
   if (isLocal) bits.push('This is a local copy, not the published page.');
   $('runinfo').textContent = bits.join(' ');
@@ -708,8 +708,8 @@ function readHash() {
   if (p.get('units') === 'metric' || p.get('units') === 'imperial') state.units = p.get('units');
   if (p.get('stab') === 'cal' || p.get('stab') === 'pct') state.stab = p.get('stab');
   if (metricOf(p.get('metric') || '')) state.metric = p.get('metric');
-  if (p.get('view') === 'abs' || p.get('view') === 'diff') state.view = p.get('view');
-  if (p.has('lines')) { const on = p.get('lines').split(','); LINES.forEach((l) => { state.lines[l.key] = on.includes(l.key); }); }
+  if (['abs', 'diff', 'diffras'].includes(p.get('view'))) state.view = p.get('view');
+  if (p.has('lines')) { const on = p.get('lines').split(','); if (on.includes('jd')) on.push('j'); LINES.forEach((l) => { state.lines[l.key] = on.includes(l.key); }); }   // 'jd' is from old links
   if (p.has('whole')) state.whole = p.get('whole') !== '0';
   const safe = (x) => { try { return decodeURIComponent(x); } catch (e) { return x; } };
   if (p.has('sel')) {
@@ -761,12 +761,9 @@ function ucRender() {
       (st.sweepAvailable ? '' : ' ' + st.sweepProblem) + (st.updateAvailable ? '' : ' ' + st.updateProblem);
     ras.appendChild(t);
   }
-  $('uc-open-ras').disabled = !(st && st.folders);
-  $('uc-open-repo').disabled = !(st && st.folders);
-  $('uc-open-note').textContent = st && st.folders ? 'Opens ' + st.folders.rasaero + ' or ' + st.folders.repo : 'These work once the helper is running (step 1).';
   $('uc-sweep').disabled = !(st && !busy && ready && st.sweepAvailable);
   $('uc-update').disabled = !(st && !busy && st.alpha.count >= 31 && st.updateAvailable);
-  $('uc-sweep-note').textContent = st && st.alpha.count >= 31 ? '' : (st ? 'Step 4 stays off until all 31 files exist.' : '');
+  $('uc-sweep-note').textContent = st && st.alpha.count >= 31 ? '' : (st ? 'Step 3 stays off until all 31 files exist.' : '');
   $('uc-cancel').hidden = !busy;
   const lines = st ? st.log.slice(-14) : [];
   $('uc-log').hidden = !lines.length; $('uc-log').textContent = lines.join('\n');
@@ -807,9 +804,6 @@ async function ucStart(job) {
   ucRender();
   ucPoll(true);   // asks again at once, then every second while the job runs
 }
-async function ucOpen(target) {
-  try { await helper('/api/open', true, { target }); } catch (e) { ucError(e.message); }
-}
 function ucError(msg) { const d = $('uc-done'); d.hidden = false; d.innerHTML = '<div class="warn bad"></div>'; d.firstChild.textContent = msg; }
 
 /* ---------- the Vision tab (standalone page only; inside the History page that page holds it) ---------- */
@@ -818,11 +812,22 @@ function showTab() {
   $('view-pred').hidden = vision; $('view-vision').hidden = !vision;
   $('layout').classList.toggle('wide', vision); $('main').classList.toggle('frame', vision);
   $('tab-pred').className = vision ? '' : 'on'; $('tab-vision').className = vision ? 'on' : '';
-  if (vision && !$('view-vision').firstChild) {
-    const f = document.createElement('iframe'); f.title = 'Vision: the flight in 3D'; f.src = 'viewer/index.html'; $('view-vision').appendChild(f);
+  if (vision) {   // the first condition ticked is the one Vision plays
+    const want = (DATA.viewers && DATA.viewers[ticked()[0]]) || 'viewer/index.html';
+    let f = $('view-vision').firstChild;
+    if (!f) { f = document.createElement('iframe'); f.title = 'Vision: the flight in 3D'; $('view-vision').appendChild(f); }
+    if (f.getAttribute('src') !== want) f.setAttribute('src', want);
   }
   return !vision;
 }
+
+/* ---------- the conditions are shared with the History page (and so with Vision) ---------- */
+// The History page puts its choice in this page's link (sel=...). A choice made here goes back to it in a message.
+function tellParent(type) {
+  if (!embedded) return;
+  try { window.parent.postMessage({ type, ork: DATA.files.ork, sims: ticked() }, '*'); } catch (e) { /* no parent to tell */ }
+}
+function shareSel() { tellParent('jarvis-sel'); }
 
 /* ---------- drawing everything ---------- */
 function update() {
@@ -851,10 +856,9 @@ function update() {
   $('uc-ready').onchange = ucRender;
   $('uc-sweep').onclick = () => ucStart('sweep');
   $('uc-update').onclick = () => ucStart('update');
-  $('uc-open-ras').onclick = () => ucOpen('rasaero');
-  $('uc-open-repo').onclick = () => ucOpen('repo');
   $('uc-cancel').onclick = async () => { try { await helper('/api/cancel', true); } catch (e) { ucError(e.message); } };
   update();
+  tellParent('jarvis-ready');   // so the History page can take this page's conditions when it has none of its own
   if (reopen) {   // coming back from an update: show its result
     const d = $('updatecsv'); d.open = true; setTimeout(() => d.scrollIntoView({ block: 'start' }), 300);
   }
