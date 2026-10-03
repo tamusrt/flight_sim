@@ -53,6 +53,12 @@ def main() -> None:
         default=None,
         help="Blue Raven log to offer in the viewer (default: the rocket's own)",
     )
+    parser.add_argument(
+        "--output", default="flight.html", help="where to write the viewer page"
+    )
+    parser.add_argument(
+        "--no-open", action="store_true", help="do not open the page in a browser"
+    )
     add_rocket_arguments(parser)
     args = parser.parse_args()
     max_time: float | None = args.max_time
@@ -95,7 +101,7 @@ def main() -> None:
         if hit is not None and hit.name == "rail exit":
             log.add_event("rail", "Rail exit", current_time)
 
-    if hit is APOGEE and not args.apogee:
+    if hit is APOGEE and not args.apogee and profile.scheme is not None:
         _log_recovery(log, flight, config, max_time, profile)
 
     real = None
@@ -106,7 +112,8 @@ def main() -> None:
         print(f"Loaded real flight from {real_path}")
     elif args.real is not None:
         parser.error(f"flight log not found: {args.real}")
-    print(f"Viewer written to {write_viewer(log, real=real)}")
+    written = write_viewer(log, args.output, open_browser=not args.no_open, real=real)
+    print(f"Viewer written to {written}")
 
 
 def _log_recovery(
@@ -117,8 +124,11 @@ def _log_recovery(
     profile: RocketProfile,
 ) -> None:
     """Fly and log the descent with the extended recovery model."""
-    plan = recovery_extension.plan_full_recovery(flight, config, profile.scheme)
-    print(f"Recovery: {profile.scheme.kind}")
+    scheme = profile.scheme
+    if scheme is None:
+        return
+    plan = recovery_extension.plan_full_recovery(flight, config, scheme)
+    print(f"Recovery: {scheme.kind}")
     if plan.separation.separated:
         print(f"charge fires at {plan.fire_s:.2f} seconds")
         print(f"line stretch at {plan.line_stretch_s:.2f} seconds")
@@ -130,7 +140,7 @@ def _log_recovery(
     print(f"impact at {plan.descent.times_s[-1]:.2f} seconds")
     recovery_extension.log_events(log, plan)
     for (time, frame), sample in zip(
-        recovery_extension.frames(plan, profile.scheme),
+        recovery_extension.frames(plan, scheme),
         plan.descent.states,
         strict=True,
     ):

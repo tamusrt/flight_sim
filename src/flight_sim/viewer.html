@@ -572,6 +572,8 @@ function setDataset(d){
   var pk=0; for(i=1;i<d.N;i++) if(d.thrust[i]>d.thrust[pk]) pk=i;
   var win=Math.round(0.5/DT), best=0, bi=-1;
   for(i=pk+win;i<d.N-win;i++){ if(d.thrust[i]<=1) break; var sl=(d.thrust[i+win]-d.thrust[i-win])/(2*win*DT); if(sl<best){best=sl;bi=i;} }
+  /* a motor that ends at full thrust (no tail) has no runout: that drop is the burnout */
+  if(bi>0&&!(d.thrust[Math.min(d.N-1,bi+2*win)]>0.05*d.thrust[pk])) bi=-1;
   REC.runout=bi>0?bi*DT:null; if(REC.runout!==null) events.push({k:'runout',label:'N₂O liquid runout (est.)',t:REC.runout,c:'--thrust'});
   REC.pRef=isFinite(d.p[0])?d.p[0]:NaN;
   events.sort(function(a,b){return a.t-b.t});

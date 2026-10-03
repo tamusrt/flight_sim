@@ -147,16 +147,20 @@ class RocketProfile:  # pylint: disable=too-many-instance-attributes
     reference_length_m: float
     fins: TrapezoidFinSet
     rail: LaunchRail
-    scheme: RecoveryScheme
+    scheme: RecoveryScheme | None
     # Logged flight to compare against in the viewer, if there is one
     flight_data: str | None = None
     # The day's conditions; Sol Invictus's by default
     wind: UniformWind = field(default_factory=lambda: WIND)
     pad_temperature_k: float = PAD_TEMPERATURE_K
+    pad_elevation_m: float = PAD_ELEVATION_M
+    pad_pressure_pa: float = PAD_PRESSURE_PA
 
     @property
     def recovery(self) -> RecoverySystem:
-        """The canopies of the recovery scheme."""
+        """The canopies of the recovery scheme; none for an ascent-only rocket."""
+        if self.scheme is None:
+            return RecoverySystem(parachutes=())
         return self.scheme.recovery
 
 
@@ -346,13 +350,13 @@ def get_default_config(profile: RocketProfile = INVICTUS) -> IntegrationConfigur
     return IntegrationConfiguration(
         truth=TruthConfiguration(
             atmosphere=LaunchSiteAtmosphere(
-                pad_elevation_m=PAD_ELEVATION_M,
+                pad_elevation_m=profile.pad_elevation_m,
                 pad_temperature_k=profile.pad_temperature_k,
-                pad_pressure_pa=PAD_PRESSURE_PA,
+                pad_pressure_pa=profile.pad_pressure_pa,
             ),
             wind=profile.wind,
             launch_latitude=scalar(LAUNCH_LATITUDE_DEG, "deg"),
-            launch_elevation=scalar(PAD_ELEVATION_M, "m"),
+            launch_elevation=scalar(profile.pad_elevation_m, "m"),
             launch_rail=profile.rail,
         )
     )
@@ -409,6 +413,17 @@ def add_rocket_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--morpheus", action="store_true", help="fly Morpheus instead of Sol Invictus"
     )
+    parser.add_argument(
+        "--ork",
+        metavar="FILE",
+        default=None,
+        help="fly an OpenRocket design; needs --aero (RASAero CSV) and --motor",
+    )
+    parser.add_argument("--motor", default=None, help="thrust curve .eng for --ork")
+    parser.add_argument(
+        "--ork-sim", default=None, help="saved OpenRocket sim whose launch to use"
+    )
+    parser.add_argument("--name", default=None, help="rocket name for --ork")
 
 
 def select_rocket(args: argparse.Namespace) -> tuple[RocketProfile, str]:
@@ -421,6 +436,20 @@ def select_rocket(args: argparse.Namespace) -> tuple[RocketProfile, str]:
     Returns:
         tuple[RocketProfile, str]: The rocket and the aero CSV path.
     """
+    if args.ork is not None:
+        if args.aero is None or args.motor is None:
+            raise SystemExit("--ork needs --aero (RASAero CSV) and --motor (.eng)")
+        # Imported here: ork_profile builds a RocketProfile from this module
+        from flight_sim.ork_profile import (  # pylint: disable=import-outside-toplevel,cyclic-import
+            profile_from_ork,
+        )
+
+        return (
+            profile_from_ork(
+                args.ork, args.aero, args.motor, sim=args.ork_sim, name=args.name
+            ),
+            args.aero,
+        )
     profile = (
         MORPHEUS if args.morpheus else profile_for(args.aero or INVICTUS.aero_file)
     )
@@ -469,7 +498,7 @@ def main(argv: Sequence[str] = ()) -> None:  # pylint: disable=too-many-statemen
         step_lengths.append(float(dt_taken.m_as("s")))
         apply_mass_properties(state, profile)
 
-    if hit is APOGEE:
+    if hit is APOGEE and profile.scheme is not None:
         descent = descend(current_time, state, config, profile)
         telemetry.extend(map(telemetry_row, descent.times_s, descent.states))
 
