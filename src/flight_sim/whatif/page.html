@@ -219,6 +219,8 @@ const design = {
   finCount: base.fins.count, finRoot: base.fins.root, finTip: base.fins.tip, finSpan: base.fins.span,
   finSweep: base.fins.sweep, finThick: base.fins.thick, noseLength: base.noseLength, bodyLength: base.bodyLength,
   tailLength: base.tailLength, tailAft: base.tailAftRadius,
+  // from the end of the body (where the boat tail starts) to the fins' leading edge, as RASAero measures it
+  finFromBase: base.bodyStart + base.bodyLength - (base.fins.teX - base.fins.root),
 };
 base.geometry = W.applyChange(base, design);
 const refChange = DATA.refChange || design;
@@ -575,13 +577,16 @@ const GEOM = [
   ['finCount', 'Fin count', true], ['finRoot', 'Fin root chord'], ['finTip', 'Fin tip chord'], ['finSpan', 'Fin span (height)'],
   ['finSweep', 'Fin sweep'], ['finThick', 'Fin thickness'], ['noseLength', 'Nose cone length'],
   ['tubes', 'Body tubes, total length'], ['tailLength', 'Boat-tail length'], ['tailAft', 'Boat-tail aft radius'],
+  ['finFromBase', 'Fins, distance from the base of the tube'],
 ];
 const tubesTotal = (c) => base.length - base.noseLength - base.tailLength + (c.bodyLength - design.bodyLength);
 const gval = (c, k) => (k === 'tubes' ? tubesTotal(c) : c[k]);
+// the rows both files have (an older RASAero file may not say where the fins are)
+const shared = () => GEOM.filter(([k]) => gval(refChange, k) !== undefined && gval(design, k) !== undefined);
 function geometryTable() {
   const L = U.len(), file = DATA.refFile || 'the OpenRocket file';
   let html = '<thead><tr><th></th><th>RASAero has (' + file + ')</th><th>OpenRocket file has</th><th>Difference</th></tr></thead><tbody>';
-  GEOM.forEach(([k, label, int]) => {
+  shared().forEach(([k, label, int]) => {
     const r = gval(refChange, k), d = gval(design, k), x = d - r;
     const same = Math.abs(x) < (int ? 0.5 : 1e-4);
     const f = int ? { f: 1, u: '', d: 0 } : L;
@@ -595,7 +600,7 @@ function geometryTable() {
 function refDiffs() {
   if (!DATA.refChange) return [];
   const L = U.len(), out = [];
-  GEOM.forEach(([k, label, int]) => {
+  shared().forEach(([k, label, int]) => {
     const r = gval(refChange, k), d = gval(design, k);
     if (Math.abs(d - r) < (int ? 0.5 : 1e-4)) return;
     out.push(int ? label.toLowerCase() + ' (RASAero ' + r + ', OpenRocket file ' + d + ')'
@@ -642,7 +647,11 @@ function warnings() {
   }
   const mf = DATA.motorFile;
   if (first && first.source === 'file' && mf && mf.propKg && (Math.abs(mf.propKg - mf.savedPropKg) > 0.5 || Math.abs(mf.totalKg - mf.savedTotalKg) > 1.0)) {
-    out.push(['', 'Jarvis flies the motor in ' + DATA.files.motor + ' (' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' of propellant). The OpenRocket results saved in the design file used a different motor (' + fmt(mf.savedPropKg * M.f, 1) + ' ' + M.u + '), so the two will not agree until OpenRocket is run again with the same motor.']);
+    // name the number that differs: the propellant, the total motor mass, or both
+    const what = [];
+    if (Math.abs(mf.propKg - mf.savedPropKg) > 0.5) what.push('propellant ' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' in the motor file, ' + fmt(mf.savedPropKg * M.f, 1) + ' ' + M.u + ' in OpenRocket');
+    if (Math.abs(mf.totalKg - mf.savedTotalKg) > 1.0) what.push('total motor mass ' + fmt(mf.totalKg * M.f, 1) + ' ' + M.u + ' in the motor file, ' + fmt(mf.savedTotalKg * M.f, 1) + ' ' + M.u + ' in OpenRocket');
+    out.push(['', 'Jarvis flies the motor in ' + DATA.files.motor + ', but the OpenRocket results saved in the design file used a different motor: ' + what.join('; ') + '. The two will not agree until OpenRocket is run again with ' + DATA.files.motor + '.']);
   }
   return out;
 }

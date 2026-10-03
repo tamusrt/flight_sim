@@ -149,6 +149,13 @@ def read_rasaero_geometry(cdx_path: Path, ork: OrkRocket) -> dict[str, float]:
     tubes = [float(t.findtext("Length", "0")) for t in design.findall("BodyTube")]
     if nose is None or fin is None:
         raise ValueError(f"{cdx_path}: needs a nose cone and a fin set")
+    # RASAero's "Distance from the base of the tube": from the aft end of the
+    # fins' tube to their leading edge
+    fin_from_base = (
+        {"finFromBase": float(fin.findtext("Location", "0")) * _IN}
+        if fin.find("Location") is not None
+        else {}
+    )
     # The .ork splits the same stretch of tube differently, so the difference in
     # their total length goes into the one tube the page stretches.
     ork_tubes = ork.length_m - ork.nose_length_m - ork.tail_length_m
@@ -168,6 +175,7 @@ def read_rasaero_geometry(cdx_path: Path, ork: OrkRocket) -> dict[str, float]:
         "tailAft": 0.5 * float(tail.findtext("RearDiameter", "0")) * _IN
         if tail is not None
         else 0.5 * ork.reference_diameter_m,
+        **fin_from_base,
     }
 
 

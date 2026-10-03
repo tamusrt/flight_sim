@@ -78,7 +78,9 @@
       bodyEnd: bodyEnd1,
       fins: {
         count: c.finCount, root: c.finRoot, tip: c.finTip, span: c.finSpan, sweep: c.finSweep, thick: c.finThick,
-        teX: bodyEnd1 - (bodyEnd0 - base.fins.teX),
+        // the fins keep their place on the tube unless the change says where they are (RASAero's distance
+        // from the base of the tube to the leading edge)
+        teX: c.finFromBase !== undefined ? bodyEnd1 - (c.finFromBase - c.finRoot) : bodyEnd1 - (bodyEnd0 - base.fins.teX),
       },
     };
     g.fins.leX = g.fins.teX - c.finRoot;

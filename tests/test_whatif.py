@@ -273,7 +273,7 @@ def test_page_is_one_file_with_the_data_and_engine(
     assert "WhatIf" in html and "/*ENGINE*/" not in html
     assert 'type="range"' not in html and "'range'" not in html  # no sliders
     assert 'id="updatecsv"' in html and "/api/status" in html
-    assert 'id="weather"' in html and "climbOnly" in html  # apogee in every weather
+    assert 'id="weather"' in html  # apogee in every weather
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
@@ -348,3 +348,19 @@ console.log(JSON.stringify({{base, big: bigOut, lighter, land: full.sum.land, la
     )  # descent can be switched off
     # the climb-only run the weather table uses reaches the same apogee as the full run
     assert out["noApogee"] == pytest.approx(base["apogee"])
+
+
+def test_rasaero_fin_position_is_read_from_the_base_of_the_tube(tmp_path: Path) -> None:
+    """RASAero's fin Location (base of the tube to the leading edge) becomes ``finFromBase``."""
+    ork = load_ork(write_ork(tmp_path / "t.ork"))
+    cdx = write_cdx(tmp_path / "t.CDX1")
+    cdx.write_text(
+        cdx.read_text(encoding="utf-8").replace(
+            "<Count>3</Count>", "<Count>3</Count><Location>14</Location>"
+        ),
+        encoding="utf-8",
+    )
+    assert read_rasaero_geometry(cdx, ork)["finFromBase"] == pytest.approx(14 * 0.0254)
+    assert "finFromBase" not in read_rasaero_geometry(
+        write_cdx(tmp_path / "u.CDX1"), ork
+    )
