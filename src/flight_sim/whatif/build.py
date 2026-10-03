@@ -6,8 +6,9 @@ Usage::
         --motor D.eng|D.rse --out site/predictions [--name "SRT14"] [--sim average]
 
 The page (``index.html``) shows the predictions of the committed design from a
-quick flight model; ``viewer/index.html`` is the full 6-DOF flight in 3D, flown
-from the design as committed. Both come from the same ``.ork``, RASAero CSV and
+quick flight model, up to the apogee and down to the ground under the original
+(Sol Invictus) descent; ``viewer/index.html`` is the full 6-DOF flight in 3D,
+flown from the design as committed. Both come from the same ``.ork``, RASAero CSV and
 thrust curve.
 """
 
@@ -32,6 +33,7 @@ from flight_sim.__main__ import (
     get_default_properties,
     get_launch_state,
 )
+from flight_sim.descent import DescentResult, ReefedParachute, simulate_descent
 from flight_sim.events import APOGEE, rail_exit
 from flight_sim.integration import adaptive_step
 from flight_sim.motor_file import load_motor
@@ -195,8 +197,39 @@ def _or_series(sim: SavedSim) -> dict[str, Any]:
     }
 
 
+def _row(time: float, state: Any) -> tuple[float, float, float]:
+    """Time, height above the pad and speed of one sample."""
+    return (
+        time,
+        float(state.position.m_as("m")[0]),
+        float(np.linalg.norm(state.velocity.m_as("m/s"))),
+    )
+
+
+def _landing(descent: DescentResult, mass_kg: float) -> dict[str, Any]:
+    """What the descent ends with: when, how fast, how far and how hard."""
+    last = descent.states[-1]
+    position = last.position.m_as("m")
+    speed = float(np.linalg.norm(last.velocity.m_as("m/s")))
+    return {
+        "landed": descent.landed,
+        "t": round(descent.times_s[-1], 1),
+        "v": round(speed, 2),
+        "vVert": round(abs(float(last.velocity.m_as("m/s")[0])), 2),
+        "drift": round(float(np.hypot(position[1], position[2])), 1),
+        "energy": round(0.5 * mass_kg * speed**2, 1),
+        "peakG": round(
+            max((d.peak_load_g for d in descent.deployments), default=0.0), 2
+        ),
+        "deployments": [
+            {"name": d.name, "t": round(d.time_s, 2), "alt": round(d.altitude_m, 1)}
+            for d in descent.deployments
+        ],
+    }
+
+
 def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
-    """Fly the 6-DOF sim to apogee and keep a coarse record of it."""
+    """Fly the 6-DOF sim to apogee, then down under the descent (coarse record)."""
     properties = get_default_properties(profile)
     state = get_launch_state(profile)
     config = get_default_config(profile)
@@ -206,16 +239,9 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
     rows = []
     next_sample = 0.0
     while True:
-        velocity = state.velocity.m_as("m/s")
         if time >= next_sample:
             next_sample += 0.5
-            rows.append(
-                (
-                    time,
-                    float(state.position.m_as("m")[0]),
-                    float(np.linalg.norm(velocity)),
-                )
-            )
+            rows.append(_row(time, state))
         if time > 400:
             break
         state, taken, dt, hit = adaptive_step(
@@ -224,23 +250,63 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
         time += float(taken.m_as("s"))
         apply_mass_properties(state, profile)
         if hit is APOGEE:
-            rows.append(
-                (
-                    time,
-                    float(state.position.m_as("m")[0]),
-                    float(np.linalg.norm(state.velocity.m_as("m/s"))),
-                )
-            )
+            rows.append(_row(time, state))
             break
     data = np.array(rows)
     top = int(data[:, 1].argmax())
-    return {
-        "t": [round(float(v), 2) for v in data[:, 0]],
-        "alt": [round(float(v), 1) for v in data[:, 1]],
-        "v": [round(float(v), 1) for v in data[:, 2]],
+    result: dict[str, Any] = {
         "apogee": round(float(data[top, 1]), 1),
         "apogeeT": round(float(data[top, 0]), 2),
         "vmax": round(float(data[:, 2].max()), 1),
+    }
+    if profile.scheme is not None and hit is APOGEE:
+        mass = float(state.current_mass.m_as("kg"))
+        descent = simulate_descent(time, state, config, profile.recovery)
+        # one sample a second of the way down (the descent is sampled every 0.1 s)
+        rows += [
+            _row(t, s)
+            for i, (t, s) in enumerate(
+                zip(descent.times_s, descent.states, strict=True)
+            )
+            if i % 10 == 9 or i == len(descent.times_s) - 1
+        ]
+        result["landing"] = _landing(descent, mass)
+        data = np.array(rows)
+    result["t"] = [round(float(v), 2) for v in data[:, 0]]
+    result["alt"] = [round(float(v), 1) for v in data[:, 1]]
+    result["v"] = [round(float(v), 1) for v in data[:, 2]]
+    return result
+
+
+def _recovery_data(profile: Any) -> dict[str, Any] | None:
+    """The descent the profile flies, as the page's model needs it."""
+    scheme = profile.scheme
+    if scheme is None:
+        return None
+    recovery = scheme.recovery
+    first = recovery.parachutes[0]
+    text = "Sol Invictus recovery as a stand-in: one canopy on a single separation"
+    if isinstance(first, ReefedParachute):
+        inches = first.diameter_m / 0.0254
+        text = (
+            f"Sol Invictus recovery as a stand-in: {inches:.0f} in reefed main, "
+            f"out {first.deploy_delay_s:g} s after apogee, "
+            f"reef cut at {first.disreef_altitude_m / 0.3048:,.0f} ft"
+        )
+    return {
+        "label": text,
+        "bodyCdA": recovery.body_drag_area_m2,
+        "stages": [
+            {
+                "name": stage.name,
+                "cda": stage.drag_area_m2,
+                "fill": stage.fill_distance_m,
+                "delay": stage.deploy_delay_s,
+                "alt": stage.deploy_altitude_m,
+                "after": stage.after,
+            }
+            for stage in recovery.stages
+        ],
     }
 
 
@@ -263,12 +329,13 @@ def build_data(  # pylint: disable=too-many-locals
     motor = motor_with_file(saved, motor_file)
     aero = reduce_aero(aero_csv, ork.reference_diameter_m)
     sims = {n: _preset(s) for n, s in ork.sims.items()}
-    six = {
-        n: _six_dof(
-            profile_from_ork(ork_path, str(aero_csv), str(motor_path), sim=n, name=name)
-        )
+    profiles = {
+        n: profile_from_ork(ork_path, str(aero_csv), str(motor_path), sim=n, name=name)
         for n in ork.sims
     }
+    six = {n: _six_dof(profile) for n, profile in profiles.items()}
+    base = _base(ork, aero, motor, motor_file.thrust)
+    base["recovery"] = _recovery_data(profiles[default_sim])
     return {
         "name": name,
         "design": ork.name,
@@ -293,7 +360,7 @@ def build_data(  # pylint: disable=too-many-locals
         "refChange": None if rasaero is None else read_rasaero_geometry(rasaero, ork),
         "refFile": None if rasaero is None else rasaero.name,
         "defaultSim": default_sim,
-        "base": _base(ork, aero, motor, motor_file.thrust),
+        "base": base,
         "presets": sims,
         "openrocket": {n: _or_series(s) for n, s in ork.sims.items()},
         "sixdof": six,
@@ -314,11 +381,11 @@ def write_page(data: dict[str, Any], out_dir: Path) -> Path:
 
 
 def write_viewer(args: argparse.Namespace, out_dir: Path, sim: str) -> Path:
-    """Fly the 6-DOF sim to apogee and write the 3D viewer page."""
+    """Fly the 6-DOF sim, down to the ground, and write the 3D viewer page."""
     target = out_dir / "viewer" / "index.html"
     target.parent.mkdir(parents=True, exist_ok=True)
     command = [
-        sys.executable, "-m", "flight_sim.visual_run", "--apogee", "--no-open",
+        sys.executable, "-m", "flight_sim.visual_run", "--no-open",
         "--ork", args.ork, "--aero", args.aero, "--motor", args.motor,
         "--ork-sim", sim, "--name", args.name, "--output", str(target),
     ]  # fmt: skip

@@ -64,6 +64,23 @@ def test_data_holds_the_design_and_its_references(data: dict[str, object]) -> No
     json.dumps(data)  # must serialise
 
 
+def test_data_holds_the_descent_and_the_6dof_landing(data: dict[str, object]) -> None:
+    """The original descent is in the data, and the 6-DOF run ends on the ground."""
+    recovery = data["base"]["recovery"]
+    assert "Sol Invictus" in recovery["label"] and recovery["bodyCdA"] > 0.0
+    assert [s["name"] for s in recovery["stages"]] == ["main reefed", "main reef cut"]
+    assert recovery["stages"][1]["after"] == "main reefed"
+    landing = data["sixdof"]["calm"]["landing"]
+    assert landing["landed"] and landing["t"] > data["sixdof"]["calm"]["apogeeT"]
+    assert 0.0 < landing["vVert"] <= landing["v"] and landing["peakG"] > 0.0
+    assert [d["name"] for d in landing["deployments"]] == [
+        "main reefed",
+        "main reef cut",
+    ]
+    # the 6-DOF record carries on down to the ground
+    assert data["sixdof"]["calm"]["alt"][-1] == pytest.approx(0.0, abs=1.0)
+
+
 def test_rasaero_geometry_is_read_in_metres(tmp_path: Path) -> None:
     """The ``.CDX1`` inches become the page's change keys, tube difference stretched in."""
     ork = load_ork(write_ork(tmp_path / "t.ork"))
@@ -162,10 +179,13 @@ const big = W.fly(b, wide, cond).sum;
 const longer = Object.assign({{}}, c0, {{noseLength: b.noseLength + 0.2}});
 const nose = W.fly(b, longer, cond).sum;
 const bigOut = {{m: big.marginRail, apogee: big.apogee, finMass: big.finMass}};
+const full = W.fly(b, c0, cond, {{every: 0.1}});
+const none = W.fly(b, c0, cond, {{descent: false}});
 b.refGeometry = W.applyChange(b, wide);  // a table made for bigger fins than the design
 const lighter = W.fly(b, c0, cond).sum.apogee;
 delete b.refGeometry;
-console.log(JSON.stringify({{base, big: bigOut, lighter,
+console.log(JSON.stringify({{base, big: bigOut, lighter, land: full.sum.land, lastAlt: full.out.d.alt[full.out.d.alt.length - 1],
+  ascent: full.out.nAscent, nT: full.out.t.length, noLand: none.sum.land === undefined, noD: none.out.d === undefined,
   nose: {{cg: nose.cg0, cp: nose.cpBarrowman, m: nose.marginRail}},
   mass: W.massAt(b.geometry, 0).m}}));
 """,
@@ -190,3 +210,15 @@ console.log(JSON.stringify({{base, big: bigOut, lighter,
     # A longer nose moves the CG and the CP aft together, leaving the margin nearly alone
     assert out["nose"]["cg"] > base["cg0"] and out["nose"]["cp"] > base["cpBarrowman"]
     assert out["nose"]["m"] == pytest.approx(base["marginRail"], abs=0.35)
+    # The descent ends on the ground. The rate it settles at depends only on the mass and the
+    # canopy, so it must match the 6-DOF sim's (the two ascents of this toy design differ)
+    land, six = out["land"], data["sixdof"]["calm"]["landing"]
+    assert land["landed"] and out["lastAlt"] == 0.0 and land["t"] > base["apogeeT"]
+    assert land["vVert"] == pytest.approx(six["vVert"], rel=0.05)
+    assert land["peakG"] > 0.0 and [d["name"] for d in land["deployments"]] == [
+        "main reefed",
+        "main reef cut",
+    ]
+    assert (
+        out["ascent"] == out["nT"] and out["noLand"] and out["noD"]
+    )  # descent can be switched off

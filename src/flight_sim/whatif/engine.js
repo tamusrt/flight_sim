@@ -7,7 +7,8 @@
  *   centre of pressure   shifted by the Barrowman CP shift
  *   axial force    plus the change in fin, body-friction, nose-wave and base drag from RASAero's
  * Mass, CG and pitch inertia come from the component masses, with the stretch and added shell mass
- * of the change. Nothing here is OpenRocket or RASAero: it is a quick estimate, checked against the
+ * of the change. After apogee the rocket falls as a point mass under the same descent the 6-DOF sim
+ * uses (the body's drag plus each canopy stage as it fills; descent.py), in the same uniform wind. Nothing here is OpenRocket or RASAero: it is a quick estimate, checked against the
  * 6-DOF sim and OpenRocket on the design as committed (see the page's "model check").
  * Units are SI throughout; x is measured from the nose tip, positive aft.
  */
@@ -192,6 +193,83 @@
     };
   }
 
+  /* ---------- the descent: a point mass under the body's drag plus each canopy stage as it fills ---------- */
+  // The same model as descent.simulate_descent. rec = { bodyCdA, stages: [{ name, cda, fill, delay, alt, after }] };
+  // st = the state at apogee; the wind blows along y at wy.
+  function descend(rec, mass, cond, wy, st, every, record) {
+    const stages = rec.stages, opened = [];
+    const isOpen = (name) => opened.some((o) => o.st.name === name);
+    const byHeight = (sg) => sg.alt !== null && sg.alt !== undefined;
+    const frac = (o, dist) => (o.st.fill <= 0 ? 1 : clamp((dist - o.dist) / o.st.fill, 0, 1) ** 2);
+    const area = (dist) => opened.reduce((a, o) => a + frac(o, dist) * o.st.cda, rec.bodyCdA);
+    const air = (X) => atmosphere(cond.padK, cond.padPa, Math.max(X, 0));
+    const grav = (X) => G0 * (REARTH / (REARTH + Math.max(X, 0) + cond.padAlt)) ** 2;
+    const f = (s) => {                                          // s = [up, y, vup, vy, distance through the air]
+      const rvy = s[3] - wy, V = Math.hypot(s[2], rvy);
+      const k = 0.5 * air(s[0]).rho * V * area(s[4]) / mass;
+      return [s[2], s[3], -k * s[2] - grav(s[0]), -k * rvy, V];
+    };
+    const rk4 = (s, h) => {
+      const add = (a, b, c) => a.map((v, i) => v + c * b[i]);
+      const k1 = f(s), k2 = f(add(s, k1, h / 2)), k3 = f(add(s, k2, h / 2)), k4 = f(add(s, k3, h));
+      return s.map((v, i) => v + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+    };
+    const loading = (o, el) => el >= o.t && (o.inflated === null || el <= o.inflated + 1.0);
+    const after = (el, s) => {
+      const V = Math.hypot(s[2], s[3] - wy);
+      const load = 0.5 * air(s[0]).rho * V * V * area(s[4]) / mass / G0;
+      for (const o of opened) {
+        if (o.inflated === null && frac(o, s[4]) >= 1) o.inflated = el - (s[4] - o.dist - o.st.fill) / Math.max(V, 1e-9);
+        if (loading(o, el)) o.peak = Math.max(o.peak, load);
+      }
+    };
+    const releaseDue = (el, s) => {
+      let any = false;
+      for (const sg of stages) {
+        if (isOpen(sg.name) || (sg.after && !isOpen(sg.after))) continue;
+        if (byHeight(sg) ? s[0] <= sg.alt : el >= sg.delay - 1e-9) {
+          opened.push({ st: sg, t: el, dist: s[4], alt: s[0], inflated: null, peak: 0 });
+          any = true;
+        }
+      }
+      if (any) after(el, s);
+    };
+    const out = { t: [], alt: [], y: [], v: [] };
+    const push = (el, s) => {
+      if (!record) return;
+      out.t.push(st.t + el); out.alt.push(s[0]); out.y.push(s[1]); out.v.push(Math.hypot(s[2], s[3]));
+    };
+    let s = [st.x, st.y, st.vx, st.vy, 0], el = 0, next = every, landed = false, guard = 0;
+    while (el < 4000 && guard++ < 600000) {
+      releaseDue(el, s);
+      let h = Math.min(0.05, next - el);
+      for (const sg of stages) if (!isOpen(sg.name) && !byHeight(sg)) h = Math.min(h, sg.delay - el);
+      if (opened.some((o) => loading(o, el))) h = Math.min(h, 0.004);
+      const V = Math.hypot(s[2], s[3] - wy), rate = air(s[0]).rho * V * area(s[4] + V * h) / mass;
+      if (rate > 0) h = Math.min(h, 0.1 / rate);
+      h = Math.max(h, 1e-6);
+      let nw = rk4(s, h);
+      const floor = Math.max(0, ...stages.filter((sg) => !isOpen(sg.name) && byHeight(sg)).map((sg) => sg.alt));
+      if (nw[0] < floor && floor < s[0]) {                      // end the step on the release height or the ground
+        h *= (s[0] - floor) / (s[0] - nw[0]);
+        nw = rk4(s, h);
+        if (floor > 0) nw[0] = Math.max(nw[0], floor);
+      }
+      el += h; s = nw; after(el, s);
+      if (s[0] <= 1e-6) { s[0] = 0; push(el, s); landed = true; break; }
+      if (el >= next - 1e-9) { push(el, s); next += every; }
+    }
+    const v = Math.hypot(s[2], s[3]);
+    return {
+      out,
+      sum: {
+        landed, t: st.t + el, v, vVert: Math.abs(s[2]), drift: Math.abs(s[1]), energy: 0.5 * mass * v * v,
+        peakG: opened.reduce((a, o) => Math.max(a, o.peak), 0),
+        deployments: opened.map((o) => ({ name: o.st.name, t: st.t + o.t, alt: o.alt })),
+      },
+    };
+  }
+
   /* ---------- the flight ---------- */
   function fly(base, change, cond, opt) {
     opt = opt || {};
@@ -304,6 +382,11 @@
       }
       if (x > sum.apogee) { sum.apogee = x; sum.apogeeT = t; sum.drift = y; }
       if (vx < 0 && t > 1) break;
+    }
+    out.nAscent = out.t.length;
+    if (opt.descent !== false && base.recovery && vx < 0 && sum.apogee > 0) {
+      const d = descend(base.recovery, massAt(geo, 1).m, cond, wy, { t, x, y, vx, vy }, opt.descentEvery || 0.5, rec > 0);
+      out.d = d.out; sum.land = d.sum;
     }
     sum.length = geo.length;
     sum.mass0 = massAt(geo, 0).m; sum.mass1 = massAt(geo, 1).m;

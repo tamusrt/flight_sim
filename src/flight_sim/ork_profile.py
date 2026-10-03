@@ -8,6 +8,11 @@ that the CSV was made from: the sim cannot tell whether the two still agree.
 
 The saved OpenRocket simulation named ``sim`` supplies the launch rod, wind
 and site, since those are not part of the rocket itself.
+
+An ``.ork`` that carries no parachutes gets the original descent: the recovery
+Sol Invictus flies (a reefed 120 in main on one separation), with the body
+drag taken from this rocket's own size. Replace it once the rocket has a
+recovery design of its own.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from flight_sim.__main__ import RocketProfile
+from flight_sim.__main__ import RECOVERY, RocketProfile
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind
 from flight_sim.motor_file import MotorFile, eng_for_sim, load_motor
@@ -30,11 +35,15 @@ from flight_sim.ork import (
     mass_properties,
     saved_motor,
 )
+from flight_sim.recovery_extension import EJECTION_CHARGE, FLIGHT_COMPUTER
+from flight_sim.recovery_systems import ReefedSingleSeparation
 from flight_sim.units import scalar
 from flight_sim.vehicle.mass_properties import MassPropertiesTable
 from flight_sim.vehicle.rocket_properties import TrapezoidFinSet
 
 _LAPSE_K_PER_M = 0.0065
+# Drag coefficient of the rocket falling roughly nose-first, as in __main__
+_FALLING_BODY_CD = 0.55
 _ISA_EXPONENT = 5.2559
 
 
@@ -93,6 +102,20 @@ def _sim_eng(motor_path: str | Path) -> str:
     return str(eng_for_sim(motor_path, scratch))
 
 
+def original_descent(reference_area_m2: float) -> ReefedSingleSeparation:
+    """The Sol Invictus descent, with the falling body's drag for this rocket.
+
+    Args:
+        reference_area_m2 (float): The rocket's body cross-section.
+
+    Returns:
+        ReefedSingleSeparation: One reefed canopy out 3 s after apogee, cut
+        open at 2000 ft, on a single separation.
+    """
+    recovery = replace(RECOVERY, body_drag_area_m2=_FALLING_BODY_CD * reference_area_m2)
+    return ReefedSingleSeparation(recovery, FLIGHT_COMPUTER, EJECTION_CHARGE)
+
+
 def profile_from_ork(  # pylint: disable=too-many-locals
     ork_path: str | Path,
     aero_csv: str,
@@ -117,7 +140,7 @@ def profile_from_ork(  # pylint: disable=too-many-locals
             None (the saved simulation's where the file gives none).
 
     Returns:
-        RocketProfile: Ready to fly; it has no recovery, so it is flown to apogee.
+        RocketProfile: Ready to fly, down to the ground under the original descent.
     """
     ork = load_ork(ork_path)
     sim_name = sim if sim is not None else next(iter(ork.sims))
@@ -151,7 +174,7 @@ def profile_from_ork(  # pylint: disable=too-many-locals
             elevation=scalar(90.0 - cond["launchrodangle"], "deg"),
             azimuth=scalar(cond["launchroddirection"], "deg"),
         ),
-        scheme=None,
+        scheme=original_descent(ork.reference_area_m2),
         wind=UniformWind(
             speed=scalar(cond["windaverage"], "m/s"),
             from_azimuth=scalar(math.degrees(cond["winddirection"]), "deg"),

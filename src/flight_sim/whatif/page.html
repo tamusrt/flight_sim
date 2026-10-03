@@ -79,26 +79,33 @@
       <div class="chartbox"><div class="plot" id="p-stab"></div></div>
       <div class="chartbox"><div class="plot" id="p-cd"></div></div>
     </div>
-    <h3 class="legend" style="margin-bottom:6px"><b>Geometry: the .ork now against the RASAero run behind the CSV</b></h3>
+    <h3 class="legend" style="margin-bottom:6px"><b>Geometry: the .ork now against the rocket RASAero was run for</b></h3>
     <div class="tablewrap"><table id="geometry"></table></div>
     <p class="legend" id="provenance"></p>
-    <p class="legend"><b>How the numbers are made.</b> The geometry, masses and launch conditions come from the committed <code>.ork</code>; the aerodynamics come from the team's RASAero table. A planar (up, downrange, pitch) model flies the rocket on that table and corrects the table for any difference between the <code>.ork</code> and the geometry RASAero was run for (table above): normal force and centre of pressure from Barrowman's equations, and the drag of the fins, body friction, nose and boat-tail from simple formulas, applied as a difference from RASAero's value. Mass, CG and pitch inertia come from the component masses in the <code>.ork</code>. The 6-DOF column is the full sim flown on the RASAero table as it is, and the OpenRocket column is what is stored in the file, so the gaps between the columns show how much to trust the model.</p>
+    <p class="legend"><b>How the numbers are made.</b> Size, mass and launch conditions come from the <code>.ork</code>. Lift and drag come from the team's RASAero table (the CSV). If the <code>.ork</code> no longer matches the rocket RASAero was run for, the model corrects the table (see the geometry table above). The 6-DOF column is the full sim flown on the RASAero table. The OpenRocket column is what is saved in the <code>.ork</code>. The gaps between the columns show how far to trust the model. After apogee the rocket falls as a point mass under the descent named in the chips above, in the same wind.</p>
     <details><summary>What it does not do</summary>
-      <p class="legend">The motor is the thrust curve named above (the newest motor file in the thrust-curve folder), so a longer or heavier rocket is not given more propellant. There is no descent or recovery. Fin flutter, fin loads, rail-button loads and aeroelastic effects are not checked. Roll is not modelled. The model is planar, so crosswind in a second plane, coning and roll-pitch coupling are left to the 3D flight. When the geometry table above shows a large difference (more than about 25% in a fin dimension, a different fin count, nose shape or body diameter, or a new boat-tail), update the CSV (below) so RASAero is run for the current rocket.</p>
+      <p class="legend">The motor is the newest motor file in the thrust-curve folder. A longer or heavier rocket does not get more propellant. The descent is a stand-in: the <code>.ork</code> has no parachutes, so it uses the Sol Invictus recovery until SRT14 has its own, and OpenRocket's landing figures are left out for the same reason. Not checked: fin flutter, fin loads, rail-button loads and roll. The model is flat (up, downrange, pitch), so crosswind, coning and roll coupling are only in the 3D flight. If the geometry table shows a big difference (over about 25% in a fin size, a different fin count, nose shape or body diameter, or a new boat-tail), run Update CSV.</p>
     </details>
     <details id="updatecsv"><summary>Update CSV</summary>
       <div class="uc">
-        <div class="warn bad"><b>Before you start.</b> Open RASAero II with the current rocket loaded, and save it over <code id="uc-cdx">rasaero.CDX1</code>. RASAero must be the window you touched most recently before coming back to this page: the helper switches to it with Alt+Tab and then types into whatever it lands on. Do not use the keyboard or mouse while it runs; moving the mouse into a screen corner stops it.</div>
+        <div class="warn bad"><b>Before you press Step 1:</b>
+          <ul style="margin:6px 0 0;padding-left:20px">
+            <li>Open RASAero II with the current rocket.</li>
+            <li>Save it over <code id="uc-cdx">rasaero.CDX1</code>.</li>
+            <li>Click inside RASAero, so it is the last window you used.</li>
+            <li>Come back here and press Step 1. Then do not touch the keyboard or mouse. To stop it, move the mouse into a screen corner.</li>
+          </ul>
+        </div>
         <p class="legend" id="uc-helper"></p>
         <ol>
           <li>
-            <label><input type="checkbox" id="uc-ready"> RASAero II is open with the current rocket, and it was the last window I used before this page.</label>
-            <button id="uc-sweep" type="button" class="primary" disabled>Create the 31 RASAero files (alpha 0 to 30)</button>
+            <label><input type="checkbox" id="uc-ready"> RASAero II is open with the current rocket and is the last window I used.</label>
+            <button id="uc-sweep" type="button" class="primary" disabled>Step 1: Create the 31 RASAero files</button>
             <span class="legend" id="uc-sweep-note"></span>
           </li>
           <li>
-            <button id="uc-update" type="button" class="primary" disabled>Update CSV, rebuild model and show the new page</button>
-            <span class="legend">Turns the files into the CSV, rebuilds the model, reruns the 6-DOF sim and shows the result.</span>
+            <button id="uc-update" type="button" class="primary" disabled>Step 2: Update the CSV and rebuild this page</button>
+            <span class="legend">Turns the files into the CSV, rebuilds the model, reruns the 6-DOF sim and shows the new page.</span>
           </li>
         </ol>
         <div><button id="uc-cancel" type="button" hidden>Cancel</button></div>
@@ -156,6 +163,18 @@ function update() {
   writeHash();
 }
 
+// the fall after apogee; the .ork has no parachutes, so OpenRocket's own landing figures are left out
+function descentRows(s, sr, sixdof, A, V) {
+  if (!s.land) return [];
+  const z = sixdof.landing || {}, zr = sr.land, k = (v, f) => (v === undefined ? undefined : v * f);
+  return [
+    ['Time to landing', s.land.t, 0, z.t, undefined, 's', zr.t],
+    ['Descent rate at landing', s.land.vVert * V.f, 1, k(z.vVert, V.f), undefined, V.u, zr.vVert * V.f],
+    ['Distance from the pad at landing', s.land.drift * A.f, 0, k(z.drift, A.f), undefined, A.u, zr.drift * A.f],
+    ['Peak parachute load', s.land.peakG, 1, z.peakG, undefined, 'g', zr.peakG],
+  ];
+}
+
 function render(run, rasRun) {
   const s = run.sum, sr = rasRun.sum, geo = run.geo;
   const sixdof = DATA.sixdof[state.sim], orr = DATA.openrocket[state.sim];
@@ -174,6 +193,7 @@ function render(run, rasRun) {
     ['Minimum stability, ascent', MARGIN(s.marginMin, geo), 2, undefined, undefined, marginUnit()],
     ['Max angle of attack', s.aoaMax, 1, undefined, undefined, '°'],
     ['Drift at apogee', s.drift * A.f, 0, undefined, undefined, A.u],
+    ...descentRows(s, sr, sixdof, A, V),
     ['Liftoff mass', s.mass0 * M.f, 2, undefined, undefined, M.u],
     ['Burnout mass', s.mass1 * M.f, 2, undefined, undefined, M.u],
     ['CG at liftoff (from nose)', s.cg0 * L.f, 2, undefined, undefined, L.u],
@@ -194,26 +214,27 @@ function render(run, rasRun) {
 
   // warnings
   const w = [];
-  if (s.marginMin < 1.0) w.push(['bad', 'Minimum stability is ' + fmt(s.marginMin, 2) + ' cal, under the 1.0 cal the team checks for (sim_config limits).']);
-  else if (s.marginRail < 1.5) w.push(['bad', 'Stability at rail exit is ' + fmt(s.marginRail, 2) + ' cal, under the 1.5 cal limit.']);
-  if (s.marginMin > 6) w.push(['', 'Stability above 6 cal is over-stable: the rocket will weathercock hard into the wind.']);
-  if (s.railV < 15.24) w.push(['bad', 'Rail exit velocity ' + fmt(s.railV / FT, 0) + ' ft/s is under the 50 ft/s limit.']);
+  if (s.marginMin < 1.0) w.push(['bad', 'Stability drops to ' + fmt(s.marginMin, 2) + ' cal during the climb. The team limit is 1.0 cal.']);
+  else if (s.marginRail < 1.5) w.push(['bad', 'Stability at rail exit is ' + fmt(s.marginRail, 2) + ' cal. The limit is 1.5 cal.']);
+  if (s.marginMin > 6) w.push(['', 'Stability is above 6 cal. The rocket may turn hard into the wind.']);
+  if (s.railV < 15.24) w.push(['bad', 'Rail exit speed is ' + fmt(s.railV / FT, 0) + ' ft/s. The limit is 50 ft/s.']);
   const diffs = refDiffs();
-  if (diffs.length) w.push(['', 'The RASAero CSV was made for a different geometry than the .ork now has: ' + diffs.join('; ') + '. The model corrects for the difference, so the prediction is an estimate; use Update CSV (bottom of the page) to rerun RASAero for the current rocket.']);
+  if (diffs.length) w.push(['', 'The CSV is out of date. The .ork differs from the rocket RASAero was run for: ' + diffs.join('; ') + '. The numbers are approximate until you run Update CSV (bottom of this page).']);
   const mf = DATA.motorFile;
   if (mf && mf.propKg && (Math.abs(mf.propKg - mf.savedPropKg) > 0.5 || Math.abs(mf.totalKg - mf.savedTotalKg) > 1.0)) {
-    w.push(['', 'The motor file ' + DATA.files.motor + ' (' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' propellant, ' + fmt(mf.totalKg * M.f, 1) + ' ' + M.u + ' total) is not the motor the saved OpenRocket simulations flew (' + fmt(mf.savedPropKg * M.f, 1) + ' and ' + fmt(mf.savedTotalKg * M.f, 1) + ' ' + M.u + '). The prediction uses the file; the OpenRocket column is for the other motor until the simulations are rerun and the .ork saved.']);
+    w.push(['', 'The motor file ' + DATA.files.motor + ' (' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' propellant, ' + fmt(mf.totalKg * M.f, 1) + ' ' + M.u + ' total) is a different motor from the one in the saved OpenRocket runs (' + fmt(mf.savedPropKg * M.f, 1) + ' and ' + fmt(mf.savedTotalKg * M.f, 1) + ' ' + M.u + '). The prediction uses the file. The OpenRocket column is for the other motor until you rerun OpenRocket and save the .ork.']);
   }
   const chk = tableCheck();
   if (chk) w.push(['bad', chk]);
-  if (refBig().length) w.push(['', 'Large difference from the RASAero run (' + refBig().join('; ') + '): the correction is first-order, so update the CSV before relying on this.']);
+  if (refBig().length) w.push(['', 'Big difference from the RASAero run (' + refBig().join('; ') + '). Run Update CSV before you rely on these numbers.']);
   $('warnings').innerHTML = w.map(([c, t]) => '<div class="warn ' + c + '">' + t + '</div>').join('');
 
   const sixErr = (sr.apogee / sixdof.apogee - 1) * 100, orErr = (s.apogee / orr.summary.maxaltitude - 1) * 100;
-  $('chips').innerHTML = '<span class="chip">Model check, apogee: ' + signed(sixErr, 1) + '% vs the 6-DOF sim (both on the RASAero geometry), ' + signed(orErr, 1) + '% vs OpenRocket</span>' +
+  $('chips').innerHTML = '<span class="chip">Apogee, model vs 6-DOF sim: ' + signed(sixErr, 1) + '%. Model vs OpenRocket: ' + signed(orErr, 1) + '%</span>' +
     '<span class="chip">Motor: ' + DATA.files.motor + (DATA.motorFile && DATA.motorFile.note ? ' (' + DATA.motorFile.note + ')' : '') + ', ' + fmt(DATA.motorFile.impulse, 0) + ' N·s over ' + fmt(DATA.motorFile.burnS, 1) + ' s</span>' +
-    '<span class="chip">' + (diffs.length ? diffs.length + ' difference' + (diffs.length > 1 ? 's' : '') + ' from the RASAero run' : 'CSV matches the .ork geometry') + '</span>' +
-    (isLocal ? '<span class="chip">local build, not published until the CSV is committed</span>' : '');
+    (base.recovery ? '<span class="chip">Descent: ' + base.recovery.label + '</span>' : '') +
+    '<span class="chip">' + (diffs.length ? 'CSV out of date: ' + diffs.length + ' difference' + (diffs.length > 1 ? 's' : '') : 'CSV matches the .ork') + '</span>' +
+    (isLocal ? '<span class="chip">Local copy, not published</span>' : '');
   plots(run, rasRun, sixdof, orr);
 }
 
@@ -242,8 +263,8 @@ function refDiffs() {
   GEOM.forEach(([k, label, int]) => {
     const r = gval(refChange, k), d = gval(design, k);
     if (Math.abs(d - r) < (int ? 0.5 : 1e-4)) return;
-    out.push(int ? label.toLowerCase() + ' ' + r + ' in RASAero, ' + d + ' in the .ork'
-      : label.toLowerCase() + ' ' + fmt(r * L.f, 2) + ' ' + L.u + ' in RASAero, ' + fmt(d * L.f, 2) + ' ' + L.u + ' in the .ork');
+    out.push(int ? label.toLowerCase() + ' is ' + r + ' in RASAero but ' + d + ' in the .ork'
+      : label.toLowerCase() + ' is ' + fmt(r * L.f, 2) + ' ' + L.u + ' in RASAero but ' + fmt(d * L.f, 2) + ' ' + L.u + ' in the .ork');
   });
   return out;
 }
@@ -262,7 +283,7 @@ function tableCheck() {
   const T = base.aero, im = T.mach.findIndex((m) => m >= 0.3), ia = T.alpha.indexOf(2);
   const cna = T.cn[im][ia] / (2 * Math.PI / 180), b = W.barrowman(base.refGeometry);
   const off = Math.abs(cna / b.cna - 1), dx = Math.abs(T.xcp[im][ia] - b.xcp);
-  if (off > 0.05 || dx > 0.12) return 'The RASAero table does not look like it was made for ' + (DATA.refFile || 'the .ork') + ': its normal-force slope is ' + fmt(cna, 2) + ' per rad against ' + fmt(b.cna, 2) + ' from the geometry, and its centre of pressure is ' + fmt(T.xcp[im][ia], 2) + ' m against ' + fmt(b.xcp, 2) + ' m. The corrections assume it matches; save the rocket over the .CDX1 and update the CSV.';
+  if (off > 0.05 || dx > 0.12) return 'The CSV does not match ' + (DATA.refFile || 'the .ork') + '. Normal-force slope: ' + fmt(cna, 2) + ' per rad in the CSV, ' + fmt(b.cna, 2) + ' from the geometry. Centre of pressure: ' + fmt(T.xcp[im][ia], 2) + ' m in the CSV, ' + fmt(b.xcp, 2) + ' m from the geometry. Save the current rocket over ' + (DATA.refFile || 'the .CDX1') + ', then run Update CSV (bottom of this page).';
   return '';
 }
 
@@ -281,22 +302,23 @@ function plots(run, rasRun, sixdof, orr) {
   const cfg = { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['select2d', 'lasso2d'] };
   const tr = (x, y, name, color, dash, w) => ({ x, y, name, mode: 'lines', line: { color, dash, width: w || 2 } });
   const k = (a, f) => a.map((v) => v * f);
+  const all = (key) => (run.out.d ? run.out[key].concat(run.out.d[key]) : run.out[key]);
   Plotly.react('p-alt', [
-    tr(run.out.t, k(run.out.alt, A.f), 'the .ork (model)', accent),
+    tr(all('t'), k(all('alt'), A.f), 'the .ork (model)', accent),
     tr(sixdof.t, k(sixdof.alt, A.f), '6-DOF sim', css('--up'), 'dot', 1.5),
     tr(orr.t, k(orr.alt, A.f), 'OpenRocket', css('--down'), 'dot', 1.5),
-  ], layout('Altitude above the pad', 'time (s)', A.u), cfg);
+  ], layout('Altitude above the pad' + (run.out.d ? ', to landing' : ''), 'time (s)', A.u), cfg);
   Plotly.react('p-vel', [
-    tr(run.out.t, k(run.out.v, V.f), 'the .ork (model)', accent),
+    tr(all('t'), k(all('v'), V.f), 'the .ork (model)', accent),
     tr(sixdof.t, k(sixdof.v, V.f), '6-DOF sim', css('--up'), 'dot', 1.5),
     tr(orr.t, k(orr.v, V.f), 'OpenRocket', css('--down'), 'dot', 1.5),
-  ], layout('Speed', 'time (s)', V.u), cfg);
+  ], layout('Speed' + (run.out.d ? ', to landing' : ''), 'time (s)', V.u), cfg);
   const mt = (o, g) => o.marginCal.map((c) => MARGIN(c, g));
   const orMargin = orr.margin.map((c, i) => (c === null || orr.t[i] < 2 ? null : MARGIN(c, run.geo)));
   Plotly.react('p-stab', [
     tr(run.out.t, mt(run.out, run.geo), 'the .ork (model)', accent),
     tr(orr.t, orMargin, 'OpenRocket', css('--down'), 'dot', 1.5),
-  ], layout('Static margin', 'time (s)', marginUnit()), cfg);
+  ], layout('Static margin, ascent', 'time (s)', marginUnit()), cfg);
   const cd1 = W.dragCurve(base, design, savedCond(), 0), cd0 = W.dragCurve(base, refChange, savedCond(), 0);
   Plotly.react('p-cd', [
     tr(cd1.map((p) => p[0]), cd1.map((p) => p[1]), 'the .ork (model)', accent),
@@ -333,15 +355,15 @@ function ucRender() {
   const st = uc.st, busy = !!(st && st.busy);
   const ready = $('uc-ready').checked;
   if (!st) {
-    $('uc-helper').innerHTML = 'The helper is not running. On this computer, in the dynamics folder, run <code>python tools\\whatif\\local_helper.py</code> (once: <code>pip install pyautogui</code>, and flight_sim installed), then this page connects by itself. Chrome may ask to allow access to devices on your network: allow it. If the page stays blocked, open <a href="http://127.0.0.1:' + HELPER_PORT + '/predictions/">http://127.0.0.1:' + HELPER_PORT + '/predictions/</a>, the same page served by the helper.';
+    $('uc-helper').innerHTML = '<b>The helper is not running.</b> Open a terminal in the dynamics folder and run <code>python tools\\whatif\\local_helper.py</code>. The first time, also run <code>pip install pyautogui</code>. This page connects by itself. If Chrome asks to allow access to devices on your network, click Allow. If the buttons stay off, open <a href="http://127.0.0.1:' + HELPER_PORT + '/predictions/">http://127.0.0.1:' + HELPER_PORT + '/predictions/</a> instead.';
   } else {
     $('uc-cdx').textContent = st.cdx.path;
-    $('uc-helper').textContent = 'Helper connected (' + st.rocket + '). RASAero files: ' + st.alpha.count + ' of 31' + (st.alpha.count ? ', newest ' + when(st.alpha.newest) : '') + '. CSV ' + st.csv.path + ' last written ' + when(st.csv.modified) + '.' +
+    $('uc-helper').textContent = 'Helper connected (' + st.rocket + '). RASAero files found: ' + st.alpha.count + ' of 31' + (st.alpha.count ? ' (newest ' + when(st.alpha.newest) + ')' : '') + '. CSV last updated: ' + when(st.csv.modified) + '.' +
       (st.sweepAvailable ? '' : ' ' + st.sweepProblem) + (st.updateAvailable ? '' : ' ' + st.updateProblem);
   }
   $('uc-sweep').disabled = !(st && !busy && ready && st.sweepAvailable);
   $('uc-update').disabled = !(st && !busy && st.alpha.count >= 31 && st.updateAvailable);
-  $('uc-sweep-note').textContent = st && st.alpha.count >= 31 ? '' : (st ? 'Step 2 unlocks when all 31 files exist.' : '');
+  $('uc-sweep-note').textContent = st && st.alpha.count >= 31 ? '' : (st ? 'Step 2 stays off until all 31 files exist.' : '');
   $('uc-cancel').hidden = !busy;
   const lines = st ? st.log.slice(-14) : [];
   $('uc-log').hidden = !lines.length; $('uc-log').textContent = lines.join('\n');
@@ -349,7 +371,7 @@ function ucRender() {
   if (st && st.error) { done.hidden = false; done.innerHTML = '<div class="warn bad"></div>'; done.firstChild.textContent = st.error; }
   else if (st && st.finished && st.finished.job === 'update' && !busy) {
     done.hidden = false;
-    done.innerHTML = '<div class="warn">CSV updated and the model rebuilt (' + when(st.finished.time) + '). To publish it, run these in the dynamics folder:</div><pre></pre><button type="button" id="uc-copy">Copy</button> <span class="legend" id="uc-copied"></span>';
+    done.innerHTML = '<div class="warn">Done: the CSV is updated and the page is rebuilt (' + when(st.finished.time) + '). To publish it, run these in the dynamics folder:</div><pre></pre><button type="button" id="uc-copy">Copy</button> <span class="legend" id="uc-copied"></span>';
     done.querySelector('pre').textContent = st.publish.join('\n');
     $('uc-copy').onclick = async () => { try { await navigator.clipboard.writeText(st.publish.join('\n')); $('uc-copied').textContent = 'copied'; } catch (e) { $('uc-copied').textContent = 'copy blocked: select the text'; } };
   }
@@ -377,7 +399,7 @@ function alert_(msg) { const d = $('uc-done'); d.hidden = false; d.innerHTML = '
   document.title = DATA.name + ' flight predictions';
   $('title').textContent = DATA.name + ' flight predictions';
   $('sub').textContent = 'built ' + DATA.generated;
-  $('provenance').innerHTML = 'Built from <code>' + DATA.files.ork + '</code> (' + DATA.files.orkHash + '), the RASAero table <code>' + DATA.files.aero + '</code> and the thrust curve <code>' + DATA.files.motor + '</code>' + (DATA.motorFile && DATA.motorFile.note ? ' (' + DATA.motorFile.note + ')' : '') + ' on ' + DATA.generated + ', and rebuilt whenever one of them is committed. Launch conditions are those of the simulations saved in the <code>.ork</code>; the RASAero geometry is read from <code>' + (DATA.refFile || 'the .ork') + '</code>. The 6-DOF column and the <a href="viewer/">3D flight</a> are the full sim flown from the committed design; the OpenRocket column is the result stored in the file.';
+  $('provenance').innerHTML = 'Built from <code>' + DATA.files.ork + '</code> (' + DATA.files.orkHash + '), the RASAero table <code>' + DATA.files.aero + '</code> and the thrust curve <code>' + DATA.files.motor + '</code>' + (DATA.motorFile && DATA.motorFile.note ? ' (' + DATA.motorFile.note + ')' : '') + ' on ' + DATA.generated + '. It rebuilds whenever one of them is committed. Launch conditions come from the simulations saved in the <code>.ork</code>. The RASAero geometry is read from <code>' + (DATA.refFile || 'the .ork') + '</code>. The 6-DOF column and the <a href="viewer/">3D flight</a> are the full sim flown from the committed design. The OpenRocket column is the result saved in the file.';
   Object.keys(DATA.presets).forEach((n) => { const o = document.createElement('option'); o.value = n; o.textContent = n; $('simsel').appendChild(o); });
   readHash();
   $('units').onchange = () => { state.units = $('units').value; update(); };

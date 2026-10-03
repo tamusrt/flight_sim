@@ -7,7 +7,7 @@ import pytest
 from ork_fixture import write_aero_csv, write_eng, write_ork
 
 from flight_sim.ork import load_ork, mass_properties, saved_motor
-from flight_sim.ork_profile import pad_pressure_pa, profile_from_ork
+from flight_sim.ork_profile import original_descent, pad_pressure_pa, profile_from_ork
 
 
 @pytest.fixture(name="files")
@@ -80,6 +80,17 @@ def test_unknown_sim_is_an_error(files: tuple[Path, Path, Path]) -> None:
         saved_motor(load_ork(files[0]), "nope")
 
 
+def test_the_rocket_comes_down_under_the_original_descent(
+    files: tuple[Path, Path, Path],
+) -> None:
+    """An ``.ork`` with no parachutes gets the Sol Invictus recovery for its size."""
+    profile = profile_from_ork(files[0], str(files[1]), str(files[2]), sim="calm")
+    recovery = profile.recovery
+    assert [stage.name for stage in recovery.stages] == ["main reefed", "main reef cut"]
+    assert recovery.body_drag_area_m2 == pytest.approx(0.55 * profile.reference_area_m2)
+    assert original_descent(0.02).recovery.body_drag_area_m2 == pytest.approx(0.011)
+
+
 def test_pad_pressure_falls_with_elevation() -> None:
     """Pad pressure falls with elevation."""
     assert pad_pressure_pa(101325.0, 288.15, 0.0) == pytest.approx(101325.0)
@@ -91,8 +102,9 @@ def test_profile_takes_conditions_from_the_saved_sim(
 ) -> None:
     """Profile takes conditions from the saved sim."""
     profile = profile_from_ork(files[0], str(files[1]), str(files[2]), sim="calm")
-    assert profile.scheme is None
-    assert profile.recovery.parachutes == ()
+    assert (
+        profile.scheme is not None and profile.scheme.kind == "reefed single separation"
+    )
     assert profile.reference_area_m2 == pytest.approx(math.pi * 0.05**2)
     assert profile.fins.fin_count == 4
     assert profile.rail.length.m_as("m") == pytest.approx(5.0)
