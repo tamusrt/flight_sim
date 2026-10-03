@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from flight_sim.units import UnitChecked, Vector, zero_vector
+from flight_sim.units import UnitChecked, Vector, vector
 from flight_sim.utilities.quaternion import Quaternion
 
 
@@ -17,16 +17,18 @@ class RocketState(UnitChecked):
     """
 
     # Position Coordinates
-    position: Annotated[Vector, "m"] = field(default_factory=lambda: zero_vector("m"))
+    position: Annotated[Vector, "m"] = field(
+        default_factory=lambda: vector((0.0, 0.0, 0.0), "m")
+    )
 
     # Velocity
     velocity: Annotated[Vector, "m/s"] = field(
-        default_factory=lambda: zero_vector("m/s")
+        default_factory=lambda: vector((0.0, 0.0, 0.0), "m/s")
     )
 
     # Angular Velocities
     angular_velocity: Annotated[Vector, "rad/s"] = field(
-        default_factory=lambda: zero_vector("rad/s")
+        default_factory=lambda: vector((0.0, 0.0, 0.0), "rad/s")
     )
 
     # Orientation

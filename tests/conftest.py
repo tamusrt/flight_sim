@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from flight_sim.__main__ import get_default_properties
-from flight_sim.units import matrix, scalar, vector, zero_vector
+from flight_sim.units import matrix, scalar, vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.vehicle.engine import PropellantGrain, SolidEngine
 from flight_sim.vehicle.mass_properties import MassProperties
@@ -22,7 +22,7 @@ def _baseline_rocket_properties() -> RocketProperties:
         "tests/test_data/standard_aero.csv",
         reference_area=scalar(0.0182414692, "m**2"),
         reference_length=scalar(0.1524, "m"),
-        reference_point=zero_vector("m"),
+        reference_point=vector((0.0, 0.0, 0.0), "m"),
     )
     return properties
 

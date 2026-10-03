@@ -6,7 +6,7 @@ from dataclasses import astuple
 import numpy as np
 import pytest
 
-from flight_sim.units import scalar, zero_vector
+from flight_sim.units import scalar, vector
 from flight_sim.utilities.data_loader import (
     AeroCoefficients,
     AeroTable,
@@ -22,7 +22,7 @@ def _csv_table() -> AeroTable:
         _AERO_CSV,
         reference_area=scalar(1.0, "m**2"),
         reference_length=scalar(1.0, "m"),
-        reference_point=zero_vector("m"),
+        reference_point=vector((0.0, 0.0, 0.0), "m"),
     )
 
 
@@ -63,7 +63,7 @@ def _missile_table() -> AeroTable:
         values=np.tile([-0.6, 0.0, -0.1, 0.0, -2.0, 0.0], (2, 2, 2, 1)),
         reference_area=scalar(1.0, "m**2"),
         reference_length=scalar(1.0, "m"),
-        reference_point=zero_vector("m"),
+        reference_point=vector((0.0, 0.0, 0.0), "m"),
         frame="missile",
     )
 

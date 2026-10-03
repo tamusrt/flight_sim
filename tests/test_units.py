@@ -21,7 +21,6 @@ from flight_sim.units import (
     matrix,
     scalar,
     vector,
-    zero_vector,
 )
 from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.utilities.quaternion import Quaternion
@@ -38,7 +37,6 @@ def test_scalar_and_vector_constructors() -> None:
     """The constructors attach the requested units to the requested magnitudes."""
     assert scalar(500.0, "kg").m_as("kg") == pytest.approx(500.0)
     assert np.allclose(vector((1.0, 2.0, 3.0), "m").m_as("m"), [1.0, 2.0, 3.0])
-    assert np.allclose(zero_vector("m/s").m_as("m/s"), np.zeros(3))
 
 
 def test_matrix_constructor() -> None:
@@ -66,22 +64,26 @@ def test_quantities_convert_between_units() -> None:
     ("factory", "field_name"),
     [
         (
-            lambda: _rocket_state(position=zero_vector("m/s")),
+            lambda: _rocket_state(position=vector((0.0, 0.0, 0.0), "m/s")),
             "RocketState.position",
         ),
         (
-            lambda: _rocket_state(rail_start=zero_vector("s")),
+            lambda: _rocket_state(rail_start=vector((0.0, 0.0, 0.0), "s")),
             "RocketState.rail_start",
         ),
         (
             lambda: MassProperties(
-                scalar(1.0, "m"), zero_vector("m"), matrix(np.eye(3), "kg*m**2")
+                scalar(1.0, "m"),
+                vector((0.0, 0.0, 0.0), "m"),
+                matrix(np.eye(3), "kg*m**2"),
             ),
             "MassProperties.mass",
         ),
         (
             lambda: MassProperties(
-                scalar(1.0, "kg"), zero_vector("m"), matrix(np.eye(3), "kg*m")
+                scalar(1.0, "kg"),
+                vector((0.0, 0.0, 0.0), "m"),
+                matrix(np.eye(3), "kg*m"),
             ),
             "MassProperties.inertia",
         ),
@@ -101,15 +103,15 @@ def test_quantities_convert_between_units() -> None:
                 np.zeros((2, 2, 2, 6)),
                 reference_area=scalar(1.0, "m"),
                 reference_length=scalar(1.0, "m"),
-                reference_point=zero_vector("m"),
+                reference_point=vector((0.0, 0.0, 0.0), "m"),
             ),
             "AeroTable.reference_area",
         ),
         (
             lambda: StateDerivative(
-                velocity=zero_vector("m/s"),
-                acceleration=zero_vector("m/s"),
-                angular_acceleration=zero_vector("rad/s**2"),
+                velocity=vector((0.0, 0.0, 0.0), "m/s"),
+                acceleration=vector((0.0, 0.0, 0.0), "m/s"),
+                angular_acceleration=vector((0.0, 0.0, 0.0), "rad/s**2"),
                 orientation_derivative=Quaternion(q_w=0.0),
             ),
             "StateDerivative.acceleration",

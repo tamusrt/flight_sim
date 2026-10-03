@@ -14,7 +14,7 @@ from flight_sim.integration import (
     TruthConfiguration,
     adaptive_step,
 )
-from flight_sim.units import matrix, scalar, vector, zero_vector
+from flight_sim.units import matrix, scalar, vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.engine import PropellantGrain, solid_engine_from_csv
@@ -57,7 +57,7 @@ def get_default_properties() -> RocketProperties:
             "data/aero/estimated_aero.csv",
             reference_area=scalar(0.0182414692, "m**2"),
             reference_length=scalar(0.1524, "m"),
-            reference_point=zero_vector("m"),
+            reference_point=vector((0.0, 0.0, 0.0), "m"),
             frame="missile",
         ),
         engine=solid_engine_from_csv(

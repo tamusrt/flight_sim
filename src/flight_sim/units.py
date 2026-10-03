@@ -4,10 +4,10 @@ Pint quantities may only be combined when they originate from the same
 ``UnitRegistry``, so every module imports ``ureg`` from here rather than
 building a registry of its own.
 
-The ``scalar``/``vector``/``zero_vector``/``matrix`` constructors exist because
-Pint's own API is largely untyped. They are the single place where Pint's
-``Any`` values are pinned to a concrete type, which is what lets the rest of
-the codebase type-check under strict mypy.
+The ``scalar``/``vector``/``matrix`` constructors exist because Pint's own
+API is largely untyped. They are the single place where Pint's ``Any`` values
+are pinned to a concrete type, which is what lets the rest of the codebase
+type-check under strict mypy.
 """
 
 from collections.abc import Sequence
@@ -83,18 +83,6 @@ def vector(components: tuple[float, float, float] | np.ndarray, units: str) -> V
         np.array(components, dtype=float), parse_units(units)
     )
     return result
-
-
-def zero_vector(units: str) -> Vector:
-    """Build a zero-valued three-dimensional vector quantity.
-
-    Args:
-        units (str): Pint unit expression applied to every component.
-
-    Returns:
-        Vector: A vector of three zeros in the given units.
-    """
-    return vector((0.0, 0.0, 0.0), units)
 
 
 def matrix(components: Sequence[Sequence[float]] | np.ndarray, units: str) -> Matrix:
