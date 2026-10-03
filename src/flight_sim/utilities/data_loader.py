@@ -33,7 +33,7 @@ _AERO_COLUMNS: tuple[str, ...] = tuple(
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class AeroTable(UnitChecked):
     """Trilinear lookup of aerodynamic coefficients over Mach, alpha_tot and phi_a.
 
@@ -60,6 +60,24 @@ class AeroTable(UnitChecked):
     # Axes the table's components are along; missile-frame components are
     # rotated into body axes after interpolation
     frame: Literal["body", "missile"] = "body"
+
+    # Reference values in SI units, cached on construction
+    reference_area_m2: float = field(init=False, repr=False, compare=False)
+    reference_length_m: float = field(init=False, repr=False, compare=False)
+    reference_point_m: np.ndarray = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Cache the reference values in SI units."""
+        super().__post_init__()
+        reference_point = np.array(self.reference_point.m_as("m"), dtype=float)
+        reference_point.flags.writeable = False
+        object.__setattr__(
+            self, "reference_area_m2", float(self.reference_area.m_as("m**2"))
+        )
+        object.__setattr__(
+            self, "reference_length_m", float(self.reference_length.m_as("m"))
+        )
+        object.__setattr__(self, "reference_point_m", reference_point)
 
     def __call__(self, mach: float, alpha: float, phi: float) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.

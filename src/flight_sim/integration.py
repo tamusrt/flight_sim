@@ -12,11 +12,7 @@ from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 import numpy as np
 
-from flight_sim.environment.atmosphere import (
-    AtmosphereConditions,
-    AtmosphereModel,
-    StandardAtmosphere1976,
-)
+from flight_sim.environment.atmosphere import AtmosphereModel, StandardAtmosphere1976
 from flight_sim.environment.gravity import GravityModel, WGS84Gravity
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind, WindModel
@@ -142,18 +138,16 @@ class StateDerivative(UnitChecked):
 
 
 class _StepInputs(NamedTuple):
-    """Constants of one step, in SI units."""
+    """Models and constants of one step, with numbers in SI units."""
 
-    inertia: np.ndarray  # kg*m**2, body axes
-    lever_arm_body: np.ndarray  # m, aero reference point relative to the CG
-    reference_area: float  # m**2
-    reference_length: float  # m
     properties: RocketProperties
-    atmosphere: Callable[[float], AtmosphereConditions]  # From the altitude in m
-    wind: Callable[[float], np.ndarray]  # From the altitude in m
-    gravity: Callable[[float, float], float]  # From the latitude in rad, altitude in m
+    atmosphere: AtmosphereModel
+    wind: WindModel
+    gravity: GravityModel
     latitude_rad: float
     elevation_m: float
+    inertia: np.ndarray  # kg*m**2, body axes
+    cg_location: np.ndarray  # m, from the nose tip in body axes
     rail_length_m: float
     rail_direction: np.ndarray  # World frame, up the rail
     on_rail: bool
@@ -167,21 +161,18 @@ def _step_inputs(
     properties: RocketProperties,
     config: IntegrationConfiguration,
 ) -> _StepInputs:
-    """Collect the constants of one step from the state, properties and config."""
-    table = properties.aero_table
+    """Collect the models and constants of one step."""
     truth, sim = config.truth, config.sim
     rail = truth.launch_rail
     return _StepInputs(
-        inertia=state.inertia.m_as("kg*m**2"),
-        lever_arm_body=table.reference_point.m_as("m") - state.cg_location.m_as("m"),
-        reference_area=float(table.reference_area.m_as("m**2")),
-        reference_length=float(table.reference_length.m_as("m")),
         properties=properties,
-        atmosphere=truth.atmosphere.conditions,
-        wind=truth.wind.velocity,
-        gravity=truth.gravity.magnitude,
+        atmosphere=truth.atmosphere,
+        wind=truth.wind,
+        gravity=truth.gravity,
         latitude_rad=float(truth.launch_latitude.m_as("rad")),
         elevation_m=float(truth.launch_elevation.m_as("m")),
+        inertia=state.inertia.m_as("kg*m**2"),
+        cg_location=state.cg_location.m_as("m"),
         rail_length_m=float(rail.length.m_as("m")) if rail else 0.0,
         rail_direction=rail.direction() if rail else np.zeros(3),
         on_rail=state.on_rail,
@@ -295,23 +286,25 @@ def _aero_loads(
     Returns:
         tuple[np.ndarray, np.ndarray]: Force in N and torque in N*m.
     """
-    conditions = inputs.atmosphere(altitude)
-    airspeed_body = to_body @ (velocity - inputs.wind(altitude))
+    table = inputs.properties.aero_table
+    conditions = inputs.atmosphere.conditions(altitude)
+    airspeed_body = to_body @ (velocity - inputs.wind.velocity(altitude))
     speed = math.sqrt(float(airspeed_body @ airspeed_body))
     alpha, phi = aero_angles(airspeed_body)
-    coefficients = inputs.properties.aero_table(
+    coefficients = table(
         speed / conditions.speed_of_sound, math.degrees(alpha), math.degrees(phi)
     )
 
     # Dynamic pressure times reference area gives force per unit coefficient
-    force_scale = 0.5 * conditions.air_density * speed**2 * inputs.reference_area
+    force_scale = 0.5 * conditions.air_density * speed**2 * table.reference_area_m2
     force_body = force_scale * np.array(
         [coefficients.cx, coefficients.cy, coefficients.cz]
     )
     # Reference length acts as "lever arm" length
-    torque_body = (force_scale * inputs.reference_length) * np.array(
+    lever_arm = table.reference_point_m - inputs.cg_location
+    torque_body = (force_scale * table.reference_length_m) * np.array(
         [coefficients.cmx, coefficients.cmy, coefficients.cmz]
-    ) + cross(inputs.lever_arm_body, force_body)
+    ) + cross(lever_arm, force_body)
     return force_body, torque_body
 
 
@@ -336,7 +329,9 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     to_world = body_to_world(Quaternion(*orientation))
 
     # Gravity along -X, thrust along the nose
-    acceleration = np.array([-inputs.gravity(inputs.latitude_rad, altitude), 0.0, 0.0])
+    acceleration = np.array(
+        [-inputs.gravity.magnitude(inputs.latitude_rad, altitude), 0.0, 0.0]
+    )
     thrust_acceleration, mass_flow_rate = _thrust_acceleration(
         time, mass, to_world[:, 0], inputs.properties.engine
     )
