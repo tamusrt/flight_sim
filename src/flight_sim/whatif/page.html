@@ -177,11 +177,7 @@
         </div>
         <div class="ucstep">
           <h4>2. Make the 31 RASAero files</h4>
-          <p>Open RASAero II with the current rocket, saved over <code id="uc-cdx">rasaero.CDX1</code>. Click inside the RASAero window so it is the last window you used, then come back here and press the button. After that, do not touch the keyboard or mouse. To stop, move the mouse into a corner of the screen.</p>
-          <p class="legend">First the helper makes <code>rasaero.CDX1</code> match the OpenRocket file (fins, tubes, boat tail). If it had to change anything, it opens the corrected file in a new RASAero window by itself; close the older RASAero window afterwards without saving.</p>
-          <div class="row">
-            <label class="toggle"><input type="checkbox" id="uc-ready"> RASAero is open with the current rocket and is the last window I used</label>
-          </div>
+          <p>Press the button and let go of the keyboard and mouse until it says Finished. The helper makes <code id="uc-cdx">rasaero.CDX1</code> match the OpenRocket file (fins, tubes, boat tail), opens it in RASAero by itself, runs RASAero's test for every angle and closes that RASAero window again. To stop, move the mouse into a corner of the screen.</p>
           <div class="row">
             <button id="uc-sweep" type="button" class="primary" disabled>Create the 31 RASAero files</button>
             <span class="legend" id="uc-sweep-note"></span>
@@ -189,7 +185,7 @@
         </div>
         <div class="ucstep">
           <h4>3. Update the CSV and rebuild</h4>
-          <p>Turns the 31 files into the table, rebuilds Jarvis and flies every kind of weather again. Then it commits and pushes the CSV and <code>rasaero.CDX1</code> (nothing else) so the site rebuilds for everyone, and the helper stops by itself.</p>
+          <p>Turns the 31 files into the table, rebuilds Jarvis and flies every kind of weather again. Then it commits and pushes the CSV and <code>rasaero.CDX1</code> (nothing else) so the site rebuilds for everyone, and the helper stops by itself. Nothing to paste anywhere.</p>
           <div class="row"><button id="uc-update" type="button" class="primary" disabled>Update the CSV and rebuild this page</button></div>
         </div>
         <div><button id="uc-cancel" type="button" hidden>Cancel</button></div>
@@ -731,7 +727,6 @@ function codeBox(text) {
 }
 function ucRender() {
   const st = uc.st, busy = !!(st && st.busy);
-  const ready = $('uc-ready').checked;
   const ras = $('uc-helper');
   if (st && st.published) uc.published = st.published;   // the helper stops after publishing: remember what it did
   const pubText = () => 'Done and published: commit ' + uc.published.commit + ' is on GitHub. The site and the JARVIS message in Discord update by themselves in about 10 to 20 minutes.';
@@ -748,7 +743,7 @@ function ucRender() {
       (st.sweepAvailable ? '' : ' ' + st.sweepProblem) + (st.updateAvailable ? '' : ' ' + st.updateProblem);
     ras.appendChild(t);
   }
-  $('uc-sweep').disabled = !(st && !busy && ready && st.sweepAvailable);
+  $('uc-sweep').disabled = !(st && !busy && st.sweepAvailable);
   $('uc-update').disabled = !(st && !busy && st.alpha.count >= 31 && st.updateAvailable);
   $('uc-sweep-note').textContent = st && st.alpha.count >= 31 ? '' : (st ? 'Step 3 stays off until all 31 files exist.' : '');
   $('uc-cancel').hidden = !busy;
@@ -756,27 +751,32 @@ function ucRender() {
   $('uc-log').hidden = !lines.length; $('uc-log').textContent = lines.join('\n');
   const done = $('uc-done'); done.hidden = true; done.innerHTML = '';
   if (!st && uc.published) {
-    done.hidden = false; done.innerHTML = '<div class="warn good"></div>'; done.firstChild.textContent = pubText();
+    done.hidden = false; done.innerHTML = '<div class="warn good"><b>Finished!</b> </div>'; done.firstChild.appendChild(document.createTextNode(pubText()));
   } else if (st && st.error) { done.hidden = false; done.innerHTML = '<div class="warn bad"></div>'; done.firstChild.textContent = st.error; }
-  else if (st && st.finished && st.finished.job === 'update' && !busy) {
+  else if (st && st.finished && st.finished.job === 'sweep' && !busy) {
+    done.hidden = false; done.innerHTML = '<div class="warn good"></div>';
+    done.firstChild.innerHTML = '<b>Finished: move to the next step.</b> ';
+    done.firstChild.appendChild(document.createTextNode('All 31 RASAero files are made. Press "Update the CSV and rebuild this page" below.'));
+  } else if (st && st.finished && st.finished.job === 'update' && !busy) {
     done.hidden = false;
     const note = document.createElement('div'); note.className = 'warn good';
+    note.innerHTML = '<b>Finished!</b> ';
     if (st.published) {
-      note.textContent = pubText() + ' The helper stops in a few seconds.';
+      note.appendChild(document.createTextNode(pubText() + ' The helper stops in a few seconds.'));
       done.append(note);
-    } else {
-      note.textContent = 'Done. The CSV is updated and this page was rebuilt on your computer (' + when(st.finished.time) + '). To publish it for everyone, paste these into a terminal in the dynamics folder:';
+    } else {   // only when the helper was started with --no-publish
+      note.appendChild(document.createTextNode('The CSV is updated and this page was rebuilt on your computer (' + when(st.finished.time) + '). To publish it for everyone, paste these into a terminal in the dynamics folder:'));
       done.append(note, codeBox(st.publish.join('\n')));
-    }
-    if (!isLocal) {
-      const a = document.createElement('a'); a.href = HELPER + '/predictions/' + (location.hash.length > 1 ? location.hash + '&' : '#') + 'update=1'; a.target = '_self';
-      a.textContent = 'Show the updated page'; a.className = 'primary'; a.style.cssText = 'display:inline-block;padding:4px 10px;border-radius:6px;background:var(--accent);color:#fff;text-decoration:none';
-      done.appendChild(a);
+      if (!isLocal) {
+        const a = document.createElement('a'); a.href = HELPER + '/predictions/' + (location.hash.length > 1 ? location.hash + '&' : '#') + 'update=1'; a.target = '_self';
+        a.textContent = 'Show the updated page'; a.className = 'primary'; a.style.cssText = 'display:inline-block;padding:4px 10px;border-radius:6px;background:var(--accent);color:#fff;text-decoration:none';
+        done.appendChild(a);
+      }
     }
   }
   if (st && st.busy === null && uc.startedHere === 'update' && st.finished && st.finished.job === 'update' && !st.error) {
     uc.startedHere = null;
-    if (isLocal) setTimeout(() => { location.hash = (location.hash.length > 1 ? location.hash + '&' : '#') + 'update=1'; location.reload(); }, 1500);
+    if (isLocal && !st.published) setTimeout(() => { location.hash = (location.hash.length > 1 ? location.hash + '&' : '#') + 'update=1'; location.reload(); }, 1500);
   }
   if (st && st.busy === null && st.error) uc.startedHere = null;
 }
@@ -847,7 +847,6 @@ function update() {
   $('tab-vision').onclick = () => { state.tab = 'vision'; update(); };
   window.addEventListener('hashchange', () => { readHash(); update(); });
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', update);
-  $('uc-ready').onchange = ucRender;
   $('uc-sweep').onclick = () => ucStart('sweep');
   $('uc-update').onclick = () => ucStart('update');
   $('uc-cancel').onclick = async () => { try { await helper('/api/cancel', true); } catch (e) { ucError(e.message); } };
