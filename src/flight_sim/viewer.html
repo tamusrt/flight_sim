@@ -44,7 +44,7 @@ h1,h2{margin:0;font-weight:500}
 .stage{position:relative;height:min(64vh,600px);min-height:320px;overflow:hidden;border:1px solid var(--line);background:#000}
 .stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .stage canvas.pan{cursor:move}
-.note{position:absolute;left:8px;bottom:6px;font:400 11px var(--mono);color:#bdbdb8;pointer-events:none}
+.note{position:absolute;left:8px;bottom:6px;font:400 11px var(--mono);color:#bdbdb8;pointer-events:none;text-shadow:0 0 3px #000,0 0 6px rgba(0,0,0,.8)}
 .banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:500 13px var(--mono);letter-spacing:.08em;padding:6px 14px;background:#d6d6d3;color:#101010;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
 .banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}.banner[data-kind="reco"]{background:#b9a0d0;color:#140b1d}.banner[data-kind="aero"]{background:#cf8aa0;color:#1d070c}.banner[data-kind="rail"]{background:#8fbf8f;color:#08160a}
 .nogl[hidden],.chip[hidden]{display:none}
@@ -111,6 +111,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
     <div class="ttl"><h1>VISION</h1></div>
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
+      <div class="seg" id="look" title="Realistic: sky, sun, desert, mountains and shadows (only the look changes, the flight is the same). Engineering: the plain grid on black."><button data-l="real">Realistic</button><button data-l="eng">Engineering</button></div>
       <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket back in the middle of the view">Center</button></div>
       <label class="fld" title="Draw the rocket bigger than life size so it can be seen from far away. The flight path is not changed.">Rocket scale ×<input type="text" id="mult" value="1" inputmode="decimal" aria-label="Rocket size multiplier"></label>
       <label class="chip" title="Axes fixed to the ground at the launch pad"><input type="checkbox" data-k="world" checked>World axes</label>
@@ -204,8 +205,11 @@ var root=new THREE.Group(); root.matrixAutoUpdate=false;
 /* sim X->three Y, sim Y->three Z, sim Z->three X  (cyclic, keeps handedness) */
 root.matrix.set(0,0,1,0, 1,0,0,0, 0,1,0,0, 0,0,0,1); root.matrixWorldNeedsUpdate=true;
 scene.add(root);
-scene.add(new THREE.AmbientLight(0xffffff,0.7));
-var sun=new THREE.DirectionalLight(0xffffff,0.75); sun.position.set(0.6,1,0.8); scene.add(sun);
+var ambient=new THREE.AmbientLight(0xffffff,0.7); scene.add(ambient);
+var hemi=new THREE.HemisphereLight(0xbcd3ec,0x9a8566,0); scene.add(hemi);
+var sun=new THREE.DirectionalLight(0xffffff,0.75); sun.position.set(0.6,1,0.8); scene.add(sun); scene.add(sun.target);
+if(renderer){ renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap; }
+sun.shadow.mapSize.set(2048,2048); sun.shadow.bias=-0.0004; sun.shadow.normalBias=0.02;
 scene.fog=new THREE.Fog(0xcccccc,9000,42000);
 var tmpT=new V3();
 function s2t(v,out){ return (out||new V3()).set(v.z,v.x,v.y); }
@@ -255,7 +259,8 @@ function css(n){return getComputedStyle(document.documentElement).getPropertyVal
    drawn wrongly when the camera is low */
 var GRID_PER_HEIGHT=8, GRID_UNIT=0.01;   /* about 8 squares across the ground below the camera; sizes are 0.01, 0.1, 1 ... rocket lengths */
 var groundU={uCell:{value:1},uFrac:{value:0},uY:{value:0},uBase:{value:new THREE.Color(0x23272d)},uLine:{value:new THREE.Color(0x9aa6b4)},
-  uFog:{value:new THREE.Color(0x000000)},uFogRange:{value:new THREE.Vector2(9000,42000)}};
+  uFog:{value:new THREE.Color(0x000000)},uFogRange:{value:new THREE.Vector2(9000,42000)},
+  uReal:{value:0},uGridA:{value:1},uSun:{value:new THREE.Vector3(0.5,0.7,0.5)},uLight:{value:new THREE.Vector2(0.55,0.75)}};
 function ringGeometry(){
   var SEC=96, r=0.05, radii=[], pos=[0,0,0], idx=[], i, j;
   for(; r<300000; r*=1.3) radii.push(r);
@@ -274,7 +279,26 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     'void main(){ vOff=position.xz; vec3 w=vec3(cameraPosition.x+position.x,uY,cameraPosition.z+position.z);',
     '  gl_Position=projectionMatrix*viewMatrix*vec4(w,1.0); }'].join('\n'),
   fragmentShader:[
-    'uniform float uCell, uFrac, uY; uniform vec3 uBase, uLine, uFog; uniform vec2 uFogRange; varying vec2 vOff;',
+    'uniform float uCell, uFrac, uY, uReal, uGridA; uniform vec3 uBase, uLine, uFog, uSun; uniform vec2 uFogRange, uLight; varying vec2 vOff;',
+    /* value noise for the desert floor: sand, darker gravel, dry grass and scattered creosote bushes */
+    'float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }',
+    /* noise that repeats exactly every P cells, so wrapping it below leaves no seam */
+    'float vnoise(vec2 p, float P){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);',
+    '  return mix(mix(hash(mod(i,P)),hash(mod(i+vec2(1,0),P)),u.x),mix(hash(mod(i+vec2(0,1),P)),hash(mod(i+vec2(1,1),P)),u.x),u.y); }',
+    'float fbm(vec2 p, float P){ float a=0.5, s=0.0; for(int k=0;k<5;k++){ s+=a*vnoise(p,P); p=p*2.0+vec2(17.0,9.0); P*=2.0; a*=0.5; } return s; }',
+    /* each scale wraps at its own tile (a whole number of cells) so the numbers stay small far from the pad */
+    'float tiled(vec2 p, float scale, float tile){ return fbm(mod(p, tile)*scale, floor(scale*tile+0.5)); }',
+    'vec3 desert(vec2 p, float fw){',
+    '  float big=tiled(p,0.0009,40000.0), mid=tiled(p,0.012,4000.0), fine=tiled(p,0.35,400.0);',
+    '  vec3 sand=vec3(0.80,0.69,0.52), dust=vec3(0.70,0.60,0.45), grav=vec3(0.55,0.49,0.39), grass=vec3(0.60,0.56,0.36), bush=vec3(0.28,0.31,0.20);',
+    '  vec3 c=mix(sand,dust,smoothstep(0.35,0.7,big));',
+    '  c=mix(c,grav,0.55*smoothstep(0.55,0.8,mid));',
+    '  c=mix(c,grass,0.45*smoothstep(0.45,0.75,tiled(p+vec2(311.0,97.0),0.05,2000.0)));',
+    /* the bushes fade out where a pixel covers more than a couple of metres, so they never shimmer */
+    '  float b=smoothstep(0.72,0.8,tiled(p+vec2(53.0,11.0),0.55,400.0))*(1.0-smoothstep(0.6,2.5,fw));',
+    '  c=mix(c,bush,0.85*b);',
+    '  return c*(0.86+0.28*fine);',
+    '}',
     'float lines(vec2 p, float cell){',
     '  vec2 g=p/cell; vec2 fw=max(fwidth(g),vec2(1e-6));',
     '  vec2 d=abs(fract(g-0.5)-0.5)/fw;',
@@ -285,6 +309,9 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     '  vec2 p=cameraPosition.xz+vOff;',
     '  float a=max(max(lines(p,uCell)*(1.0-uFrac),lines(p,uCell*10.0)),lines(p,uCell*100.0)*uFrac);',
     '  vec3 c=mix(uBase,uLine,0.42*a);',
+    '  if(uReal>0.5){ float fw=length(fwidth(p));',
+    '    vec3 d=desert(p,fw)*(uLight.x+uLight.y*max(uSun.y,0.0));',
+    '    c=mix(d,vec3(1.0),0.08*a*uGridA); }',
     '  float f=smoothstep(uFogRange.x,uFogRange.y,length(vec3(vOff.x,uY-cameraPosition.y,vOff.y)));',
     '  gl_FragColor=vec4(mix(c,uFog,f),1.0);',
     '}'].join('\n')}));
@@ -297,6 +324,103 @@ function setGrid(camHeight,rocketLen,camDist){
   var unit=GRID_UNIT*Math.max(rocketLen,1e-3), h=Math.max(Math.abs(camHeight),0.03*rocketLen);
   var lvl=Math.log(h/GRID_PER_HEIGHT/unit)/Math.LN10, n=Math.floor(lvl);
   groundU.uCell.value=unit*Math.pow(10,n); groundU.uFrac.value=lvl-n;
+}
+
+
+/* ---------- the realistic look: sky, sun, haze, distant mountains, a concrete pad and sun shadows ----------
+   For the eye only: nothing here changes the flight. "Engineering" switches back to the plain grid on black.
+   three.js axes here: x north, y up, z east (the sim's X up, Y east, Z north, turned by `root`). */
+var LOOK='real';
+try{ var savedLook=localStorage.getItem('vision.look'); if(savedLook==='eng'||savedLook==='real') LOOK=savedLook; }catch(e){ /* no storage: the default */ }
+/* a mid-morning launch at Spaceport America: the sun 40 degrees up in the south-east */
+var SUN_EL=40*Math.PI/180, SUN_AZ=135*Math.PI/180;
+var SUN_DIR=new V3(Math.cos(SUN_EL)*Math.cos(SUN_AZ),Math.sin(SUN_EL),Math.cos(SUN_EL)*Math.sin(SUN_AZ)).normalize();
+/* the sky's colours as the camera climbs: the air thins, the blue overhead deepens and the horizon glow fades */
+function airK(alt){ return clamp(alt/25000,0,1); }
+var HOR0=new THREE.Color(0.77,0.81,0.86), HOR1=new THREE.Color(0.42,0.56,0.78), horizonC=new THREE.Color();
+function horizonColor(alt){ return horizonC.copy(HOR0).lerp(HOR1,airK(alt)); }
+var skyU={uSun:{value:SUN_DIR.clone()},uAlt:{value:0}};
+var SKY_FRAG=[
+  'uniform vec3 uSun; uniform float uAlt; varying vec3 vDir;',
+  'void main(){',
+  '  vec3 d=normalize(vDir); float k=clamp(uAlt/25000.0,0.0,1.0);',
+  '  vec3 zen=mix(vec3(0.16,0.38,0.74),vec3(0.03,0.07,0.20),k);',
+  '  vec3 hor=mix(vec3(0.77,0.81,0.86),vec3(0.42,0.56,0.78),k);',
+  '  vec3 c=mix(hor,zen,pow(clamp(d.y,0.0,1.0),0.5));',
+  '  if(d.y<0.0) c=mix(hor,vec3(0.70,0.64,0.54),clamp(-d.y*5.0,0.0,1.0));',
+  '  float s=max(dot(d,uSun),0.0);',
+  '  c+=vec3(1.0,0.9,0.72)*(0.20*pow(s,6.0)+0.55*pow(s,64.0));',
+  '  c+=vec3(1.0,0.97,0.9)*smoothstep(0.99955,0.9998,s)*2.5;',
+  '  gl_FragColor=vec4(c,1.0);',
+  '}'].join('\n');
+var SKY_VERT='varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }';
+var skyMat=new THREE.ShaderMaterial({uniforms:skyU,vertexShader:SKY_VERT,fragmentShader:SKY_FRAG,side:THREE.BackSide,depthWrite:false,depthTest:false,fog:false});
+var sky=new THREE.Mesh(new THREE.SphereGeometry(1,48,24),skyMat); sky.scale.setScalar(90000); sky.renderOrder=-100; sky.frustumCulled=false; scene.add(sky);
+/* the sky and the desert reflected in the aluminium and the paint: a small cube of the sky's colours, made once */
+var skyEnv=(function(){
+  function face(kind){ var c=document.createElement('canvas'); c.width=c.height=64; var g=c.getContext('2d'), gr;
+    if(kind==='up'){ g.fillStyle='#3f74b8'; g.fillRect(0,0,64,64); }
+    else if(kind==='down'){ g.fillStyle='#a8957a'; g.fillRect(0,0,64,64); }
+    else { gr=g.createLinearGradient(0,0,0,64); gr.addColorStop(0,'#4f82c2'); gr.addColorStop(0.47,'#c4d4e4'); gr.addColorStop(0.53,'#b9a88e'); gr.addColorStop(1,'#9c8a70'); g.fillStyle=gr; g.fillRect(0,0,64,64); }
+    return c; }
+  var t=new THREE.CubeTexture([face('side'),face('side'),face('up'),face('down'),face('side'),face('side')]); t.needsUpdate=true; return t; })();
+/* the mountains round the Jornada del Muerto basin: the San Andres range to the east, the Caballo Mountains to the west,
+   the Fra Cristobal range to the north-west and low hills to the south. Two rings of ridges with real slopes (so they look
+   like mountains from high up too, lit by the sun), their shapes made up, their bearings, distances and heights about right */
+var mountains=(function(){
+  var N=720, K=9, pos=[], col=[], idx=[], base=0;
+  function bump(deg,c,w,h){ var d=((deg-c+540)%360)-180; return h*Math.exp(-d*d/(2*w*w)); }
+  /* [bearing in degrees from north, spread in degrees, height above the basin in m] for each range */
+  var NEAR=[[88,16,1250],[72,8,900],[262,13,950],[248,7,700],[335,9,850],[195,10,260],[128,9,420],[20,10,300]],
+      FAR=[[50,14,1050],[272,18,1350],[300,10,900],[150,9,1150],[230,12,600],[110,10,700],[10,12,500]];
+  function ridge(az,L){ var deg=az*180/Math.PI, h=0;
+    L.peaks.forEach(function(q){ h+=bump(deg,q[0],q[1],q[2]); });
+    return h*(0.78+0.14*Math.sin(az*23+L.seed)*Math.sin(az*7.3+1+L.seed)+0.1*Math.sin(az*61+2+L.seed)+0.05*Math.sin(az*157+L.seed)); }
+  function wob(a,b){ return Math.sin(a*1.7+b*3.1)*Math.sin(a*0.9-b*2.3+1.3); }
+  [{R:27000,seed:0.7,peaks:NEAR},{R:52000,seed:2.1,peaks:FAR}].forEach(function(L){
+    for(var i=0;i<=N;i++){ var az=i/N*TAU, h=ridge(az,L), d=L.R*(1+0.13*Math.sin(az*2+L.seed)+0.06*Math.sin(az*5+1.7*L.seed)), W=600+3.4*h;
+      for(var k=0;k<K;k++){
+        /* across the ridge: foot, slopes and crest, with gullies made by wobbling the heights */
+        var u=k/(K-1)*2-1, prof=Math.pow(Math.max(0,1-u*u),1.4)*(1+0.22*wob(az*40+k,L.seed+k)), hh=k===0||k===K-1?-20:h*prof;
+        var r=d+u*W*(1+0.25*Math.sin(az*11+k)), e=r*Math.sin(az), n=r*Math.cos(az); pos.push(hh,e,n);
+        /* sandy foothills, darker rock and scrub higher up */
+        var t=clamp(hh/900,0,1); col.push(0.62-0.20*t,0.54-0.17*t,0.42-0.10*t);
+        if(i<N&&k<K-1){ var a=base+i*K+k; idx.push(a,a+K,a+1, a+1,a+K,a+K+1); } } }
+    base+=K*(N+1); });
+  var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('color',new THREE.Float32BufferAttribute(col,3)); g.setIndex(idx);
+  g.computeVertexNormals();
+  var m=new THREE.Mesh(g,new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide,fog:true})); m.frustumCulled=false; return m; })();
+root.add(mountains);
+/* where the sun's shadows fall: an invisible sheet just above the ground that only darkens, kept under the rocket */
+var shadowSheet=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.ShadowMaterial({opacity:0.38,depthWrite:false}));
+shadowSheet.rotation.x=-Math.PI/2; shadowSheet.receiveShadow=true; shadowSheet.renderOrder=1; scene.add(shadowSheet);
+function castShadows(obj,on){ obj.traverse(function(o){ if(o.isMesh&&!o.material.transparent) o.castShadow=on; }); }
+function applyLook(){
+  var real=LOOK==='real';
+  document.querySelectorAll('#look button').forEach(function(b){ b.classList.toggle('on',b.dataset.l===LOOK); });
+  sky.visible=real; mountains.visible=real; shadowSheet.visible=real; if(window.__padSlab) window.__padSlab.visible=real;
+  groundU.uReal.value=real?1:0; groundU.uSun.value.copy(SUN_DIR);
+  ambient.intensity=real?0.12:0.7; hemi.intensity=real?0.55:0;
+  sun.intensity=real?1.05:0.75; sun.color.set(real?0xfff0dc:0xffffff); sun.castShadow=real;
+  if(!real) sun.position.set(0.6,1,0.8), sun.target.position.set(0,0,0);
+  scene.fog.near=real?2500:9000; scene.fog.far=real?95000:42000; groundU.uFogRange.value.set(scene.fog.near,scene.fog.far);
+  if(!real){ if(renderer) renderer.setClearColor(0x000000); scene.fog.color.set(0x000000); groundU.uFog.value.set(0x000000); groundU.uBase.value.set(0x23272d); }
+  [MAT.al,MAT.fg,MAT.cf,MAT.nose,MAT.tail,railMat,steel].forEach(function(m){ if(m){ m.envMap=real?skyEnv:null; m.needsUpdate=true; } });
+}
+/* each frame: the sky round the camera, the haze the colour of the horizon, the sun's shadow box round the rocket */
+function updateLook(target,Ld){
+  if(LOOK!=='real') return;
+  var alt=Math.max(camera.position.y,0);
+  sky.position.copy(camera.position); skyU.uAlt.value=alt;
+  var hz=horizonColor(alt); scene.fog.color.copy(hz); groundU.uFog.value.copy(hz); if(renderer) renderer.setClearColor(hz);
+  /* the haze is in the lowest few kilometres of air: from higher up you see further through it */
+  scene.fog.near=2500+alt*2.5; scene.fog.far=95000+alt*9; groundU.uFogRange.value.set(scene.fog.near,scene.fog.far);
+  var h=Math.max(target.y,0), box=Ld*1.6+h*1.1, far=Ld*40+h*3;
+  sun.target.position.copy(target); sun.position.copy(target).addScaledVector(SUN_DIR,far*0.5);
+  var sc2=sun.shadow.camera; sc2.left=-box; sc2.right=box; sc2.top=box; sc2.bottom=-box; sc2.near=0.1; sc2.far=far; sc2.updateProjectionMatrix();
+  /* under the rocket, offset away from the sun to where its shadow lands */
+  shadowSheet.position.set(target.x-SUN_DIR.x/Math.max(SUN_DIR.y,0.2)*h,0.004+0.0004*camera.position.distanceTo(target),target.z-SUN_DIR.z/Math.max(SUN_DIR.y,0.2)*h);
+  var sz=Math.max(box*4,Ld*30); shadowSheet.scale.set(sz,sz,1);
 }
 
 /* world frame at the pad */
@@ -327,12 +451,52 @@ var VEH={
   fins:{n:4, root:0.381, tip:0.0762, span:0.1905, sweep:0.3302, t:0.00508, xLE:4.691126},
   avBay:2.3749                                               /* avionics bay centre, where the separation charge is wired */
 };
+/* the rocket that is flying: when the page was made from an OpenRocket design, its parts replace the built-in model above
+   (nose shape and length, each tube with its material, the fin can sleeve, the boat tail and the fins), so the drawn
+   rocket, its length and its CG and CP markers match the flight */
+function vehFromOrk(v){
+  var R=v.radius, segs=v.segments, tubes=[], nose=null, tail=null, finCan=null, couplers=[];
+  function mat(m){ return /fibe?r ?glass|glass/i.test(m)?'fg':/alumin/i.test(m)?'al':'cf'; }
+  segs.forEach(function(g){
+    if(g.kind==='nose') nose={len:g.x1-g.x0, shape:(g.shape||'ogive').toLowerCase(), C:isFinite(g.param)?g.param:0, m:mat(g.material)};
+    else if(g.kind==='tube') tubes.push({x0:g.x0, x1:g.x1, m:mat(g.material), n:g.name});
+    else if(g.kind==='transition') tail={x0:g.x0, x1:g.x1, r0:g.r0, r1:g.r1, m:mat(g.material)};
+    else if(g.kind==='coupler'){ if(g.outside){ if(!finCan||g.x1-g.x0>finCan.x1-finCan.x0) finCan={x0:g.x0, x1:g.x1, r:g.r0, m:mat(g.material)}; } else couplers.push(g); } });
+  if(!nose||!tubes.length) throw new Error('the design has no nose cone or body tube');
+  /* single separation: the nose section comes off at the first joint behind the nose cone */
+  var sep=tubes.length>1?tubes[0].x1:tubes[0].x0+0.25*(tubes[0].x1-tubes[0].x0);
+  var sh=couplers.filter(function(c){ return c.x0<sep&&c.x1>sep; })[0];
+  var shoulder=sh?{x0:sep, x1:sh.x1, r:sh.r0}:{x0:sep, x1:sep+0.15, r:R*0.97};
+  var len=v.length;
+  if(!tail) tail={x0:len-0.002, x1:len, r0:R, r1:R*0.7, m:'al'};
+  return {length:len, radius:R, sep:sep, nose:nose, shoulder:shoulder, tubes:tubes, finCan:finCan,
+    tail:{x0:tail.x0, x1:tail.x1, r1:tail.r1, m:tail.m}, fins:v.fins, avBay:sep+0.3};
+}
+(function(){ var v=window.TELEMETRY&&window.TELEMETRY.vehicle;
+  if(v&&v.segments&&v.segments.length){ try{ VEH=vehFromOrk(v); }catch(err){ console.warn('VISION: drawing the built-in rocket: '+err.message); } } })();
+/* nose cone profile: radius at a distance x behind the tip, for OpenRocket's shapes */
+function noseR(x,L,R,shape,C){
+  var u=clamp(x/L,0,1);
+  if(shape==='conical') return R*u;
+  if(shape==='ellipsoid') return R*Math.sqrt(Math.max(1-(1-u)*(1-u),0));
+  if(shape==='power') return R*Math.pow(u,C>0?C:0.5);
+  if(shape==='parabolic'){ var k=C>0?C:1; return R*(2*u-k*u*u)/(2-k); }
+  if(shape==='haack') return haack(x,L,R,C);
+  var rho=(R*R+L*L)/(2*R); return Math.sqrt(Math.max(rho*rho-(L-x)*(L-x),0))+R-rho;   /* tangent ogive */
+}
 /* the white fibreglass and light grey aluminium stay; everything else on the rocket is Texas A&M maroon */
 var MAROON=0x500000;
-var MAT={fg:new THREE.MeshLambertMaterial({color:0xd6d6d2}), cf:new THREE.MeshLambertMaterial({color:MAROON}),
-  al:new THREE.MeshLambertMaterial({color:0xa3a9b1}), nose:new THREE.MeshLambertMaterial({color:MAROON,side:THREE.DoubleSide}),
-  dark:new THREE.MeshLambertMaterial({color:0x2e0000,side:THREE.DoubleSide}), tail:new THREE.MeshLambertMaterial({color:MAROON,side:THREE.DoubleSide}),
-  button:new THREE.MeshLambertMaterial({color:0x3a0000})};
+/* painted and bare surfaces with their own shine: gloss maroon paint, satin white fibreglass, brushed aluminium (which
+   reflects the sky in the realistic look) */
+/* Phong with a small sky cube for the reflections: it looks right on every graphics card (the physically based materials
+   need a pre-filtered sky that some cards and the browser test's software renderer draw wrongly) */
+function paint(c,rough,metal,side){
+  return new THREE.MeshPhongMaterial({color:c,shininess:Math.round(4+90*(1-rough)*(1-rough)),specular:new THREE.Color(metal?0x8a8f96:0x2a2a2a),
+    reflectivity:metal?0.42:0.06,combine:THREE.MixOperation,side:side||THREE.FrontSide}); }
+var MAT={fg:paint(0xe4e4e0,0.5,0), cf:paint(MAROON,0.38,0.05),
+  al:paint(0xc2c7ce,0.32,0.85), nose:paint(MAROON,0.38,0.05,THREE.DoubleSide),
+  dark:paint(0x2e0000,0.7,0,THREE.DoubleSide), tail:paint(MAROON,0.38,0.05,THREE.DoubleSide),
+  button:paint(0x3a0000,0.6,0)};
 function tubeMesh(x0,x1,r,mat,open){ var g=new THREE.CylinderGeometry(r,r,x1-x0,40,1,!!open); g.rotateZ(-Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-(x0+x1)/2; return m; }
 function ring(x,r,mat){ var g=new THREE.CylinderGeometry(r,r,0.004,40,1,true); g.rotateZ(-Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-x; return m; }
 function disc(x,r,mat){ var g=new THREE.CircleGeometry(r,40); g.rotateY(Math.PI/2); var m=new THREE.Mesh(g,mat); m.position.x=-x; return m; }
@@ -364,16 +528,16 @@ function placeHalos(){   /* each frame: face the camera, at least a few pixels w
 var noseSec=new THREE.Group(), aftSec=new THREE.Group();
 (function buildVehicle(){
   var pts=[], N=48;
-  for(var i=0;i<=N;i++){ var x=VEH.nose.len*Math.pow(i/N,1.6); pts.push(new THREE.Vector2(haack(x,VEH.nose.len,VEH.radius,VEH.nose.C),-x)); }
+  for(var i=0;i<=N;i++){ var x=VEH.nose.len*Math.pow(i/N,1.6); pts.push(new THREE.Vector2(noseR(x,VEH.nose.len,VEH.radius,VEH.nose.shape||'haack',VEH.nose.C),-x)); }
   var ng=new THREE.LatheGeometry(pts,48); ng.rotateZ(-Math.PI/2); noseSec.add(new THREE.Mesh(ng,MAT.nose));
   VEH.tubes.forEach(function(tb,i){ var m=tubeMesh(tb.x0,tb.x1,VEH.radius,MAT[tb.m],true); (tb.x1<=VEH.sep+1e-6?noseSec:aftSec).add(m);
     if(i>0) (tb.x0<VEH.sep+1e-6?noseSec:aftSec).add(ring(tb.x0,VEH.radius+0.0009,MAT.dark)); });
   noseSec.add(tubeMesh(VEH.shoulder.x0,VEH.shoulder.x1,VEH.shoulder.r,MAT.fg,true));
   noseSec.add(disc(VEH.shoulder.x1,VEH.shoulder.r,MAT.dark));                       /* bulkhead on the shoulder */
   aftSec.add(disc(VEH.sep+0.004,VEH.radius-0.002,MAT.dark));                        /* forward bulkhead seen after separation */
-  aftSec.add(tubeMesh(VEH.finCan.x0,VEH.finCan.x1,VEH.finCan.r,MAT.cf,true));
+  if(VEH.finCan) aftSec.add(tubeMesh(VEH.finCan.x0,VEH.finCan.x1,VEH.finCan.r,MAT[VEH.finCan.m||'cf'],true));
   var tg=new THREE.CylinderGeometry(VEH.radius,VEH.tail.r1,VEH.tail.x1-VEH.tail.x0,40,1,true); tg.rotateZ(Math.PI/2);
-  var tm=new THREE.Mesh(tg,MAT.tail); tm.position.x=-(VEH.tail.x0+VEH.tail.x1)/2; aftSec.add(tm);
+  var tm=new THREE.Mesh(tg,VEH.tail.m==='al'?MAT.al:MAT.tail); tm.position.x=-(VEH.tail.x0+VEH.tail.x1)/2; aftSec.add(tm);
   aftSec.add(disc(VEH.tail.x1,VEH.tail.r1,MAT.dark));
   var throat=disc(VEH.tail.x1+0.001,VEH.tail.r1*0.55,MAT.tail); aftSec.add(throat);
   /* fins: trapezoids extruded to their thickness; fin 0 lies along +y_b */
@@ -382,7 +546,7 @@ var noseSec=new THREE.Group(), aftSec=new THREE.Group();
   var fg=new THREE.ExtrudeGeometry(sh,{depth:f.t,bevelEnabled:false}); fg.translate(0,0,-f.t/2);
   /* Texas A&M maroon; fin 0 (along +y_b) a lighter maroon, so the roll can still be seen */
   var finCols=[0x9a3b3b,MAROON,MAROON,MAROON];
-  for(var k=0;k<f.n;k++){ var fm=new THREE.Mesh(fg,new THREE.MeshLambertMaterial({color:finCols[k%4]})); fm.rotation.x=k*TAU/f.n; aftSec.add(fm); }
+  for(var k=0;k<f.n;k++){ var fm=new THREE.Mesh(fg,paint(finCols[k%4],0.4,0.05)); fm.rotation.x=k*TAU/f.n; aftSec.add(fm); }
   addHalo(noseSec); addHalo(aftSec);
 })();
 noseSec.matrixAutoUpdate=false; aftSec.matrixAutoUpdate=false; root.add(noseSec); root.add(aftSec);
@@ -404,7 +568,7 @@ var diamonds=[]; for(var di=0;di<4;di++){ var dm=new THREE.Mesh(new THREE.Sphere
    five sets of small corner guides (the fins pass between them); stand legs and a small blast deflector.
    Everything is sized from the rocket (6 in body, 0.15 m), so none of it dwarfs it. ---------- */
 var padHw=new THREE.Group(); padHw.matrixAutoUpdate=false; G.pad=padHw; root.add(padHw);
-var railMat=new THREE.MeshLambertMaterial({color:0xb8bcc2}), steel=new THREE.MeshLambertMaterial({color:0x5d6168});
+var railMat=paint(0xb8bcc2,0.35,0.8), steel=paint(0x5d6168,0.55,0.6);
 var TOWER={half:0.17, block:0.06, plate:0.0127, plates:5, rail:0.0254};   /* the fins (tips 0.267 m out) pass between the corner guides */
 var tower=new THREE.Group(); tower.matrixAutoUpdate=false; padHw.add(tower); var towerLen=-1, towerPlates=[];
 var STAND={spread:0.45, top:0.33, leg:0.015, deflector:0.3};   /* stand legs: spread, leg radius and deflector side in metres at rocket scale 1 (they scale); the legs meet the tower this fraction up its true length */
@@ -417,16 +581,18 @@ function buildTower(len){
   edges.position.x=len/2; tower.add(edges);
   [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(function(s){ var r=new THREE.Mesh(new THREE.BoxGeometry(len,TOWER.rail,TOWER.rail),railMat);
     r.position.set(len/2,s[0]*(h-TOWER.rail/2),s[1]*(h-TOWER.rail/2)); tower.add(r); });
-  var b=TOWER.block, plateMat=new THREE.MeshLambertMaterial({color:0x9aa0a8}), bg=new THREE.BoxGeometry(TOWER.plate,b,b);
+  var b=TOWER.block, plateMat=paint(0x9aa0a8,0.45,0.7), bg=new THREE.BoxGeometry(TOWER.plate,b,b);
   for(var k=1;k<=TOWER.plates;k++){ var at=len*k/TOWER.plates;
     [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(function(s2){ var pm=new THREE.Mesh(bg,plateMat);
       pm.userData.at=at; pm.userData.cy=s2[0]*(h-b/2); pm.userData.cz=s2[1]*(h-b/2);
       pm.position.set(at-TOWER.plate/2,pm.userData.cy,pm.userData.cz); tower.add(pm); towerPlates.push(pm); }); }
-  towerLen=len;
+  towerLen=len; castShadows(tower,true);
 }
 var legs=[0,1,2].map(function(){ var m=new THREE.Mesh(new THREE.CylinderGeometry(STAND.leg,STAND.leg,1,8),steel); padHw.add(m); return m; });
 var deflector=new THREE.Mesh(new THREE.BoxGeometry(0.012,STAND.deflector,STAND.deflector),steel); padHw.add(deflector);
 var railLb=makeLabel('LAUNCH TOWER','#c8ccd2',G.pad);
+/* the concrete pad the stand sits on (realistic look only) */
+var padSlab=new THREE.Mesh(new THREE.BoxGeometry(0.25,1,1),paint(0x8f8a80,0.95,0)); padSlab.receiveShadow=true; padHw.add(padSlab); window.__padSlab=padSlab;
 var RAIL={length:10, dir:new V3(1,0,0), tilt:0, base:new V3(), side:new V3(0,1,0), y0:new V3(0,1,0), z0:new V3(0,0,1)};
 
 /* ---------- recovery: shock cords, suspension lines, canopy (single separation, reefed main) ---------- */
@@ -726,8 +892,7 @@ function setDataset(d){
   $('conjWrap').hidden=d.demo;
 }
 function applyTheme(){
-  if(renderer){ renderer.setClearColor(0x000000); } scene.fog.color.set(0x000000);
-  groundU.uBase.value.set(0x23272d);
+  applyLook();
   if(ptsP){ ptsP.material.color.set(0xd9bd7a); ptsF.material.color.set(0xe2e8f0); ptsG.material.color.set(0x7c8794); }
 }
 
@@ -886,7 +1051,7 @@ var noteMult=-1, rA=$('rA'),rP=$('rP'),rV=$('rV'),rT=$('rT'),rM=$('rM'),rPh=$('r
 
 function smooth(x){ x=clamp(x,0,1); return x*x*(3-2*x); }
 var mS=new THREE.Matrix4(), mT=new THREE.Matrix4(), Pv=new V3(), off=new V3(), xn=new V3(), yn=new V3(), zn=new V3();
-var A=new V3(), Cc=new V3(), Nn=new V3(), Sk=new V3(), Tn=new V3(), w1=new V3(), w2=new V3(), w3=new V3(), upV=new V3(1,0,0);
+var A=new V3(), Cc=new V3(), Nn=new V3(), Sk=new V3(), Tn=new V3(), w1=new V3(), w2=new V3(), w3=new V3(), w4=new V3(), upV=new V3(1,0,0);
 var BC=new V3(), bX=new V3(), bY=new V3(), bZ=new V3(), pivDir=new V3(), cAx=new V3(), cUp=new V3(), tailG=new V3(), TD={sc:-1,t:null};
 var aimAft=0, wasSep=false, tmpQ=new THREE.Quaternion(), YAX=new V3(0,1,0), canKey='', canLbR=makeLabel('REEFED MAIN','#d9bd7a',G.reco), plumeTmax=1, plumeMdMax=0;
 /* group local: body axes with the nose tip at the origin; put body station `station` at world point `at` */
@@ -916,6 +1081,7 @@ function drawPad(sc,pos,cg){
   for(var i=0;i<3;i++){ var a=i*TAU/3+0.5, g=new V3(0.02,spread*Math.cos(a),spread*Math.sin(a)), dir=new V3().subVectors(top,g), len=dir.length(); dir.normalize();
     orient(legs[i],dir,len,sc,g.clone().addScaledVector(dir,len/2)); }
   deflector.position.set(0.012,0,0); deflector.scale.set(1,sc,sc);
+  var slab=Math.max(8,ROCKET_LEN*sc*1.6); padSlab.scale.set(1,slab,slab); padSlab.position.set(-0.122,0,0);
   railLb.position.set(0.02,0,0).addScaledVector(d,L*1.04);
 }
 
@@ -1134,6 +1300,7 @@ function draw(dtReal){
   camera.near=Math.max(0.2,d*0.01); camera.far=120000;
   camera.position.y=Math.max(camera.position.y,0.03*Ld,1.5*camera.near); camera.updateProjectionMatrix(); camera.lookAt(tt);
   setGrid(camera.position.y,Ld,d);
+  updateLook(s2t(pos,w4),Ld);
 
   drawPad(sc,pos,cg);
 
@@ -1271,6 +1438,8 @@ function tick(now){
 }
 
 /* ---------- start ---------- */
+castShadows(noseSec,true); castShadows(aftSec,true); castShadows(padHw,true); canopy.castShadow=true;
+document.querySelectorAll('#look button').forEach(function(b){ b.onclick=function(){ LOOK=b.dataset.l; try{ localStorage.setItem('vision.look',LOOK); }catch(e){ /* not kept */ } applyLook(); }; });
 if(!renderer) $('nogl').hidden=false; else resize();
 document.fonts&&document.fonts.ready&&0;
 setDataset(genDemo());

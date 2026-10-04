@@ -116,6 +116,11 @@ class OrkRocket:  # pylint: disable=too-many-instance-attributes
     fins: Fins
     items: tuple[MassItem, ...]
     sims: dict[str, SavedSim]
+    # The outside of the rocket, nose first, for drawing it (VISION): one dict per
+    # part with its kind ("nose", "tube", "transition" or "coupler"), name,
+    # material, forward and aft stations (m from the nose tip) and radii (m).
+    # A coupler with ``outside`` True sits over the tube (a fin can sleeve).
+    segments: tuple[dict[str, Any], ...] = ()
 
     @property
     def reference_area_m2(self) -> float:
@@ -280,6 +285,7 @@ def load_ork(path: str | Path) -> OrkRocket:  # pylint: disable=too-many-locals
     nose: dict[str, Any] = {}
     tail: dict[str, Any] = {}
     tubes: list[tuple[float, float, float, float]] = []
+    segments: list[dict[str, Any]] = []
     station = 0.0
     radius = 0.0
     for stage in rocket.iter("stage"):
@@ -295,9 +301,11 @@ def load_ork(path: str | Path) -> OrkRocket:  # pylint: disable=too-many-locals
                     "mass": _component_mass("nosecone", part)[0],
                 }
                 radius = _text(part, "aftradius")
+                segments.append(_segment("nose", part, start, length, radius, radius))
             elif part.tag == "bodytube":
                 radius = _text(part, "radius") or radius
                 tubes.append((start, length, _text(part, "thickness"), _density(part)))
+                segments.append(_segment("tube", part, start, length, radius, radius))
             else:
                 tail = {
                     "length": length,
@@ -306,6 +314,8 @@ def load_ork(path: str | Path) -> OrkRocket:  # pylint: disable=too-many-locals
                     "wall": _text(part, "thickness"),
                     "density": _density(part),
                 }
+                fore, aft = tail["fore"], tail["aft"]
+                segments.append(_segment("transition", part, start, length, fore, aft))
             mass, overridden = _component_mass(part.tag, part)
             items.append(
                 MassItem(
@@ -329,6 +339,14 @@ def load_ork(path: str | Path) -> OrkRocket:  # pylint: disable=too-many-locals
                         )
                     )
                     continue
+                if child.tag == "tubecoupler":
+                    outer = _text(child, "outerradius") or 0.97 * radius
+                    first = _offset(child, start, length)
+                    segment = _segment(
+                        "coupler", child, first, _own_length(child), outer, outer
+                    )
+                    segment["outside"] = outer > radius + 1e-6
+                    segments.append(segment)
                 if child.tag not in (*_INTERNAL_TAGS, "masscomponent"):
                     continue
                 mass, overridden = _component_mass(child.tag, child)
@@ -369,7 +387,25 @@ def load_ork(path: str | Path) -> OrkRocket:  # pylint: disable=too-many-locals
         fins=fins,
         items=tuple(items),
         sims=_saved_sims(root),
+        segments=tuple(segments),
     )
+
+
+def _segment(
+    kind: str, part: ET.Element, x0: float, length: float, r0: float, r1: float
+) -> dict[str, Any]:
+    """One part of the outside of the rocket, for drawing it."""
+    return {
+        "kind": kind,
+        "name": (part.findtext("name") or part.tag).strip(),
+        "material": (part.findtext("material") or "").strip(),
+        "shape": (part.findtext("shape") or "").strip(),
+        "param": _text(part, "shapeparameter"),
+        "x0": round(x0, 5),
+        "x1": round(x0 + length, 5),
+        "r0": round(r0, 5),
+        "r1": round(r1, 5),
+    }
 
 
 @dataclass(frozen=True)

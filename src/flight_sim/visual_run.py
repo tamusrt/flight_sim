@@ -27,6 +27,7 @@ from flight_sim.__main__ import (
 from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
 from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import IntegrationConfiguration, adaptive_step
+from flight_sim.ork import load_ork
 from flight_sim.real_flight import real_flight_telemetry
 from flight_sim.units import scalar
 from flight_sim.vehicle.rocket_properties import RocketProperties
@@ -68,6 +69,8 @@ def main() -> None:
     log = TelemetryLog(properties, config)
     log.describe_rail(profile.rail)
     log.describe_recovery(profile.recovery)
+    if args.ork is not None:  # draw the rocket of the design, not the built-in model
+        log.describe_vehicle(load_ork(args.ork))
 
     dt = scalar(0.01, "s")
     current_time = 0.0

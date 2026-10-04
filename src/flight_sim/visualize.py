@@ -100,6 +100,7 @@ class TelemetryLog:
         self.events: list[dict[str, Any]] = []
         self.rail: dict[str, Any] | None = None
         self.recovery: dict[str, Any] | None = None
+        self.vehicle: dict[str, Any] | None = None
 
     def record(
         self,
@@ -183,6 +184,28 @@ class TelemetryLog:
             "cord_to_body": CORD_TO_BODY_M,
         }
 
+    def describe_vehicle(self, ork: Any) -> None:
+        """Record the outside of the rocket from its OpenRocket design.
+
+        The scene then draws the rocket that is flying (its parts, materials, fins
+        and length) instead of its built-in model.
+        """
+        fins = ork.fins
+        self.vehicle = {
+            "length": float(ork.length_m),
+            "radius": 0.5 * float(ork.reference_diameter_m),
+            "segments": [dict(s) for s in ork.segments],
+            "fins": {
+                "n": int(fins.count),
+                "root": float(fins.root_chord_m),
+                "tip": float(fins.tip_chord_m),
+                "span": float(fins.span_m),
+                "sweep": float(fins.sweep_m),
+                "t": float(fins.thickness_m),
+                "xLE": float(fins.root_trailing_edge_x_m - fins.root_chord_m),
+            },
+        }
+
     def to_json(self) -> str:
         """Telemetry in the format the viewer expects."""
         cp = [None if math.isnan(x) else x for x in self.rows["cp"]]
@@ -194,6 +217,7 @@ class TelemetryLog:
                 "events": self.events,
                 "rail": self.rail,
                 "recovery": self.recovery,
+                "vehicle": self.vehicle,
             }
         )
 
