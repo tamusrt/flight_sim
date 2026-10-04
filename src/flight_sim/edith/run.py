@@ -17,7 +17,7 @@ from flight_sim.__main__ import (
     get_default_state,
     get_profile_properties,
 )
-from flight_sim.descent import Parachute, ReefedParachute
+from flight_sim.descent import Parachute, ReefedParachute, air_at
 from flight_sim.edith.ascent import Ascent, fly_ascent
 from flight_sim.edith.inputs import Nominal, SiteConfig, Variation
 from flight_sim.environment.atmosphere import LaunchSiteAtmosphere
@@ -92,6 +92,16 @@ class Rocket:
             pad_pressure_pa=self.profile.pad_pressure_pa,
             pad_elevation_m=self.profile.pad_elevation_m,
         )
+
+    def geometry(self) -> dict[str, float] | None:
+        """Body length and diameter (metres), to show stability as % of length."""
+        damping = self.properties.damping
+        if damping is None:
+            return None
+        return {
+            "length_m": float(damping.body_length_m),
+            "diameter_m": float(damping.body_diameter_m),
+        }
 
     # ----- one draw applied to the rocket --------------------------------------
 
@@ -253,7 +263,70 @@ class Rocket:
                 else outcome.apogee.detected_s - ascent.apogee_time_s
             ),
         }
+        if len(ascent.samples) > 2:  # a flown climb, not the surrogate's two points
+            result["history"] = flight_history(config, ascent, descent)
         return result
+
+
+_PATH_STEP_S = 1.0  # spacing of the climb's points in the drawn path
+_DESCENT_POINTS = 30  # points of the descent in the drawn path
+
+
+def flight_history(
+    config: IntegrationConfiguration, ascent: Ascent, descent: Any
+) -> dict[str, Any]:
+    """The flight over time, for the EDITH page's charts and picture.
+
+    ``t`` and ``alt`` are the climb every 0.1 s (metres above the pad); ``mt`` and
+    ``m`` the stability margin (calibres) while faster than 30 m/s; ``mach`` the Mach
+    number (speed through the air over the speed of sound) at the climb's times;
+    ``path`` the whole
+    flight as [time, east, north, height] in seconds and metres, coarser.
+    """
+    times = [t for t, _ in ascent.samples]
+    heights = [float(state.position.m_as("m")[0]) for _, state in ascent.samples]
+    mach = []
+    for (_, state), height in zip(ascent.samples, heights, strict=True):
+        air, wind = air_at(config, height)
+        through_air = float(np.linalg.norm(state.velocity.m_as("m/s") - wind))
+        mach.append(round(through_air / air.speed_of_sound, 4))
+    path: list[list[float]] = []
+    next_t = 0.0
+    for t, state in ascent.samples:
+        if t >= next_t or t == times[-1]:
+            pos = state.position.m_as("m")
+            path.append(
+                [
+                    round(t, 2),
+                    round(float(pos[1])),
+                    round(float(pos[2])),
+                    round(float(pos[0])),
+                ]
+            )
+            next_t = t + _PATH_STEP_S
+    down_t = np.asarray(descent.times_s, dtype=float)
+    if len(down_t) > 1:
+        picks = np.unique(
+            np.linspace(0, len(down_t) - 1, _DESCENT_POINTS + 1).round().astype(int)
+        )[1:]
+        for i in picks:
+            pos = descent.states[int(i)].position.m_as("m")
+            path.append(
+                [
+                    round(float(down_t[i]), 2),
+                    round(float(pos[1])),
+                    round(float(pos[2])),
+                    round(max(float(pos[0]), 0.0)),
+                ]
+            )
+    return {
+        "t": [round(t, 2) for t in times],
+        "alt": [round(h, 1) for h in heights],
+        "mt": [round(t, 2) for t, _ in ascent.margin_track],
+        "m": [round(m, 3) for _, m in ascent.margin_track],
+        "mach": mach,
+        "path": path,
+    }
 
 
 def _failed(ascent: Ascent, why: str) -> dict[str, Any]:

@@ -124,7 +124,8 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <label class="btn" title="Replay a flight log (JSON) instead of the simulation">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
       <label class="btn" id="realBtn" hidden>Showing simulation</label>
       <div class="seg" id="spread" hidden title="EDITH is the team's many-flight simulation. Show where its simulated flights peaked or came down, around the flight being replayed."><button data-s="off" class="on">No spread</button><button data-s="apogee">EDITH apogee spread</button><button data-s="landing">EDITH landing spread</button></div>
-      <a class="btn" id="edLink" style="text-decoration:none" href="#" hidden title="Open the EDITH page: every chance, the apogee spread and the landing map">EDITH page</a>
+      <label class="chip" id="circWrap" hidden title="With EDITH landing spread chosen: show circles on the ground, centred on the average landing point, that hold 25%, 50%, 75% and 90% of EDITH's simulated landings."><input type="checkbox" id="circ">EDITH landing circles</label>
+      <a class="btn" id="edLink" style="text-decoration:none" href="#" hidden title="Open the EDITH page: every chance, the climb over time and every flight path">EDITH page</a>
       <label class="btn" id="orBtn" hidden title="Add OpenRocket's simulated flight path for the same launch condition, from the latest results on the History tab">Load OpenRocket</label>
     </div>
   </header>
@@ -134,6 +135,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <canvas id="cv"></canvas>
       <div class="note" id="scaleNote"></div>
       <div class="note" id="edNote" style="bottom:22px;max-width:92%;white-space:normal" hidden></div>
+      <div class="note" id="circKey" style="top:8px;bottom:auto;left:auto;right:8px;background:rgba(10,12,16,.72);padding:6px 9px;border-radius:6px;line-height:1.7" hidden></div>
       <div class="banner" id="banner" hidden></div>
       <div class="nogl" id="nogl" hidden>WebGL isn't available here, so the 3D view can't draw. The readouts on the right still work.</div>
     </div>
@@ -786,7 +788,7 @@ document.querySelectorAll('#views button').forEach(function(b){b.onclick=functio
   root.add(grp);
   function pts(positions,colors,size){
     var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3)); g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
-    var p=new THREE.Points(g,new THREE.PointsMaterial({size:size,sizeAttenuation:false,vertexColors:true,transparent:true,opacity:.8})); p.frustumCulled=false; p.visible=false; grp.add(p); return p;
+    var p=new THREE.Points(g,new THREE.PointsMaterial({size:size,sizeAttenuation:false,vertexColors:true,transparent:true,opacity:.55})); p.frustumCulled=false; p.visible=false; grp.add(p); return p;
   }
   function rgb(hex,out){ out.push(((hex>>16)&255)/255,((hex>>8)&255)/255,(hex&255)/255); }
   /* sim coordinates: X up, Y east, Z north; the flights' points are [east, north, height] or [east, north] */
@@ -800,7 +802,7 @@ document.querySelectorAll('#views button').forEach(function(b){b.onclick=functio
   var ly0=0,ly1=0,lz0=0,lz1=0;
   EC.landing.forEach(function(p,i){ if(!p) return; ln.push(0.5,p[0],p[1]); rgb(STATUS[EC.status[i]],lnc); ly0=Math.min(ly0,p[0]);ly1=Math.max(ly1,p[0]); lz0=Math.min(lz0,p[1]);lz1=Math.max(lz1,p[1]); });
   EC.ellipse.forEach(function(p){ ly0=Math.min(ly0,p[0]);ly1=Math.max(ly1,p[0]); lz0=Math.min(lz0,p[1]);lz1=Math.max(lz1,p[1]); });
-  apPts=pts(ap,apc,5); lnPts=pts(ln,lnc,4.5);
+  apPts=pts(ap,apc,3); lnPts=pts(ln,lnc,2.6);   /* small and faint, so the circles and the flight stay readable */
   /* the 90% landing outline on the ground, and flat rings at the target apogee and the edges of its range */
   var lines=new THREE.Group(); lines.visible=false; grp.add(lines);
   function loop(vs,color,op){ var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(vs,3)); var l=new THREE.LineLoop(g,new THREE.LineBasicMaterial({color:color,transparent:true,opacity:op})); l.frustumCulled=false; return l; }
@@ -820,9 +822,33 @@ document.querySelectorAll('#views button').forEach(function(b){b.onclick=functio
   function setSpread(m){
     mode=m; apPts.visible=m==='apogee'; ringsG.visible=m==='apogee'; lnPts.visible=m==='landing'; outline.visible=m==='landing';
     spreadFrame=m==='off'?null:frame(m);
+    syncCircles();
     document.querySelectorAll('#spread button').forEach(function(b){ b.classList.toggle('on',b.dataset.s===m); });
     var n=$('edNote'); n.hidden=m==='off'; n.textContent=NOTES[m]||'';
     if(m!=='off') setView('wide');
+  }
+  /* the landing circles: flat on the ground, centred on the average landing point; off to start with */
+  var CI=EC.circles, circ=new THREE.Group(), circOn=false; circ.visible=false; grp.add(circ);
+  var CCOL=[0xe5484d,0xf2994a,0xf2d24b,0x4fb3e8];   /* 25, 50, 75, 90%: warm in the middle, cool outside */
+  if(CI&&CI.rings&&CI.rings.length){
+    CI.rings.forEach(function(r,i){
+      var R=Math.max(r.radius_m,1), w=Math.max(R*0.012,3), col=CCOL[i%CCOL.length];
+      var band=new THREE.Mesh(new THREE.RingGeometry(Math.max(R-w,0),R+w,128),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:.95,side:THREE.DoubleSide,depthWrite:false}));
+      var fill=new THREE.Mesh(new THREE.CircleGeometry(R,128),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:.07,side:THREE.DoubleSide,depthWrite:false}));
+      [fill,band].forEach(function(m){ m.rotation.y=Math.PI/2; m.position.set(0.8+i*0.05,CI.centre[0],CI.centre[1]); m.frustumCulled=false; circ.add(m); });
+    });
+    var dot=new THREE.Mesh(new THREE.CircleGeometry(Math.max(CI.rings[0].radius_m*0.05,4),24),new THREE.MeshBasicMaterial({color:0xffffff,side:THREE.DoubleSide,depthWrite:false}));
+    dot.rotation.y=Math.PI/2; dot.position.set(1.2,CI.centre[0],CI.centre[1]); circ.add(dot);
+    var hex=function(c){ return '#'+('00000'+c.toString(16)).slice(-6); };
+    $('circKey').innerHTML='EDITH landings ('+CI.landings+' flights)<br>'+CI.rings.map(function(r,i){ return '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid '+hex(CCOL[i%CCOL.length])+';vertical-align:-1px;margin-right:6px"></span>'+Math.round(r.share*100)+'% land within '+fmt(r.radius_m,0)+' m ('+fmt(r.radius_m*3.28084,0)+' ft) of the middle';
+    }).join('<br>')+'<br><span style="opacity:.8">centred on the average landing point; conditions assumed</span>';
+    $('circ').checked=false;
+    $('circ').onchange=function(){ circOn=this.checked; syncCircles(); };
+  }
+  /* the circles belong to the landing spread: their switch shows only while it is chosen */
+  function syncCircles(){
+    var can=mode==='landing'&&!!(CI&&CI.rings&&CI.rings.length);
+    $('circWrap').hidden=!can; circ.visible=can&&circOn; $('circKey').hidden=!(can&&circOn);
   }
   window.__edithFrame=function(){ if(mode!=='off') spreadFrame=frame(mode); };
   $('spread').hidden=false;

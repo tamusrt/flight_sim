@@ -7,10 +7,12 @@
 <style>
   :root { color-scheme: light dark; --bg:#fff; --fg:#1f2328; --muted:#59636e; --card:#f6f8fa; --line:#d0d7de;
           --up:#1a7f37; --down:#cf222e; --flat:#8c959f; --accent:#0969da; --hover:#eaeef2; --warn:#9a6700; --warnbg:#fff8c5; --ok:#1a7f37;
-          --redbg:#ffebe9; --greenbg:#dafbe1; --ring:#d0d7de; }
+          --redbg:#ffebe9; --greenbg:#dafbe1; --ring:#d0d7de;
+          --band2:#f2a07b; --band1:#5fb7e5; --path:#1f2328; --panel:#eef1f4; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --card:#161b22; --line:#30363d;
           --up:#3fb950; --down:#f85149; --flat:#6e7681; --accent:#58a6ff; --hover:#21262d; --warn:#d29922; --warnbg:#272115; --ok:#3fb950;
-          --redbg:#2d1214; --greenbg:#0f2a17; --ring:#30363d; } }
+          --redbg:#2d1214; --greenbg:#0f2a17; --ring:#30363d;
+          --band2:#a8583a; --band1:#2b7fab; --path:#c9d1d9; --panel:#11161d; } }
   * { box-sizing:border-box; }
   html, body { height:100%; }
   body { margin:0; display:flex; flex-direction:column; overflow:hidden; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
@@ -67,6 +69,13 @@
   .key { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--muted); margin:4px 2px; }
   .key i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
   .key i.sq { border-radius:2px; }
+  .key i.ln { border-radius:0; height:2px; width:16px; vertical-align:3px; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; margin:8px 0 0; }
+  .seg button { font:inherit; font-size:13px; padding:5px 14px; border:0; border-right:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; }
+  .seg button:last-child { border-right:0; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .chart h3 { margin:2px 4px 0; font-size:14px; text-align:center; }
+  .cnote { color:var(--muted); font-size:12.5px; margin:4px 2px 0; max-width:80ch; }
 </style>
 </head>
 <body>
@@ -78,6 +87,7 @@
   </div>
   <span class="sub" id="sub"></span>
   <span class="hctl">
+    <label class="sub">stability <select id="stab"><option value="cal">calibers</option><option value="pct">% of body length</option></select></label>
     <label class="sub">units <select id="units"><option value="metric">metric (m, m/s)</option><option value="imperial">imperial (ft, ft/s)</option></select></label>
   </span>
 </header>
@@ -97,21 +107,22 @@
   <h2 class="sec">Apogee: how high it goes</h2>
   <p class="legend" id="apogeeintro"></p>
   <div class="figs" id="apofigs"></div>
-  <div class="chart"><svg id="apohist" viewBox="0 0 900 300" role="img" aria-label="How often the rocket's apogee falls in each height band"></svg></div>
-  <div class="key"><span><i class="sq" style="background:var(--accent)"></i>within range of the target</span><span><i class="sq" style="background:var(--flat)"></i>outside the range</span><span><i class="sq" style="background:var(--warn);width:3px;height:12px;border-radius:0"></i>target</span></div>
   <div class="tablewrap"><table id="apotable"></table></div>
+
+  <h2 class="sec">The climb over time</h2>
+  <p class="legend" id="seriesintro"></p>
+  <div class="seg" id="seriesseg" role="group" aria-label="Which chart to show"><button data-k="altitude">Altitude</button><button data-k="mach">Mach</button><button data-k="stability">Stability</button></div>
+  <div class="chart"><h3 id="seriestitle"></h3><svg id="series" viewBox="0 0 900 360" role="img" aria-label="The average flight over time, with how far the flights spread around it"></svg></div>
+  <div class="key"><span><i class="sq" style="background:var(--band2)"></i>±2σ (about 95% of flights)</span><span><i class="sq" style="background:var(--band1)"></i>±1σ (about 68%)</span><span><i class="ln" style="background:var(--fg)"></i>μ, the average</span><span><i class="ln" style="background:var(--flat);height:1px"></i>highest and lowest flight</span><span id="serieskey"></span></div>
+  <p class="cnote" id="seriesnote"></p>
 
   <h2 class="sec">Landing: where it comes down</h2>
   <p class="legend" id="landintro"></p>
-  <div class="two">
-    <div>
-      <div class="chart"><svg id="map" viewBox="0 0 520 520" role="img" aria-label="Map of where each simulated flight landed, seen from above with north up"></svg></div>
-      <div class="key"><span><i style="background:var(--accent)"></i>no alert</span><span><i style="background:var(--warn)"></i>IREC warning</span><span><i style="background:var(--down)"></i>IREC failure</span><span><i class="sq" style="background:none;border:2px solid var(--fg)"></i>90% of landings are inside this ring</span></div>
-    </div>
-    <div>
-      <div class="figs" id="landfigs" style="grid-template-columns:1fr 1fr"></div>
-      <div class="tablewrap"><table id="landtable"></table></div>
-    </div>
+  <div class="chart"><h3 id="spreadtitle"></h3><svg id="spread" viewBox="0 0 900 600" role="img" aria-label="Every simulated flight's path from the pad to the ground, seen from one fixed angle"></svg></div>
+  <div class="key"><span><i class="ln" style="background:var(--path)"></i>one flight's path</span><span><i style="background:var(--accent)"></i>landing, no alert</span><span><i style="background:var(--warn)"></i>landing, IREC warning</span><span><i style="background:var(--down)"></i>landing, IREC failure</span><span><i class="sq" style="background:var(--fg);transform:rotate(45deg);width:9px;height:9px"></i>average landing</span><span><i style="background:none;border:2px solid var(--fg)"></i>launch pad</span></div>
+  <div class="two" style="margin-top:12px">
+    <div class="figs" id="landfigs" style="grid-template-columns:1fr 1fr;margin:0"></div>
+    <div class="tablewrap"><table id="landtable" style="margin-top:0"></table></div>
   </div>
 
   <h2 class="sec">The rest of the flight</h2>
@@ -142,7 +153,7 @@ const $ = (id) => document.getElementById(id);
 const R = DATA.report, A = DATA.alerts, FT = 3.28084, MI = 0.000621371;
 const embedded = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
 document.body.classList.toggle('embedded', embedded);
-const state = { units: 'imperial' };   // as on the JARVIS predictions page
+const state = { units: 'imperial', stab: 'cal', chart: 'altitude' };   // units as on the JARVIS predictions page
 
 /* ---------- words and numbers ---------- */
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -210,27 +221,6 @@ function drawApogee() {
   const range = (c2) => 'likely ' + pct(c2.low) + ' to ' + pct(c2.high);
   $('apofigs').innerHTML = f('Within range', g.within, range(g.within)) + f('Too low', g.below, range(g.below)) + f('Too high', g.above, range(g.above)) +
     '<div class="fig"><div class="d">Typical apogee</div><div class="n">' + len(ap.p50.estimate) + '</div><div class="d">middle of all flights</div></div>';
-  // histogram
-  const values = c.apogee.map((p) => p[2]);
-  const lo = Math.min(...values, g.low_m), hi = Math.max(...values, g.high_m);
-  const pad = (hi - lo) * 0.06, x0 = lo - pad, x1 = hi + pad, bins = 18, counts = new Array(bins).fill(0);
-  values.forEach((v) => { counts[Math.min(bins - 1, Math.floor(((v - x0) / (x1 - x0)) * bins))]++; });
-  const W = 900, H = 300, L = 46, Rr = 40, T = 12, B = 44, top = Math.max(...counts, 1), pw = W - L - Rr, ph = H - T - B;
-  const X = (v) => L + ((v - x0) / (x1 - x0)) * pw, bw = pw / bins;
-  let s = '<line x1="' + L + '" y1="' + (T + ph) + '" x2="' + (W - Rr) + '" y2="' + (T + ph) + '" stroke="var(--line)"/>';
-  counts.forEach((n, i) => {
-    const mid = x0 + ((i + 0.5) / bins) * (x1 - x0), inside = mid >= g.low_m && mid <= g.high_m, h = (n / top) * ph;
-    s += '<rect x="' + (L + i * bw + 1) + '" y="' + (T + ph - h) + '" width="' + (bw - 2) + '" height="' + h + '" rx="2" fill="' + (inside ? 'var(--accent)' : 'var(--flat)') + '" opacity=".85"><title>' + n + ' flights near ' + len(mid) + '</title></rect>';
-  });
-  s += '<line x1="' + X(g.target_m) + '" y1="' + T + '" x2="' + X(g.target_m) + '" y2="' + (T + ph) + '" stroke="var(--warn)" stroke-width="2.5"/>';
-  s += '<text x="' + X(g.target_m) + '" y="' + (T + 10) + '" text-anchor="middle" class="strong">target</text>';
-  for (let i = 0; i <= 5; i++) {
-    const v = x0 + ((x1 - x0) * i) / 5;
-    s += '<text x="' + X(v) + '" y="' + (H - 24) + '" text-anchor="middle">' + len(v) + '</text>';
-  }
-  s += '<text x="' + (L + pw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">apogee above the pad</text>';
-  s += '<text x="12" y="' + (T + ph / 2) + '" transform="rotate(-90 12 ' + (T + ph / 2) + ')" text-anchor="middle">number of flights</text>';
-  $('apohist').innerHTML = s;
   const row = (label, i) => '<tr><td>' + label + '</td><td>' + len(i.estimate) + '</td><td>' + len(i.low) + ' to ' + len(i.high) + '</td></tr>';
   $('apotable').innerHTML = '<tr><th>Apogee above the pad</th><th>Value</th><th>Likely range of that value</th></tr>' +
     row('Average', ap.mean) + row('Low day (10% of flights are lower)', ap.p10) + row('Middle (half are lower)', ap.p50) + row('High day (10% are higher)', ap.p90);
@@ -238,33 +228,10 @@ function drawApogee() {
 
 /* ---------- landing ---------- */
 function drawLanding() {
-  const f = R.footprint, c = R.cloud;
-  if (!f) { $('landintro').textContent = 'Too few flights landed to draw a map.'; $('map').innerHTML = ''; return; }
-  $('landintro').innerHTML = 'Seen from above, north up, with the launch pad at the centre. Each dot is where one simulated flight came down. The rocket tends to fly <b>into</b> the wind on the way up and then drifts <b>with</b> it under the parachutes, so the landings can be on either side of the pad. EDITH reports where the rocket lands but does not judge it against a landing area.';
-  const pts = c.landing.map((p, i) => (p ? { e: p[0], n: p[1], s: c.status[i] } : null)).filter(Boolean);
-  const ring = DATA.ellipse;
-  let reach = 100;
-  pts.forEach((p) => { reach = Math.max(reach, Math.abs(p.e), Math.abs(p.n)); });
-  ring.forEach((p) => { reach = Math.max(reach, Math.abs(p[0]), Math.abs(p[1])); });
-  const steps = [100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000], want = reach / 3.2;
-  const step = steps.find((x) => x >= want) || 10000, outer = Math.ceil((reach * 1.05) / step) * step;
-  const S = 520, C = S / 2, k = (C - 28) / outer, X = (e) => C + e * k, Y = (n) => C - n * k;
-  let s = '';
-  for (let r = step; r <= outer + 1; r += step) {
-    s += '<circle cx="' + C + '" cy="' + C + '" r="' + r * k + '" fill="none" stroke="var(--ring)" stroke-dasharray="3 4"/>';
-    s += '<text x="' + (C + r * k * 0.707 + 3) + '" y="' + (C - r * k * 0.707 - 3) + '">' + far(r) + '</text>';
-  }
-  s += '<line x1="' + (C - outer * k) + '" y1="' + C + '" x2="' + (C + outer * k) + '" y2="' + C + '" stroke="var(--ring)"/><line x1="' + C + '" y1="' + (C - outer * k) + '" x2="' + C + '" y2="' + (C + outer * k) + '" stroke="var(--ring)"/>';
-  s += '<text x="' + C + '" y="14" text-anchor="middle" class="strong">N</text><text x="' + (S - 10) + '" y="' + (C + 4) + '" text-anchor="middle">E</text><text x="10" y="' + (C + 4) + '" text-anchor="middle">W</text><text x="' + C + '" y="' + (S - 6) + '" text-anchor="middle">S</text>';
-  if (ring.length) s += '<polygon points="' + ring.map((p) => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ') + '" fill="var(--accent)" fill-opacity=".07" stroke="var(--fg)" stroke-width="1.8"/>';
-  const col = ['var(--accent)', 'var(--warn)', 'var(--down)'];
-  [0, 1, 2].forEach((st) => pts.filter((p) => p.s === st).forEach((p) => {
-    s += '<circle cx="' + X(p.e).toFixed(1) + '" cy="' + Y(p.n).toFixed(1) + '" r="3" fill="' + col[st] + '" fill-opacity=".6"/>';
-  }));
-  s += '<path d="M' + (C - 7) + ' ' + C + 'h14M' + C + ' ' + (C - 7) + 'v14" stroke="var(--fg)" stroke-width="2.2"/><text x="' + (C + 9) + '" y="' + (C + 16) + '" class="strong">pad</text>';
-  const mx = X(f.mean_east_m.estimate), my = Y(f.mean_north_m.estimate);
-  s += '<path d="M' + mx + ' ' + (my - 6) + 'l6 6l-6 6l-6 -6z" fill="var(--fg)"/><text x="' + (mx + 9) + '" y="' + (my - 7) + '" class="strong">average landing</text>';
-  $('map').innerHTML = s;
+  const f = R.footprint;
+  if (!f) { $('landintro').textContent = 'Too few flights landed to draw a picture.'; $('spread').innerHTML = ''; $('spreadtitle').textContent = ''; return; }
+  $('landintro').innerHTML = 'Every simulated flight, from the pad to the ground, seen from one fixed angle (a picture, so it does not turn). The dots are where each flight came down. The rocket tends to fly <b>into</b> the wind on the way up and then drifts <b>with</b> it under the parachutes, so the landings can be on either side of the pad. EDITH reports where the rocket lands but does not judge it against a landing area.';
+  drawSpread();
   const d = f.distance_from_pad_m;
   const fig = (t, v, sub) => '<div class="fig"><div class="d">' + t + '</div><div class="n">' + v + '</div><div class="d">' + sub + '</div></div>';
   $('landfigs').innerHTML = fig('Half of the flights land within', far(d.p50.estimate), 'of the pad') + fig('Nine in ten land within', far(d.p90.estimate), 'of the pad') +
@@ -272,7 +239,154 @@ function drawLanding() {
     fig('Furthest of ' + R.runs, far(d.max), 'from the pad');
   const rw = (label, i) => '<tr><td>' + label + '</td><td>' + far(i.estimate) + '</td><td>' + far(i.low) + ' to ' + far(i.high) + '</td></tr>';
   $('landtable').innerHTML = '<tr><th>Distance from the pad</th><th>Value</th><th>Likely range</th></tr>' + rw('Half land within', d.p50) + rw('Nine in ten land within', d.p90) + rw('95 in 100 land within', d.p95) +
-    '<tr><td>The 90% ring is about</td><td colspan="2">' + far(f.ellipse90_semi_major_m * 2) + ' by ' + far(f.ellipse90_semi_minor_m * 2) + ', long side pointing ' + Math.round(f.ellipse90_major_axis_bearing_deg) + '° from north</td></tr>';
+    '<tr><td>Nine in ten land inside an oval about</td><td colspan="2">' + far(f.ellipse90_semi_major_m * 2) + ' by ' + far(f.ellipse90_semi_minor_m * 2) + ', long side pointing ' + Math.round(f.ellipse90_major_axis_bearing_deg) + '° from north</td></tr>';
+}
+
+
+/* ---------- the climb over time ---------- */
+// a tidy set of axis ticks between lo and hi
+function ticks(lo, hi, n) {
+  const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw);
+  const out = [];
+  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + step * 1e-6; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+const SERIES = {
+  altitude: {
+    key: 'altitude_m', title: 'Altitude vs. time',
+    unit: () => (imp() ? 'ft' : 'm'), axis: () => 'Altitude above the pad [' + (imp() ? 'ft' : 'm') + ']',
+    conv: (v) => (imp() ? v * FT : v), digits: 0, floor: 0
+  },
+  stability: {
+    key: 'stability_cal', title: 'Stability vs. time',
+    unit: () => (stabPct() ? '% of length' : 'cal'), axis: () => 'Stability margin [' + (stabPct() ? '% of body length' : 'calibers') + ']',
+    conv: (v) => (stabPct() ? (v * R.geometry.diameter_m / R.geometry.length_m) * 100 : v), digits: 2
+  },
+  mach: {
+    key: 'mach', title: 'Mach number vs. time',
+    unit: () => '', axis: () => 'Mach number [-]',
+    conv: (v) => v, digits: 2, floor: 0
+  }
+};
+const stabPct = () => state.stab === 'pct' && !!R.geometry;
+function drawSeries() {
+  const S = SERIES[state.chart] || SERIES.altitude, d = (R.series || {})[S.key];
+  document.querySelectorAll('#seriesseg button').forEach((b) => b.classList.toggle('on', b.dataset.k === state.chart));
+  $('seriestitle').textContent = S.title;
+  const n = d ? d.n : 0;
+  $('seriesintro').innerHTML = 'All ' + n + ' flights at once: the line is the average flight (<b>μ</b>), the blue band is where about two thirds of the flights are (one standard deviation, <b>σ</b>, either side), the orange band about 95% (two σ), and the thin lines the highest and lowest flight at each moment. Switch between the charts with the buttons.';
+  if (!d || d.t.length < 2) { $('series').innerHTML = '<text x="450" y="180" text-anchor="middle">No flown climbs to chart.</text>'; $('seriesnote').textContent = ''; $('serieskey').innerHTML = ''; return; }
+  const c = S.conv, t = d.t, mean = d.mean.map(c), sd = d.sd.map((v, i) => Math.abs(c(d.mean[i] + v) - c(d.mean[i]))), lo = d.min.map(c), hi = d.max.map(c);
+  const W = 900, H = 360, L = 70, Rr = 18, T = 12, B = 46, pw = W - L - Rr, ph = H - T - B;
+  // lines worth drawing with the data: the target range or the IREC stability limits
+  const marks = [];
+  if (state.chart === 'altitude') marks.push({ band: [c(R.apogee_range.low_m), c(R.apogee_range.high_m)], label: 'target range' });
+  if (state.chart === 'mach') marks.push({ at: 1, color: 'var(--muted)', label: 'Mach 1 (speed of sound)' });
+  if (state.chart === 'stability') {
+    const cal = (v) => (stabPct() ? (v * R.geometry.diameter_m / R.geometry.length_m) * 100 : v);
+    marks.push({ at: cal(1.5), color: 'var(--down)', label: 'IREC minimum 1.5 cal' }, { at: cal(4), color: 'var(--warn)', label: '4 cal (most at the rail)' }, { at: cal(6), color: 'var(--warn)', label: '6 cal (most in flight)' });
+  }
+  let y0 = Math.min(...lo, ...mean.map((m, i) => m - 2 * sd[i])), y1 = Math.max(...hi, ...mean.map((m, i) => m + 2 * sd[i]));
+  marks.forEach((m) => { if (m.at !== undefined) { y0 = Math.min(y0, m.at); y1 = Math.max(y1, m.at); } else { y1 = Math.max(y1, m.band[1]); } });
+  if (S.floor !== undefined) y0 = Math.min(S.floor, y0);
+  const padY = (y1 - y0) * 0.05; if (S.floor === undefined) y0 -= padY; y1 += padY;
+  const x0 = 0, x1 = t[t.length - 1];
+  const X = (v) => L + ((v - x0) / (x1 - x0)) * pw, Y = (v) => T + ph - ((v - y0) / (y1 - y0)) * ph;
+  const xt = ticks(x0, x1, 8), yt = ticks(y0, y1, 6);
+  let s = '<rect x="' + L + '" y="' + T + '" width="' + pw + '" height="' + ph + '" fill="var(--bg)" stroke="var(--line)"/>';
+  xt.forEach((v) => { s += '<line x1="' + X(v) + '" y1="' + T + '" x2="' + X(v) + '" y2="' + (T + ph) + '" stroke="var(--line)" stroke-width=".6"/><text x="' + X(v) + '" y="' + (T + ph + 16) + '" text-anchor="middle">' + num(v, v % 1 ? 1 : 0) + '</text>'; });
+  yt.forEach((v) => { if (v < y0 || v > y1) return; s += '<line x1="' + L + '" y1="' + Y(v) + '" x2="' + (L + pw) + '" y2="' + Y(v) + '" stroke="var(--line)" stroke-width=".6"/><text x="' + (L - 6) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + num(v, Math.abs(v) < 10 && v % 1 ? 1 : 0) + '</text>'; });
+  marks.forEach((m) => {
+    if (m.band) s += '<rect x="' + L + '" y="' + Y(m.band[1]) + '" width="' + pw + '" height="' + (Y(m.band[0]) - Y(m.band[1])) + '" fill="var(--warn)" fill-opacity=".10"/>';
+  });
+  const area = (up, down) => 'M' + t.map((v, i) => X(v).toFixed(1) + ',' + Y(up(i)).toFixed(1)).join('L') + 'L' + t.map((v, i) => i).reverse().map((i) => X(t[i]).toFixed(1) + ',' + Y(down(i)).toFixed(1)).join('L') + 'Z';
+  const line = (vals) => 'M' + t.map((v, i) => X(v).toFixed(1) + ',' + Y(vals[i]).toFixed(1)).join('L');
+  s += '<path d="' + area((i) => mean[i] + 2 * sd[i], (i) => mean[i] - 2 * sd[i]) + '" fill="var(--band2)"/>';
+  s += '<path d="' + area((i) => mean[i] + sd[i], (i) => mean[i] - sd[i]) + '" fill="var(--band1)"/>';
+  s += '<path d="' + line(hi) + '" fill="none" stroke="var(--flat)" stroke-width="1"/><path d="' + line(lo) + '" fill="none" stroke="var(--flat)" stroke-width="1"/>';
+  s += '<path d="' + line(mean) + '" fill="none" stroke="var(--fg)" stroke-width="2"/>';
+  marks.forEach((m) => {   // the target range's edges, over the bands
+    if (!m.band) return;
+    m.band.forEach((v) => { s += '<line x1="' + L + '" y1="' + Y(v) + '" x2="' + (L + pw) + '" y2="' + Y(v) + '" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="6 4"/>'; });
+    s += '<text x="' + (L + 6) + '" y="' + (Y(m.band[1]) - 5) + '" style="fill:var(--warn)">' + m.label + '</text>';
+  });
+  marks.forEach((m) => {
+    if (m.at === undefined || m.at < y0 || m.at > y1) return;
+    s += '<line x1="' + L + '" y1="' + Y(m.at) + '" x2="' + (L + pw) + '" y2="' + Y(m.at) + '" stroke="' + m.color + '" stroke-width="1.6" stroke-dasharray="6 4"/><text x="' + (L + pw - 6) + '" y="' + (Y(m.at) - 5) + '" text-anchor="end" style="fill:' + m.color + '">' + m.label + '</text>';
+  });
+  s += '<text x="' + (L + pw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">Time after launch [s]</text>';
+  s += '<text x="16" y="' + (T + ph / 2) + '" transform="rotate(-90 16 ' + (T + ph / 2) + ')" text-anchor="middle">' + S.axis() + '</text>';
+  $('series').innerHTML = s;
+  $('serieskey').innerHTML = state.chart === 'altitude' ? '<i class="ln" style="background:var(--warn)"></i>target range (' + len(R.apogee_range.low_m) + ' to ' + len(R.apogee_range.high_m) + ')' : '';
+  const notes = {
+    altitude: 'Height above the pad from launch until a little after the latest apogee. Each flight peaks at its own time, so the bands widen near the top.',
+    stability: 'The stability margin while the rocket is faster than 30 m/s (as for the IREC checks), from soon after the rail until the flights slow down near apogee. Near apogee the rocket is almost stopped and tips over, so the margin stops meaning anything there and the chart ends. The dashed lines are the IREC minimum and the most IREC recommends.' + (R.geometry ? '' : ' The rocket\'s length is not known, so this is in calibers only.'),
+    mach: 'Speed through the air over the speed of sound, from launch to apogee. It peaks at motor burnout, then falls as the rocket coasts up; the bands end where most flights have reached apogee.'
+  };
+  $('seriesnote').textContent = notes[state.chart];
+}
+
+/* ---------- the recovery spread: every path, from one fixed angle ---------- */
+function drawSpread() {
+  const f = R.footprint, c = R.cloud, paths = (c.paths || []).map((p, i) => ({ p, s: c.status[i], land: c.landing[i] }));
+  const conv = (m) => (imp() ? m * FT : m), u = imp() ? 'ft' : 'm';
+  const me = f.mean_east_m.estimate, mn = f.mean_north_m.estimate;
+  $('spreadtitle').textContent = 'Recovery spread · average landing ' + compass(me, mn) + ' of the pad';
+  // the box: east and north on one scale, around the pad and every point; height from the ground up
+  let e0 = 0, e1 = 0, n0 = 0, n1 = 0, top = 1;
+  paths.forEach((q) => (q.p || []).forEach((pt) => { e0 = Math.min(e0, pt[0]); e1 = Math.max(e1, pt[0]); n0 = Math.min(n0, pt[1]); n1 = Math.max(n1, pt[1]); top = Math.max(top, pt[2]); }));
+  c.landing.forEach((l) => { if (l) { e0 = Math.min(e0, l[0]); e1 = Math.max(e1, l[0]); n0 = Math.min(n0, l[1]); n1 = Math.max(n1, l[1]); } });
+  const half = Math.max(e1 - e0, n1 - n0) * 0.55 + 50, ce = (e0 + e1) / 2, cn = (n0 + n1) / 2;
+  const E0 = ce - half, E1 = ce + half, N0 = cn - half, N1 = cn + half, Z1 = top * 1.05;
+  // a fixed view from the south-west, looking down a little (like a 3D plot), drawn flat
+  const az = (230 * Math.PI) / 180, el = (24 * Math.PI) / 180;
+  const dx = Math.cos(az), dy = Math.sin(az), rx = -dy, ry = dx;
+  const hz = 1.25;   // the box's height against its width
+  const P = (e, n, z) => {
+    const x = (e - ce) / half, y = (n - cn) / half, h = (z / Z1) * hz;
+    return [x * rx + y * ry, h * Math.cos(el) - (x * dx + y * dy) * Math.sin(el)];
+  };
+  const corners = [];
+  [E0, E1].forEach((e) => [N0, N1].forEach((n) => [0, Z1].forEach((z) => corners.push(P(e, n, z)))));
+  const sx0 = Math.min(...corners.map((q) => q[0])), sx1 = Math.max(...corners.map((q) => q[0])), sy0 = Math.min(...corners.map((q) => q[1])), sy1 = Math.max(...corners.map((q) => q[1]));
+  const W = 900, H = 600, M = { l: 70, r: 70, t: 14, b: 60 }, k = Math.min((W - M.l - M.r) / (sx1 - sx0), (H - M.t - M.b) / (sy1 - sy0));
+  const ox = M.l + ((W - M.l - M.r) - (sx1 - sx0) * k) / 2, oy = M.t + ((H - M.t - M.b) - (sy1 - sy0) * k) / 2;
+  const S2 = (e, n, z) => { const q = P(e, n, z); return [ox + (q[0] - sx0) * k, oy + (sy1 - q[1]) * k]; };
+  const pt = (e, n, z) => S2(e, n, z).map((v) => v.toFixed(1)).join(',');
+  // which corner is nearest the viewer: the walls are drawn on the far sides
+  const farE = dx > 0 ? E0 : E1, farN = dy > 0 ? N0 : N1, nearE = farE === E0 ? E1 : E0, nearN = farN === N0 ? N1 : N0;
+  const et = ticks(conv(E0), conv(E1), 4).map((v) => v / (imp() ? FT : 1)), nt = ticks(conv(N0), conv(N1), 4).map((v) => v / (imp() ? FT : 1)), zt = ticks(0, conv(Z1), 5).map((v) => v / (imp() ? FT : 1));
+  let s = '';
+  // floor and the two far walls
+  s += '<polygon points="' + [pt(E0, N0, 0), pt(E1, N0, 0), pt(E1, N1, 0), pt(E0, N1, 0)].join(' ') + '" fill="var(--panel)" stroke="var(--line)"/>';
+  s += '<polygon points="' + [pt(farE, N0, 0), pt(farE, N1, 0), pt(farE, N1, Z1), pt(farE, N0, Z1)].join(' ') + '" fill="var(--panel)" fill-opacity=".55" stroke="var(--line)"/>';
+  s += '<polygon points="' + [pt(E0, farN, 0), pt(E1, farN, 0), pt(E1, farN, Z1), pt(E0, farN, Z1)].join(' ') + '" fill="var(--panel)" fill-opacity=".55" stroke="var(--line)"/>';
+  const grid = (a, b) => '<line x1="' + S2(...a)[0].toFixed(1) + '" y1="' + S2(...a)[1].toFixed(1) + '" x2="' + S2(...b)[0].toFixed(1) + '" y2="' + S2(...b)[1].toFixed(1) + '" stroke="var(--line)" stroke-width=".6"/>';
+  et.forEach((e) => { if (e < E0 || e > E1) return; s += grid([e, N0, 0], [e, N1, 0]) + grid([e, farN, 0], [e, farN, Z1]); });
+  nt.forEach((n) => { if (n < N0 || n > N1) return; s += grid([E0, n, 0], [E1, n, 0]) + grid([farE, n, 0], [farE, n, Z1]); });
+  zt.forEach((z) => { if (z > Z1) return; s += grid([farE, N0, z], [farE, N1, z]) + grid([E0, farN, z], [E1, farN, z]); });
+  // tick labels on the near edges, and the axis names
+  const label = (xy, text, anchor, dy) => '<text x="' + xy[0].toFixed(1) + '" y="' + (xy[1] + (dy || 0)).toFixed(1) + '" text-anchor="' + anchor + '">' + text + '</text>';
+  et.forEach((e) => { if (e >= E0 && e <= E1) s += label(S2(e, nearN, 0), num(conv(e), 0), 'middle', 16); });
+  nt.forEach((n) => { if (n >= N0 && n <= N1) s += label(S2(nearE, n, 0), num(conv(n), 0), 'middle', 16); });
+  zt.forEach((z) => { if (z <= Z1) s += label(S2(nearE, farN, z), num(conv(z), 0), 'end', 4); });
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  s += label(mid(S2(E0, nearN, 0), S2(E1, nearN, 0)), 'Downrange east [' + u + ']', 'middle', 44);
+  s += label(mid(S2(nearE, N0, 0), S2(nearE, N1, 0)), 'Downrange north [' + u + ']', 'middle', 44);
+  const zl = S2(nearE, farN, Z1 / 2);
+  s += '<text x="' + (zl[0] - 46).toFixed(1) + '" y="' + zl[1].toFixed(1) + '" text-anchor="middle" transform="rotate(-90 ' + (zl[0] - 46).toFixed(1) + ' ' + zl[1].toFixed(1) + ')">Altitude above the pad [' + u + ']</text>';
+  // the paths, then the landings on top
+  const drawn = paths.filter((q) => q.p && q.p.length > 1).length;
+  s += '<g fill="none" stroke="var(--path)" stroke-width=".7" stroke-opacity="' + Math.min(0.5, 3 / Math.sqrt(Math.max(drawn, 1))).toFixed(2) + '">';
+  paths.forEach((q) => { if (q.p && q.p.length > 1) s += '<path d="M' + q.p.map((a) => pt(a[0], a[1], a[2])).join('L') + '"/>'; });
+  s += '</g>';
+  const col = ['var(--accent)', 'var(--warn)', 'var(--down)'];
+  [0, 1, 2].forEach((st) => paths.forEach((q) => { if (q.s === st && q.land) { const xy = S2(q.land[0], q.land[1], 0); s += '<circle cx="' + xy[0].toFixed(1) + '" cy="' + xy[1].toFixed(1) + '" r="2.6" fill="' + col[st] + '" fill-opacity=".8"/>'; } }));
+  const pad = S2(0, 0, 0), avg = S2(me, mn, 0);
+  s += '<circle cx="' + pad[0].toFixed(1) + '" cy="' + pad[1].toFixed(1) + '" r="5" fill="none" stroke="var(--fg)" stroke-width="2"/><text x="' + (pad[0] + 9).toFixed(1) + '" y="' + (pad[1] + 15).toFixed(1) + '" class="strong">pad</text>';
+  s += '<path d="M' + avg[0].toFixed(1) + ' ' + (avg[1] - 6).toFixed(1) + 'l6 6l-6 6l-6 -6z" fill="var(--fg)" stroke="var(--bg)"/>';
+  $('spread').innerHTML = s;
 }
 
 /* ---------- the rest ---------- */
@@ -303,7 +417,7 @@ function drawLimits() {
     '<li><b>The inputs are assumptions.</b> The likely ranges only cover the luck of the draw (how many flights were flown) and the small errors from the shortcuts below. They do not cover the inputs being wrong.</li>',
     '<li><b>One launch condition.</b> Every flight is centred on the "' + esc(DATA.sim) + '" launch condition. The wind speed on the pad is drawn from a curve around that condition\'s wind.</li>',
     '<li><b>The inputs are drawn independently.</b> In real life some move together (temperature and pressure, wind speed and direction), which could change the spread a little.</li>',
-    '<li><b>Shortcuts for speed.</b> Most climbs are estimated from the fully simulated ones, and parachute descents use a quicker model that leaves out the rocket swinging under the parachute and the shock cord bouncing. Flights close to a limit are re-flown in full, and the batch checks the quick model against the full one (see "How much to trust it").</li>',
+    (R.surrogate_climbs ? '<li><b>Shortcuts for speed.</b> Most climbs are estimated from the fully simulated ones, and parachute descents use a quicker model that leaves out the rocket swinging under the parachute and the shock cord bouncing. Flights close to a limit are re-flown in full, and the batch checks the quick model against the full one (see "How much to trust it").</li>' : '<li><b>A quicker parachute model.</b> Every climb is fully simulated, but the descents use a quicker model that leaves out the rocket swinging under the parachute and the shock cord bouncing. The batch checks it against the full model (see "How much to trust it").</li>'),
     '<li><b>No landing area.</b> Where the rocket lands is shown, not judged.</li>'
   ].join('');
 }
@@ -312,8 +426,9 @@ function drawInputs() {
 }
 function drawTrust() {
   const a = R.audit, c = R.fast_reco_check, e = R.surrogate_error;
-  let h = '<p>' + R.runs + ' flights in ' + R.rounds + ' rounds (' + num(R.seconds, 0) + ' s on ' + R.workers + ' core' + (R.workers === 1 ? '' : 's') + '). It stopped because ' + esc(R.stopped_because) + '.</p>' +
-    '<p>' + R.full_climbs + ' climbs were fully simulated and ' + R.surrogate_climbs + ' were estimated from them; ' + num(a.share_flown_from_surrogate * 100, 0) + '% of the flights shown use an estimated climb. ' + R.reflown_for_closeness_or_audit + ' were re-flown in full because they were close to a limit or as a spot check. In the random spot check, ' + a.random_audit_disagreements + ' of ' + a.random_audit_runs + ' flights got a different pass or fail from the estimate.</p>' +
+  let h = '<p>' + R.runs + ' flights in ' + R.rounds + ' rounds (' + num(R.seconds, 0) + ' s on ' + R.workers + ' core' + (R.workers === 1 ? '' : 's') + '). It stopped because ' + esc(R.stopped_because) + '.</p>';
+  if (!R.surrogate_climbs) h += '<p>Every climb was fully simulated (6-DOF, from the rail to apogee); none was estimated.</p>';
+  else h += '<p>' + R.full_climbs + ' climbs were fully simulated and ' + R.surrogate_climbs + ' were estimated from them; ' + num(a.share_flown_from_surrogate * 100, 0) + '% of the flights shown use an estimated climb. ' + R.reflown_for_closeness_or_audit + ' were re-flown in full because they were close to a limit or as a spot check. In the random spot check, ' + a.random_audit_disagreements + ' of ' + a.random_audit_runs + ' flights got a different pass or fail from the estimate.</p>' +
     '<p>The estimate of the highest point is typically off by about ' + len(a.error_scale.apogee_m) + '.</p>';
   if (c) h += '<p><b>Quick descent model against the full one</b> (' + c.runs + ' flights flown both ways): landing within ' + far(c.largest_landing_offset_m) + ' (' + num(c.largest_offset_share_of_drift * 100, 1) + '% of the drift), landing speed within ' + num(c.largest_landing_speed_diff_m_s, 2) + ' m/s, parachute load within ' + num(c.largest_peak_load_diff_percent, 1) + '%, ' + (c.same_pass_fail ? 'the same pass or fail on every flight' : '<b>a different pass or fail on some flight</b>') + '. The quick model took ' + num(c.fast_seconds_per_run, 1) + ' s per flight against ' + num(c.full_seconds_per_run, 1) + ' s.</p>';
   $('trust').innerHTML = h;
@@ -324,14 +439,18 @@ function drawTrust() {
 function readHash() {
   const p = new URLSearchParams(location.hash.replace(/^#/, ''));
   if (p.get('units') === 'metric' || p.get('units') === 'imperial') state.units = p.get('units');
+  if (p.get('stab') === 'cal' || p.get('stab') === 'pct') state.stab = p.get('stab');
+  if (SERIES[p.get('chart')]) state.chart = p.get('chart');
 }
 function update() {
-  $('units').value = state.units;
-  history.replaceState(null, '', '#units=' + state.units + (embedded ? '&embed=1' : ''));
-  drawTop(); drawAlerts(); drawApogee(); drawLanding(); drawNumbers(); drawChecks(); drawLimits(); drawInputs(); drawTrust();
+  $('units').value = state.units; $('stab').value = state.stab;
+  history.replaceState(null, '', '#units=' + state.units + '&stab=' + state.stab + (state.chart !== 'altitude' ? '&chart=' + state.chart : '') + (embedded ? '&embed=1' : ''));
+  drawTop(); drawAlerts(); drawApogee(); drawSeries(); drawLanding(); drawNumbers(); drawChecks(); drawLimits(); drawInputs(); drawTrust();
 }
 readHash();
 $('units').onchange = () => { state.units = $('units').value; update(); };
+$('stab').onchange = () => { state.stab = $('stab').value; update(); };
+document.querySelectorAll('#seriesseg button').forEach((b) => { b.onclick = () => { state.chart = b.dataset.k; update(); }; });
 window.addEventListener('hashchange', () => { readHash(); update(); });
 update();
 </script>

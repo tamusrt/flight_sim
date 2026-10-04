@@ -176,8 +176,115 @@ def small_report() -> dict[str, Any]:
     return run_batch(
         RocketSpec("morpheus"),
         SiteConfig(),
-        Settings(round_size=16, min_rounds=2, max_rounds=2, workers=1, reco_checks=1),
+        Settings(
+            round_size=16,
+            min_rounds=2,
+            max_rounds=2,
+            workers=1,
+            reco_checks=1,
+            surrogate=False,
+        ),
     )
+
+
+def test_without_the_surrogate_every_climb_is_flown(
+    small_report: dict[str, Any],
+) -> None:
+    assert small_report["full_climbs"] == small_report["runs"] == 32
+    assert (
+        small_report["surrogate_climbs"] == 0
+        and small_report["surrogate_error"] is None
+    )
+    assert small_report["audit"]["share_flown_from_surrogate"] == 0
+
+
+def test_the_climb_over_time_has_bands_for_each_chart(
+    small_report: dict[str, Any],
+) -> None:
+    series = small_report["series"]
+    assert set(series) == {"altitude_m", "mach", "stability_cal"}
+    for band in series.values():
+        assert band["n"] == 32 and len(band["t"]) > 20
+        assert (
+            len(band["t"])
+            == len(band["mean"])
+            == len(band["sd"])
+            == len(band["min"])
+            == len(band["max"])
+        )
+        assert all(
+            a <= b + 1e-6 for a, b in zip(band["t"], band["t"][1:], strict=False)
+        )
+        for lo, mid, hi, sd in zip(
+            band["min"], band["mean"], band["max"], band["sd"], strict=True
+        ):
+            assert lo - 1e-6 <= mid <= hi + 1e-6 and sd >= 0
+    altitude = series["altitude_m"]
+    assert altitude["mean"][0] == pytest.approx(0.0, abs=1.0), "it starts on the pad"
+    peak = max(altitude["mean"])
+    assert peak == pytest.approx(small_report["apogee_m"]["mean"]["estimate"], rel=0.05)
+    mach = series["mach"]["mean"]
+    top = mach.index(max(mach))
+    assert 0 < top < len(mach) - 1, "Mach rises to burnout, then falls"
+    assert mach[0] < 0.1 and mach[-1] < max(mach)
+    assert 0 < min(series["stability_cal"]["mean"]) < 20
+
+
+def test_every_flown_flight_has_a_path_from_the_pad_to_the_ground(
+    small_report: dict[str, Any],
+) -> None:
+    cloud = small_report["cloud"]
+    assert len(cloud["paths"]) == cloud["n"]
+    for path, landing in zip(cloud["paths"], cloud["landing"], strict=True):
+        assert path and path[0] == [0, 0, 0]
+        assert max(p[2] for p in path) > 1000
+        if landing:
+            assert path[-1][2] == 0
+            assert (
+                abs(path[-1][0] - landing[0]) < 2 and abs(path[-1][1] - landing[1]) < 2
+            )
+    geometry = small_report["geometry"]
+    assert geometry is None or geometry["length_m"] > geometry["diameter_m"] > 0
+
+
+def test_the_band_keeps_only_times_most_flights_reach() -> None:
+    import numpy as np
+
+    from flight_sim.edith.batch import _band
+
+    curves = [
+        (np.array([0.0, 10.0]), np.array([0.0, 10.0 * k])) for k in (1.0, 2.0, 3.0)
+    ]
+    curves.append((np.array([0.0, 2.0]), np.array([0.0, 2.0])))  # a short one
+    band = _band(curves, 10.0)
+    assert (
+        band["n"] == 4 and band["t"][0] == 0.0 and band["t"][-1] == pytest.approx(10.0)
+    )
+    assert band["mean"][-1] == pytest.approx(20.0) and band["min"][-1] == pytest.approx(
+        10.0
+    )
+    assert band["max"][-1] == pytest.approx(30.0) and band["sd"][-1] == pytest.approx(
+        10.0
+    )
+    assert _band([], 5.0)["t"] == []
+
+
+def test_the_landing_circles_hold_their_share_of_the_landings() -> None:
+    landing = [
+        [float(i), 0.0] for i in range(-50, 51)
+    ]  # 101 landings on a line, centred on 0
+    circles = edith_site.landing_circles({"landing": [*landing, None]})
+    assert circles is not None and circles["landings"] == 101
+    assert circles["centre"] == [0.0, 0.0]
+    assert [r["share"] for r in circles["rings"]] == [0.25, 0.5, 0.75, 0.9]
+    radii = [r["radius_m"] for r in circles["rings"]]
+    assert radii == sorted(radii)
+    for ring in circles["rings"]:
+        inside = sum(abs(p[0]) <= ring["radius_m"] + 1e-9 for p in landing) / len(
+            landing
+        )
+        assert inside == pytest.approx(ring["share"], abs=0.02)
+    assert edith_site.landing_circles({"landing": [[0.0, 0.0], None]}) is None
 
 
 def test_the_batch_reports_the_apogee_range_and_a_cloud(
@@ -286,6 +393,7 @@ def test_only_the_default_launch_condition_gets_the_flights_in_vision(
     default = (out / "viewer" / "average" / "index.html").read_text(encoding="utf-8")
     other = (out / "viewer" / "other" / "index.html").read_text(encoding="utf-8")
     assert "window.EDITH_CLOUD=" in top and '"link":"../edith/index.html"' in top
+    assert '"circles":{"centre"' in top, "VISION gets the landing circles"
     assert (
         "window.EDITH_CLOUD=" in default
         and '"link":"../../edith/index.html"' in default
@@ -304,6 +412,9 @@ def test_the_edith_page_has_its_data_and_says_what_edith_is(
     text = page.read_text(encoding="utf-8")
     assert "/*DATA*/null" not in text and '"name":"Morpheus"' in text
     assert "Monte Carlo" in text and "EDITH" in text
+    assert '"series":{' in text and '"paths":[' in text, (
+        "the charts and the picture have their data"
+    )
 
 
 # ----- the result cache --------------------------------------------------------------

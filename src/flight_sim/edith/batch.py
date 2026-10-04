@@ -17,6 +17,9 @@ evenly):
    not re-flown, the chance that error carries a number across an IREC limit is added
    as width to the probabilities, so a poor surrogate widens the answer instead of
    hiding in it.
+   With ``surrogate`` off, every round flies the full climb like the pilot
+   (no estimates, no re-flies); the site's runs do that, since on a rocket like
+   SRT14 the full climb costs about a second.
 3. **Stop** when every headline probability's 90% interval is narrower than
    ``target_half_width``, at ``max_rounds``, or at the time limit.
 
@@ -69,6 +72,8 @@ class Settings:
         reco_checks (int): Pilot runs also flown with the full RECO.
         seed (int): Seed of the whole batch.
         confidence (float): Confidence level of every interval.
+        surrogate (bool): Estimate the climbs of later rounds from the pilot's
+            (faster on big batches); off, every climb is flown in full.
     """
 
     round_size: int = 128
@@ -82,6 +87,7 @@ class Settings:
     reco_checks: int = 3
     seed: int = 2027
     confidence: float = ci.CONFIDENCE
+    surrogate: bool = True
 
 
 # ----- the worker side -------------------------------------------------------
@@ -294,6 +300,9 @@ def _cloud(samples: list[dict[str, Any]], site: SiteConfig) -> dict[str, Any]:
                     else None
                 ),
                 "status": _status(r),
+                "path": (
+                    [p[1:] for p in r["history"]["path"]] if "history" in r else None
+                ),
                 "range": -1
                 if r["apogee_m"] < low_m
                 else 1
@@ -307,11 +316,77 @@ def _cloud(samples: list[dict[str, Any]], site: SiteConfig) -> dict[str, Any]:
         "landing": [r["landing"] for r in rows],
         "status": [r["status"] for r in rows],
         "range": [r["range"] for r in rows],
+        "paths": [r["path"] for r in rows],
+    }
+
+
+_GRID_POINTS = 160  # points along each chart's time axis
+_MIN_SHARE = 0.5  # a time is charted while at least this share of flights has it
+
+
+def _band(curves: list[tuple[np.ndarray, np.ndarray]], end_s: float) -> dict[str, Any]:
+    """Mean, standard deviation, lowest and highest of many curves over time.
+
+    Each curve is put on one time grid from 0 to ``end_s``; a time is kept while at
+    least half the flights have a value there (a curve has none outside its own
+    times), so the ends are not drawn from a few flights.
+    """
+    grid = np.linspace(0.0, end_s, _GRID_POINTS)
+    values = np.full((len(curves), len(grid)), np.nan)
+    for i, (t, y) in enumerate(curves):
+        if len(t) < 2:
+            continue
+        inside = (grid >= t[0]) & (grid <= t[-1])
+        values[i, inside] = np.interp(grid[inside], t, y)
+    count = np.sum(~np.isnan(values), axis=0)
+    keep = count >= max(3, _MIN_SHARE * len(curves))
+    if not keep.any():
+        return {"n": len(curves), "t": [], "mean": [], "sd": [], "min": [], "max": []}
+    kept = values[:, keep]
+
+    def r(a: np.ndarray, d: int = 3) -> list[float]:
+        return [round(float(x), d) for x in a]
+
+    return {
+        "n": len(curves),
+        "t": r(grid[keep], 3),
+        "mean": r(np.nanmean(kept, axis=0)),
+        "sd": r(np.nanstd(kept, axis=0, ddof=1)),
+        "min": r(np.nanmin(kept, axis=0)),
+        "max": r(np.nanmax(kept, axis=0)),
+    }
+
+
+def flight_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Altitude, Mach number and stability over time across the flown climbs.
+
+    Altitude (metres above the pad) runs from launch to a little after the
+    latest apogee, Mach to apogee, stability (calibres) while the rocket is
+    faster than 30 m/s. Only flights whose climb was flown (not estimated) have
+    these.
+    """
+
+    flown = [s["final"]["history"] for s in samples if "history" in s["final"]]
+    if not flown:
+        return {}
+    altitude = []
+    for h in flown:
+        t = list(h["t"]) + [p[0] for p in h["path"] if p[0] > h["t"][-1]]
+        a = list(h["alt"]) + [p[3] for p in h["path"] if p[0] > h["t"][-1]]
+        altitude.append((np.asarray(t), np.asarray(a)))
+    apogee_end = max(h["t"][-1] for h in flown)
+    stability = [(np.asarray(h["mt"]), np.asarray(h["m"])) for h in flown]
+    mach = [(np.asarray(h["t"]), np.asarray(h["mach"])) for h in flown]
+    margin_end = max((h["mt"][-1] for h in flown if h["mt"]), default=0.0)
+    return {
+        "altitude_m": _band(altitude, apogee_end * 1.08),
+        "stability_cal": _band(stability, margin_end),
+        "mach": _band(mach, apogee_end),
     }
 
 
 def error_sigmas(
-    pairs: list[dict[str, Any]], surrogate: Surrogate, confidence: float
+    pairs: list[dict[str, Any]], surrogate: Surrogate | None, confidence: float
 ) -> dict[str, float]:
     """How far a surrogate-based number is likely off, by number.
 
@@ -322,7 +397,7 @@ def error_sigmas(
     """
     floors = {c.key: c.tolerance / 3.0 for c in failures.CHECKS if c.tolerance > 0}
     floors["apogee_m"] = _APOGEE_FLOOR_M
-    held_out = surrogate.error
+    held_out = surrogate.error if surrogate is not None else {}
     sigmas: dict[str, float] = {}
     for key in (*_NUMERIC, "apogee_m"):
         diffs = [
@@ -408,7 +483,7 @@ def summarize(  # pylint: disable=too-many-locals,too-many-positional-arguments
     samples: list[dict[str, Any]],
     pairs: list[dict[str, Any]],
     audits: list[dict[str, Any]],
-    surrogate: Surrogate,
+    surrogate: Surrogate | None,
     site: SiteConfig,
     settings: Settings,
 ) -> dict[str, Any]:
@@ -566,7 +641,7 @@ def _reco_check(pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
 # ----- the batch -------------------------------------------------------------
 
 
-def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-nested-blocks
+def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-nested-blocks,too-many-branches
     spec: RocketSpec, site: SiteConfig, settings: Settings | None = None
 ) -> dict[str, Any]:
     """Run a batch and return the report as a dict that can be saved as JSON."""
@@ -590,34 +665,46 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
         for round_index in range(settings.max_rounds):
             unit = _sobol(settings.seed, round_index, size)
             seeds = [_run_seed(settings.seed, round_index, i) for i in range(size)]
-            if round_index == 0:
+            if round_index == 0 or not settings.surrogate:
                 jobs: list[tuple[Any, ...]] = [
                     ("ascent", i, unit[i].tolist(), seeds[i], None) for i in range(size)
                 ]
-                jobs += [
-                    ("check", size + i, unit[i].tolist(), seeds[i], None)
-                    for i in range(min(settings.reco_checks, size))
-                ]
+                if round_index == 0:
+                    jobs += [
+                        ("check", size + i, unit[i].tolist(), seeds[i], None)
+                        for i in range(min(settings.reco_checks, size))
+                    ]
                 done = pool.run(jobs)
                 full_climbs += size
                 pilot = sorted(
                     (r for r in done if r[1] == "ascent"), key=lambda r: r[0]
                 )
-                reco_pairs = [r[2] for r in done if r[1] == "check"]
+                if round_index == 0:
+                    reco_pairs = [r[2] for r in done if r[1] == "check"]
                 results = [r[2] for r in pilot]
                 for i, result in enumerate(results):
                     samples.append(
-                        {"round": 0, "index": i, "source": "ascent", "final": result}
+                        {
+                            "round": round_index,
+                            "index": i,
+                            "source": "ascent",
+                            "final": result,
+                        }
                     )
-                good = [(i, r) for i, r in enumerate(results) if "payload" in r]
-                top_m = float(np.median([r["payload"]["position"][0] for _, r in good]))
-                x = np.array(
-                    [
-                        features(draw(unit[i], site, nominal, seeds[i]), nominal, top_m)
-                        for i, _ in good
-                    ]
-                )
-                surrogate = Surrogate(x, [r["payload"] for _, r in good])
+                if settings.surrogate and round_index == 0:  # train the climb model
+                    good = [(i, r) for i, r in enumerate(results) if "payload" in r]
+                    top_m = float(
+                        np.median([r["payload"]["position"][0] for _, r in good])
+                    )
+                    x = np.array(
+                        [
+                            features(
+                                draw(unit[i], site, nominal, seeds[i]), nominal, top_m
+                            )
+                            for i, _ in good
+                        ]
+                    )
+                    surrogate = Surrogate(x, [r["payload"] for _, r in good])
             else:
                 assert surrogate is not None
                 predictions = [
@@ -694,7 +781,6 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
     finally:
         pool.close()
     elapsed = time.perf_counter() - started
-    assert surrogate is not None
     errors = [s["final"] for s in samples if not s["final"].get("sim_ok", True)]
     summary.update(
         {
@@ -712,7 +798,13 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
             "surrogate_climbs": predicted_climbs,
             "reflown_for_closeness_or_audit": reflown,
             "borderline_not_reflown_over_cap": borderline_uncapped,
-            "surrogate_error": {k: round(v, 3) for k, v in surrogate.error.items()},
+            "surrogate_error": (
+                {k: round(v, 3) for k, v in surrogate.error.items()}
+                if surrogate is not None
+                else None
+            ),
+            "series": flight_series(samples),
+            "geometry": nominal_rocket.geometry(),
             "simulation_errors": len(errors),
             "fast_reco_check": _reco_check(reco_pairs),
         }

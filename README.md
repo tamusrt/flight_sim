@@ -100,7 +100,8 @@ What it does, in short:
 - **Speed.** The first round flies the full 6-DOF climb. Its results train a surrogate that predicts the climb in the
   later rounds. Flights close to a limit are re-flown with the full climb, and a few random ones are re-flown to
   measure the surrogate's error. Descents use `FastRECO`. Flights run on every core, and give the same results on any
-  number of cores.
+  number of cores. With `Settings(surrogate=False)` every climb is flown in full instead; the dynamics site does this,
+  since a full climb of SRT14 takes about a second.
 - **Results.** The chance of any failure, of any warning, of reaching the target apogee, and of each IREC check, the
   apogee, speeds and loads, and the landing footprint. **Every number has a 90% interval.** A batch stops when the
   headline chances are within the target width (default plus or minus 3%), after the most rounds, or at the time limit.
@@ -108,6 +109,14 @@ What it does, in short:
   descent rates, main altitude, landing speed) plus what would end an IREC flight: the charge not separating, a canopy
   not opening, a canopy opened harder than its rating, no apogee, not landing. There is no landing zone.
 - **Every batch reports a FastRECO check**: a few flights flown with both versions, and how far apart they landed.
+- **Over time.** For every fully flown climb the report keeps the altitude, Mach number and stability against time
+  (as the average, the standard deviation and the lowest and highest flight at each moment) and each flight's path
+  from the pad to the ground.
+
+On the dynamics site, `python -m flight_sim.whatif.edith_site` runs EDITH after the JARVIS pages are built and adds
+the EDITH page (the chances, charts of altitude, Mach and stability over time with their spread, and a picture of every
+flight path), a summary on the JARVIS predictions page, and to VISION the apogee and landing spread, with landing circles
+(25, 50, 75 and 90% of landings) that can be turned on with the landing spread. It keeps its result between builds; see `tools/whatif/README.md` in dynamics.
 
 **All the launch-site numbers are placeholders** (marked in the report and in the site file) until the team replaces
 them with Spaceport America's climate for the launch week, motor test spreads and the canopy's real strength. The

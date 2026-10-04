@@ -43,6 +43,8 @@ _SUMMARY_MARK = "/*EDITHSUMMARY*/null"
 _CLOUD_MARK = "<!--EDITH-->"
 _ELLIPSE_POINTS = 72
 _TOP_ALERTS = 4
+# The landing circles VISION draws: the share of landings inside each
+CIRCLE_SHARES = (0.25, 0.50, 0.75, 0.90)
 
 # The code whose change changes the results; the pages and this file do not
 _SKIP_DIRS = {"whatif", "__pycache__"}
@@ -174,11 +176,38 @@ def _viewer_files(out_dir: Path) -> list[Path]:
     return [f for f in dict.fromkeys(files) if f.is_file()]
 
 
+def landing_circles(cloud: dict[str, Any]) -> dict[str, Any] | None:
+    """Circles round the average landing point holding 25, 50, 75 and 90% of landings.
+
+    Each radius is the distance from the average landing point that that share of
+    the landings is inside (a percentile of the distances).
+    """
+    points = [p for p in cloud["landing"] if p]
+    if len(points) < 4:
+        return None
+    east = sum(p[0] for p in points) / len(points)
+    north = sum(p[1] for p in points) / len(points)
+    distances = sorted(math.hypot(p[0] - east, p[1] - north) for p in points)
+
+    def share(q: float) -> float:
+        at = q * (len(distances) - 1)
+        low = math.floor(at)
+        high = min(low + 1, len(distances) - 1)
+        return distances[low] + (distances[high] - distances[low]) * (at - low)
+
+    return {
+        "centre": [round(east, 1), round(north, 1)],
+        "rings": [{"share": q, "radius_m": round(share(q), 1)} for q in CIRCLE_SHARES],
+        "landings": len(points),
+    }
+
+
 def cloud_data(data: dict[str, Any]) -> dict[str, Any]:
     """The flights as VISION draws them."""
     report = data["report"]
     cloud, rng = report["cloud"], report["apogee_range"]
     return {
+        "circles": landing_circles(cloud),
         "n": cloud["n"],
         "apogee": cloud["apogee"],
         "landing": cloud["landing"],
@@ -222,6 +251,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         max_rounds=args.max_rounds,
         time_limit_s=args.minutes * 60.0,
         workers=args.workers,
+        surrogate=False,  # every climb in full: real paths and charts, about a second each
     )
     key = cache_key(args, site, settings)
     cache = Path(args.cache) / f"edith-{key}.json" if args.cache else None

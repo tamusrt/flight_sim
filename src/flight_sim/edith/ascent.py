@@ -38,6 +38,8 @@ class Ascent:  # pylint: disable=too-many-instance-attributes
         max_aoa_deg (float): Largest angle of attack above 30 m/s (not used by
             the checks, but a good sign of a bad launch).
         burnout_s (float | None): Time the motor stopped.
+        margin_track (list[tuple[float, float]]): Time and stability margin
+            (calibres) at each sample faster than 30 m/s, for the page's chart.
     """
 
     samples: list[Sample] = field(default_factory=list)
@@ -47,6 +49,7 @@ class Ascent:  # pylint: disable=too-many-instance-attributes
     lowest_margin_cal: float | None = None
     highest_margin_cal: float | None = None
     burnout_s: float | None = None
+    margin_track: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def apogee_time_s(self) -> float:
@@ -98,6 +101,7 @@ def fly_ascent(
                 margin = margin_cal(properties, config, state, time)
                 if not math.isnan(margin):
                     margins.append(margin)
+                    ascent.margin_track.append((time, margin))
         state, taken, dt, hit = adaptive_step(
             time, state, properties, config, dt, events=(APOGEE,)
         )

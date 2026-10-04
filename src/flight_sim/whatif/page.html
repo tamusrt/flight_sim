@@ -139,10 +139,10 @@
   <main id="main">
    <section id="view-pred">
     <div class="warnings" id="warnings"></div>
-    <div class="edithcard" id="edithcard" hidden></div>
     <div class="row" id="metrics"></div>
     <div class="chartbox"><div id="plot" style="position:absolute;inset:10px"></div><div class="empty" id="empty" hidden></div></div>
     <p class="legend" id="chartnote"></p>
+    <div class="edithcard" id="edithcard" style="margin-top:14px" hidden></div>
     <div class="irec" id="irec"></div>
     <h2 class="sec">Apogee by launch condition</h2>
     <div class="tablewrap"><table id="weather"></table></div>
@@ -892,7 +892,7 @@ function drawEdithCard() {
     '<div><b>' + chance(EDITH.apogee.chance) + '</b><span>chance the apogee is within range of the target (' + range(EDITH.apogee.chance) + ')</span></div></div>' +
     '<p style="margin:4px 0"><b>' + esc(EDITH.headline.text) + '</b></p>' +
     (EDITH.top.length ? '<ul>' + EDITH.top.map((a) => '<li class="' + a.level + '">' + esc(a.title) + (a.chance ? ': ' + chance(a.chance) : '') + '</li>').join('') + '</ul>' : '') +
-    '<a id="edithlink" href="' + EDITH.link + '">See every chance, the apogee spread and the landing map →</a>';
+    '<a id="edithlink" href="' + EDITH.link + '">See every chance, the climb over time and every flight path →</a>';
   if (embedded) $('edithlink').onclick = (ev) => { ev.preventDefault(); try { window.top.location.hash = '#tab=edith'; } catch (e) { location.href = EDITH.link; } };
 }
 

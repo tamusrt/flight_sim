@@ -36,7 +36,7 @@ def _spread(
     ]
 
 
-def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals
+def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals,too-many-branches
     """The report, as lines of text. Every interval is 90% unless it says otherwise."""
     lines = [
         f"EDITH Monte Carlo: {r['rocket']} at {r['site']}",
@@ -91,12 +91,17 @@ def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals
         lines.append("  Too few landings to describe.")
     audit = r["audit"]
     lines += ["", "How much to trust it"]
-    lines.append(
-        f"  Climbs: {r['full_climbs']} full 6-DOF, {r['surrogate_climbs']} from the "
-        f"surrogate; {r['reflown_for_closeness_or_audit']} re-flown with the full climb "
-        f"(close to a limit, or as an audit); {100 * audit['share_flown_from_surrogate']:.0f}% "
-        f"of the final runs come from the surrogate."
-    )
+    if r["surrogate_climbs"]:
+        lines.append(
+            f"  Climbs: {r['full_climbs']} full 6-DOF, {r['surrogate_climbs']} from the "
+            f"surrogate; {r['reflown_for_closeness_or_audit']} re-flown with the full climb "
+            f"(close to a limit, or as an audit); {100 * audit['share_flown_from_surrogate']:.0f}% "
+            f"of the final runs come from the surrogate."
+        )
+    else:
+        lines.append(
+            f"  Climbs: all {r['full_climbs']} flown with the full 6-DOF climb."
+        )
     if audit["re_flown_pairs"]:
         scale = audit["error_scale"]
         lines.append(
@@ -116,10 +121,11 @@ def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals
             f"re-flown because of the per-round cap."
         )
     err = r["surrogate_error"]
-    lines.append(
-        f"  Surrogate held-out error: apogee {err['apogee_m']:.1f} m, "
-        f"rail exit speed {err['rail_v']:.2f} m/s, stability {err['rail_margin']:.3f} cal."
-    )
+    if err:
+        lines.append(
+            f"  Surrogate held-out error: apogee {err['apogee_m']:.1f} m, "
+            f"rail exit speed {err['rail_v']:.2f} m/s, stability {err['rail_margin']:.3f} cal."
+        )
     check = r.get("fast_reco_check")
     if check:
         lines.append(
