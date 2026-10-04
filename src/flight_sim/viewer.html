@@ -44,6 +44,7 @@ h1,h2{margin:0;font-weight:500}
 .stage{position:relative;height:min(64vh,600px);min-height:320px;overflow:hidden;border:1px solid var(--line);background:#000}
 .stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .stage canvas.pan{cursor:move}
+.vignette{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 58%,rgba(0,0,0,.26) 100%)}
 .note{position:absolute;left:8px;bottom:6px;font:400 11px var(--mono);color:#bdbdb8;pointer-events:none;text-shadow:0 0 3px #000,0 0 6px rgba(0,0,0,.8)}
 .banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:500 13px var(--mono);letter-spacing:.08em;padding:6px 14px;background:#d6d6d3;color:#101010;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
 .banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}.banner[data-kind="reco"]{background:#b9a0d0;color:#140b1d}.banner[data-kind="aero"]{background:#cf8aa0;color:#1d070c}.banner[data-kind="rail"]{background:#8fbf8f;color:#08160a}
@@ -134,6 +135,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
   <section class="stagewrap">
     <div class="stage" id="stage">
       <canvas id="cv"></canvas>
+      <div class="vignette" id="vignette" hidden></div>
       <div class="note" id="scaleNote"></div>
       <div class="note" id="edNote" style="bottom:22px;max-width:92%;white-space:normal" hidden></div>
       <div class="note" id="circKey" style="top:8px;bottom:auto;left:auto;right:8px;background:rgba(10,12,16,.72);padding:6px 9px;border-radius:6px;line-height:1.7" hidden></div>
@@ -238,10 +240,11 @@ var labels=[];
 function makeLabel(text,color,grp,size){
   var c=document.createElement('canvas'), x=c.getContext('2d'), f='600 30px "JetBrains Mono",ui-monospace,monospace';
   x.font=f; var w=Math.ceil(x.measureText(text).width)+26; c.width=w; c.height=46; x.font=f;
-  x.fillStyle='rgba(0,0,0,0.78)'; x.beginPath();
-  if(x.roundRect) x.roundRect(0,0,w,46,23); else x.rect(0,0,w,46); x.fill();
-  x.strokeStyle=color; x.lineWidth=2.5; x.stroke();
-  x.fillStyle=color; x.textBaseline='middle'; x.textAlign='center'; x.fillText(text,w/2,24);
+  /* white text in a dark grey, slightly see-through box, outlined in the label's own colour */
+  x.fillStyle='rgba(34,36,40,0.74)'; x.beginPath();
+  if(x.roundRect) x.roundRect(1.5,1.5,w-3,43,6); else x.rect(1.5,1.5,w-3,43); x.fill();
+  x.strokeStyle=color; x.lineWidth=3; x.stroke();
+  x.fillStyle='#f4f5f6'; x.textBaseline='middle'; x.textAlign='center'; x.fillText(text,w/2,24);
   var tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter;
   var s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
   s.renderOrder=20; s.userData={asp:w/46,size:size||0.03}; (grp||root).add(s); labels.push(s); return s;
@@ -271,6 +274,20 @@ function ringGeometry(){
     var a0=1+i*SEC+j, a1=1+i*SEC+(j+1)%SEC, b0=1+(i+1)*SEC+j, b1=1+(i+1)*SEC+(j+1)%SEC; idx.push(a0,b0,a1,a1,b0,b1); }
   var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setIndex(idx); return g;
 }
+/* value noise shared by the desert floor and the clouds. Each scale wraps at its own tile, a whole number of cells, and
+   the noise repeats exactly every P cells, so the numbers stay small far from the pad and the wrap leaves no seam */
+var NOISE_GLSL=[
+  'float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }',
+  'float vnoise(vec2 p, float P){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);',
+  '  return mix(mix(hash(mod(i,P)),hash(mod(i+vec2(1,0),P)),u.x),mix(hash(mod(i+vec2(0,1),P)),hash(mod(i+vec2(1,1),P)),u.x),u.y); }',
+  'float fbm(vec2 p, float P){ float a=0.5, s=0.0; for(int k=0;k<5;k++){ s+=a*vnoise(p,P); p=p*2.0+vec2(17.0,9.0); P*=2.0; a*=0.5; } return s; }',
+  'float tiled(vec2 p, float scale, float tile){ return fbm(mod(p, tile)*scale, floor(scale*tile+0.5)); }',
+  'float fbm3(vec2 p, float P){ float a=0.5, s=0.0; for(int k=0;k<3;k++){ s+=a*vnoise(p,P); p=p*2.0+vec2(17.0,9.0); P*=2.0; a*=0.5; } return s/0.875; }',
+  'float tiled3(vec2 p, float scale, float tile){ return fbm3(mod(p, tile)*scale, floor(scale*tile+0.5)); }',
+  /* fair-weather cumulus: how much cloud there is above a point of the ground (0 to 1) */
+  'float cloudD(vec2 p){ float c=0.97*tiled3(p,0.00025,80000.0)+0.3*(tiled3(p+vec2(900.0,300.0),0.0025,8000.0)-0.5);',
+  '  return smoothstep(0.56,0.74,c); }'].join('\n');
+var CLOUD_H=4200;   /* cloud base, m above the pad */
 var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
   uniforms:groundU, side:THREE.DoubleSide, extensions:{derivatives:true},
   /* the vertex positions are offsets from the camera on the ground; the world position is made from them here */
@@ -279,15 +296,9 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     'void main(){ vOff=position.xz; vec3 w=vec3(cameraPosition.x+position.x,uY,cameraPosition.z+position.z);',
     '  gl_Position=projectionMatrix*viewMatrix*vec4(w,1.0); }'].join('\n'),
   fragmentShader:[
-    'uniform float uCell, uFrac, uY, uReal, uGridA; uniform vec3 uBase, uLine, uFog, uSun; uniform vec2 uFogRange, uLight; varying vec2 vOff;',
-    /* value noise for the desert floor: sand, darker gravel, dry grass and scattered creosote bushes */
-    'float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }',
-    /* noise that repeats exactly every P cells, so wrapping it below leaves no seam */
-    'float vnoise(vec2 p, float P){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);',
-    '  return mix(mix(hash(mod(i,P)),hash(mod(i+vec2(1,0),P)),u.x),mix(hash(mod(i+vec2(0,1),P)),hash(mod(i+vec2(1,1),P)),u.x),u.y); }',
-    'float fbm(vec2 p, float P){ float a=0.5, s=0.0; for(int k=0;k<5;k++){ s+=a*vnoise(p,P); p=p*2.0+vec2(17.0,9.0); P*=2.0; a*=0.5; } return s; }',
-    /* each scale wraps at its own tile (a whole number of cells) so the numbers stay small far from the pad */
-    'float tiled(vec2 p, float scale, float tile){ return fbm(mod(p, tile)*scale, floor(scale*tile+0.5)); }',
+    'uniform float uCell, uFrac, uY, uReal, uGridA, uCloudBox; uniform sampler2D uCloudMap; uniform vec3 uBase, uLine, uFog, uSun; uniform vec2 uFogRange, uLight; varying vec2 vOff;',
+    NOISE_GLSL,
+    /* the desert floor: sand, darker gravel, dry grass, scattered creosote bushes and pebbles */
     'vec3 desert(vec2 p, float fw){',
     '  float big=tiled(p,0.0009,40000.0), mid=tiled(p,0.012,4000.0), fine=tiled(p,0.35,400.0);',
     '  vec3 sand=vec3(0.80,0.69,0.52), dust=vec3(0.70,0.60,0.45), grav=vec3(0.55,0.49,0.39), grass=vec3(0.60,0.56,0.36), bush=vec3(0.28,0.31,0.20);',
@@ -299,6 +310,8 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     '  c=mix(c,bush,0.85*b);',
     '  return c*(0.86+0.28*fine);',
     '}',
+    /* low swells and ripples in the ground, for the light only (the ground itself stays flat, as the simulation has it) */
+    'float relief(vec2 p, float fw){ return 1.6*tiled3(p,0.01,4000.0)+0.35*tiled3(p,0.08,4000.0)+(fw<0.4?0.06*tiled3(p,0.9,400.0)*(1.0-smoothstep(0.05,0.4,fw)):0.0); }',
     'float lines(vec2 p, float cell){',
     '  vec2 g=p/cell; vec2 fw=max(fwidth(g),vec2(1e-6));',
     '  vec2 d=abs(fract(g-0.5)-0.5)/fw;',
@@ -310,7 +323,14 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     '  float a=max(max(lines(p,uCell)*(1.0-uFrac),lines(p,uCell*10.0)),lines(p,uCell*100.0)*uFrac);',
     '  vec3 c=mix(uBase,uLine,0.42*a);',
     '  if(uReal>0.5){ float fw=length(fwidth(p));',
-    '    vec3 d=desert(p,fw)*(uLight.x+uLight.y*max(uSun.y,0.0));',
+    /* the slope of the swells from the screen-space change of their height (bump mapping), turned into a normal */
+    '    float h=relief(p,fw); vec2 dpx=dFdx(p), dpy=dFdy(p); float dhx=dFdx(h), dhy=dFdy(h);',
+    '    float det=dpx.x*dpy.y-dpx.y*dpy.x; vec2 g=abs(det)>1e-9?vec2(dhx*dpy.y-dhy*dpx.y,dhy*dpx.x-dhx*dpy.x)/det:vec2(0.0);',
+    '    g*=1.0-smoothstep(1.0,8.0,fw); vec3 n=normalize(vec3(-g.x,1.0,-g.y));',
+    /* shadows of the clouds overhead, cast along the sun */
+    '    vec2 cq=(p+uSun.xz/max(uSun.y,0.1)*' + (CLOUD_H+500).toFixed(1) + ')/uCloudBox+0.5;',
+    '    float cs=1.0-0.4*(all(greaterThan(cq,vec2(0.0)))&&all(lessThan(cq,vec2(1.0)))?texture2D(uCloudMap,cq).a:0.0);',
+    '    vec3 d=desert(p,fw)*(uLight.x+uLight.y*max(dot(n,uSun),0.0)*cs);',
     '    c=mix(d,vec3(1.0),0.08*a*uGridA); }',
     '  float f=smoothstep(uFogRange.x,uFogRange.y,length(vec3(vOff.x,uY-cameraPosition.y,vOff.y)));',
     '  gl_FragColor=vec4(mix(c,uFog,f),1.0);',
@@ -337,15 +357,15 @@ var SUN_EL=40*Math.PI/180, SUN_AZ=135*Math.PI/180;
 var SUN_DIR=new V3(Math.cos(SUN_EL)*Math.cos(SUN_AZ),Math.sin(SUN_EL),Math.cos(SUN_EL)*Math.sin(SUN_AZ)).normalize();
 /* the sky's colours as the camera climbs: the air thins, the blue overhead deepens and the horizon glow fades */
 function airK(alt){ return clamp(alt/25000,0,1); }
-var HOR0=new THREE.Color(0.77,0.81,0.86), HOR1=new THREE.Color(0.42,0.56,0.78), horizonC=new THREE.Color();
+var HOR0=new THREE.Color(0.78,0.84,0.91), HOR1=new THREE.Color(0.42,0.56,0.78), horizonC=new THREE.Color();
 function horizonColor(alt){ return horizonC.copy(HOR0).lerp(HOR1,airK(alt)); }
 var skyU={uSun:{value:SUN_DIR.clone()},uAlt:{value:0}};
 var SKY_FRAG=[
   'uniform vec3 uSun; uniform float uAlt; varying vec3 vDir;',
   'void main(){',
   '  vec3 d=normalize(vDir); float k=clamp(uAlt/25000.0,0.0,1.0);',
-  '  vec3 zen=mix(vec3(0.16,0.38,0.74),vec3(0.03,0.07,0.20),k);',
-  '  vec3 hor=mix(vec3(0.77,0.81,0.86),vec3(0.42,0.56,0.78),k);',
+  '  vec3 zen=mix(vec3(0.17,0.42,0.80),vec3(0.03,0.07,0.20),k);',
+  '  vec3 hor=mix(vec3(0.78,0.84,0.91),vec3(0.42,0.56,0.78),k);',
   '  vec3 c=mix(hor,zen,pow(clamp(d.y,0.0,1.0),0.5));',
   '  if(d.y<0.0) c=mix(hor,vec3(0.70,0.64,0.54),clamp(-d.y*5.0,0.0,1.0));',
   '  float s=max(dot(d,uSun),0.0);',
@@ -391,6 +411,167 @@ var mountains=(function(){
   g.computeVertexNormals();
   var m=new THREE.Mesh(g,new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide,fog:true})); m.frustumCulled=false; return m; })();
 root.add(mountains);
+/* fair-weather cumulus: within 40 km of the pad each cloud is a heap of soft puffs turned to face the camera (so it looks
+   rounded from any side), grey at the flat base and bright on top and on the sun's side; further out a thin flat layer of
+   the same kind of cloud fades into the haze. The clouds are made once from a fixed seed, so every page has the same sky,
+   and their shadows on the ground come from a map of where they are */
+var CLOUD_BOX=80000, cloudMapCanvas=document.createElement('canvas'); cloudMapCanvas.width=cloudMapCanvas.height=1024;
+var cloudMap=new THREE.CanvasTexture(cloudMapCanvas); cloudMap.flipY=false;
+groundU.uCloudMap={value:cloudMap}; groundU.uCloudBox={value:CLOUD_BOX};
+var puffs=(function(){
+  var seed=20270611; function rnd(){ seed=(seed+0x6D2B79F5)|0; var t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }
+  var cx=cloudMapCanvas.getContext('2d'), list=[], R=CLOUD_BOX/2*0.95;
+  for(var c=0;c<330;c++){
+    var x=(rnd()*2-1)*R, z=(rnd()*2-1)*R, rc=500+rnd()*rnd()*1400, hc=rc*(0.6+0.5*rnd()), n=10+Math.round(rc/70);
+    if(Math.hypot(x,z)>R) continue;
+    for(var k=0;k<n;k++){ var a=rnd()*TAU, r=Math.sqrt(rnd())*rc*0.85, up=Math.pow(rnd(),1.4)*(1-0.7*r/rc), size=(0.55+0.45*rnd())*rc*(1-0.4*up);
+      var px=x+Math.cos(a)*r, pz=z+Math.sin(a)*r, y=CLOUD_H+size*0.28+up*hc;   /* nothing hangs below the flat base */
+      /* lighter higher up and on the sun's side of the heap */
+      var side=(Math.cos(a)*SUN_DIR.x+Math.sin(a)*SUN_DIR.z)*r/rc;
+      list.push([px,y,pz,size,clamp(0.6+0.33*up+0.16*side,0.45,1.05)]); }
+    var u=(x/CLOUD_BOX+0.5)*1024, v=(z/CLOUD_BOX+0.5)*1024, rr=rc*1.05/CLOUD_BOX*1024, g=cx.createRadialGradient(u,v,0,u,v,rr);
+    g.addColorStop(0,'rgba(0,0,0,0.95)'); g.addColorStop(0.6,'rgba(0,0,0,0.7)'); g.addColorStop(1,'rgba(0,0,0,0)'); cx.fillStyle=g; cx.beginPath(); cx.arc(u,v,rr,0,TAU); cx.fill(); }
+  cloudMap.needsUpdate=true;
+  var tex=(function(){ var c=document.createElement('canvas'); c.width=c.height=128; var g=c.getContext('2d');
+    for(var i=0;i<9;i++){ var a=i*0.7+rnd(), r=i?18+rnd()*14:0, x=64+Math.cos(a)*r, y=64+Math.sin(a)*r, rr=i?26+rnd()*12:44, gr=g.createRadialGradient(x,y,0,x,y,rr);
+      gr.addColorStop(0,'rgba(255,255,255,0.38)'); gr.addColorStop(0.5,'rgba(255,255,255,0.2)'); gr.addColorStop(1,'rgba(255,255,255,0)'); g.fillStyle=gr; g.fillRect(0,0,128,128); }
+    return new THREE.CanvasTexture(c); })();
+  var N=list.length, base=new THREE.PlaneGeometry(1,1), geo=new THREE.InstancedBufferGeometry();
+  geo.index=base.index; geo.setAttribute('position',base.attributes.position); geo.setAttribute('uv',base.attributes.uv); geo.instanceCount=N;
+  var iPos=new THREE.InstancedBufferAttribute(new Float32Array(N*3),3), iData=new THREE.InstancedBufferAttribute(new Float32Array(N*3),3);
+  geo.setAttribute('iPos',iPos); geo.setAttribute('iData',iData);
+  var U={uTex:{value:tex},uFog:{value:new THREE.Color()},uFogRange:{value:new THREE.Vector2(2500,95000)}};
+  var mesh=new THREE.Mesh(geo,new THREE.ShaderMaterial({uniforms:U,transparent:true,depthWrite:false,fog:false,
+    vertexShader:['attribute vec3 iPos; attribute vec3 iData; varying vec2 vUv; varying float vShade, vFog, vNear;',
+      'uniform vec2 uFogRange;',
+      'void main(){ vUv=uv; vec4 mv=viewMatrix*vec4(iPos,1.0); float a=iData.z; mv.xy+=mat2(cos(a),sin(a),-sin(a),cos(a))*position.xy*iData.x;',
+      '  float d=length(mv.xyz); vShade=iData.y; vFog=smoothstep(uFogRange.x,uFogRange.y,d); vNear=smoothstep(iData.x*0.25,iData.x*1.2,d);',
+      '  gl_Position=projectionMatrix*mv; }'].join('\n'),
+    fragmentShader:['uniform sampler2D uTex; uniform vec3 uFog; varying vec2 vUv; varying float vShade, vFog, vNear;',
+      'void main(){ float a=texture2D(uTex,vUv).a; if(a<0.01) discard;',
+      '  vec3 c=mix(vec3(0.60,0.63,0.70),vec3(1.0,0.99,0.96),clamp((vShade-0.45)/0.6,0.0,1.0));',
+      '  gl_FragColor=vec4(mix(c,uFog,vFog),a*vNear*(1.0-0.7*vFog)); }'].join('\n')}));
+  mesh.frustumCulled=false; mesh.renderOrder=-40; scene.add(mesh);
+  /* drawn far to near (re-sorted when the camera has moved 150 m), so near puffs cover the far ones */
+  var order=list.map(function(_,i){ return i; }), dist=new Float32Array(N), last=new V3(1e9,0,0);
+  function sort(cam){ if(cam.distanceTo(last)<150) return; last.copy(cam);
+    for(var i=0;i<N;i++){ var q=list[i]; dist[i]=(q[0]-cam.x)*(q[0]-cam.x)+(q[1]-cam.y)*(q[1]-cam.y)+(q[2]-cam.z)*(q[2]-cam.z); }
+    order.sort(function(a,b){ return dist[b]-dist[a]; });
+    for(var j=0;j<N;j++){ var p=list[order[j]]; iPos.setXYZ(j,p[0],p[1],p[2]); iData.setXYZ(j,p[3],p[4],(order[j]*2.399)%TAU); }
+    iPos.needsUpdate=true; iData.needsUpdate=true; }
+  return {mesh:mesh,U:U,sort:sort};
+})();
+var cloudU={uH:{value:CLOUD_H+300},uSun:{value:SUN_DIR.clone()},uFog:{value:new THREE.Color()},uFogRange:{value:new THREE.Vector2(2500,95000)},uBox:{value:CLOUD_BOX*0.42}};
+var clouds=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({uniforms:cloudU,transparent:true,depthWrite:false,side:THREE.DoubleSide,fog:false,
+  vertexShader:['uniform float uH; varying vec2 vOff;',
+    'void main(){ vOff=position.xz; vec3 w=vec3(cameraPosition.x+position.x,uH,cameraPosition.z+position.z);',
+    '  gl_Position=projectionMatrix*viewMatrix*vec4(w,1.0); }'].join('\n'),
+  fragmentShader:['uniform float uH, uBox; uniform vec3 uSun, uFog; uniform vec2 uFogRange; varying vec2 vOff;',
+    NOISE_GLSL,
+    'void main(){',
+    '  vec2 p=cameraPosition.xz+vOff; float out_=smoothstep(uBox*0.9,uBox*1.1,length(p)); if(out_<0.01) discard;',
+    '  float d=cloudD(p)*out_; if(d<0.004) discard;',
+    '  vec3 c=mix(vec3(0.95,0.95,0.97),vec3(0.62,0.65,0.71),smoothstep(0.2,1.0,d));',
+    '  c=mix(c,vec3(1.0,0.99,0.96),smoothstep(-40.0,40.0,cameraPosition.y-uH));',
+    '  float f=smoothstep(uFogRange.x,uFogRange.y*1.2,length(vec3(vOff.x,uH-cameraPosition.y,vOff.y)));',
+    '  gl_FragColor=vec4(mix(c,uFog,f),pow(d,0.8)*0.85*(1.0-0.6*f));',
+    '}'].join('\n')}));
+clouds.frustumCulled=false; clouds.renderOrder=-50; scene.add(clouds);
+
+/* the ground close to the camera: tufts of dry grass that sway in the wind, creosote bushes and stones, each with a soft
+   dark patch under it. Placed from a fixed pattern on the ground, so the same plant is always in the same spot; only the
+   patch round where you are looking is filled, and nothing is put on the concrete pad */
+var CLUTTER=(function(){
+  var grp=new THREE.Group(); grp.visible=false; scene.add(grp);
+  var sway={uTime:{value:0},uWind:{value:new V3()}};
+  function h2(i,j,s){ var x=Math.sin(i*127.1+j*311.7+s*74.7)*43758.5453; return x-Math.floor(x); }
+  /* the same random number for every copy of a corner (the triangles do not share corners), so lumps stay closed */
+  function vh(a,i,s){ return h2(Math.round(a.getX(i)*1000),Math.round(a.getY(i)*1000)*7+Math.round(a.getZ(i)*1000),s); }
+  function fromParts(parts){ /* one geometry from several, with vertex colours; each part keeps its own normals (or points them
+     straight up, for grass, so it is lit like the ground it grows from) */
+    var pos=[], col=[], nor=[]; parts.forEach(function(q){ var g=q.g.index?q.g.toNonIndexed():q.g; if(!g.attributes.normal) g.computeVertexNormals();
+      var a=g.attributes.position, nn=g.attributes.normal;
+      for(var i=0;i<a.count;i++){ var y=a.getY(i), t=q.ramp?clamp(y,0,1):0; pos.push(a.getX(i),y,a.getZ(i));
+        if(q.up) nor.push(0,1,0); else nor.push(nn.getX(i),nn.getY(i),nn.getZ(i));
+        col.push(q.c[0]+(q.c2?q.c2[0]-q.c[0]:0)*t,q.c[1]+(q.c2?q.c2[1]-q.c[1]:0)*t,q.c[2]+(q.c2?q.c2[2]-q.c[2]:0)*t); } });
+    var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(col,3)); return g; }
+  /* a tuft: a dozen thin blades leaning out, darker at the root and pale straw at the tip; 1 unit tall */
+  var blades=[]; for(var k=0;k<12;k++){ var a=k*2.39996, lean=0.15+0.3*h2(k,1,3), hgt=0.55+0.45*h2(k,2,3), w=0.05;
+    var b=new THREE.BufferGeometry(), ca=Math.cos(a), sa=Math.sin(a), px=-sa*w, pz=ca*w;
+    b.setAttribute('position',new THREE.Float32BufferAttribute([px,0,pz, -px,0,-pz, ca*lean,hgt,sa*lean],3)); blades.push({g:b,c:[0.5,0.46,0.3],c2:[0.92,0.85,0.62],ramp:true,up:true}); }
+  var tuftGeo=fromParts(blades);
+  /* a creosote bush: a few rounded dark olive clumps straight off the ground, wider than tall; 1 unit tall */
+  var bparts=[], k2; for(k2=0;k2<4;k2++){ var g=new THREE.IcosahedronGeometry(1,1), an=k2*2.1, rr=k2?0.42:0, sz=k2?0.36:0.45;
+    g.scale(sz*1.2,sz*1.05,sz*1.2); g.translate(Math.cos(an)*rr,0.52+0.2*h2(k2,5,1)-(k2?0.14:0),Math.sin(an)*rr);
+    var gp=g.attributes.position; for(var v=0;v<gp.count;v++){ var f=1+0.22*(vh(gp,v,k2)-0.5); gp.setXYZ(v,gp.getX(v)*f,gp.getY(v)*f,gp.getZ(v)*f); }
+    bparts.push({g:g,c:[0.27,0.29,0.18],c2:[0.44,0.45,0.28],ramp:true}); }
+  var bushGeo=fromParts(bparts);
+  /* a stone: a flattened, knocked-about dodecahedron; 1 unit across */
+  var rg=new THREE.DodecahedronGeometry(0.5,0), rp=rg.attributes.position;
+  for(var v2=0;v2<rp.count;v2++){ var f2=1+0.3*(vh(rp,v2,9)-0.5); rp.setXYZ(v2,rp.getX(v2)*f2,rp.getY(v2)*0.55*f2+0.12,rp.getZ(v2)*f2); }
+  var rockGeo=fromParts([{g:rg,c:[0.52,0.47,0.41]}]);
+  var blobTex=(function(){ var c=document.createElement('canvas'); c.width=c.height=64; var x=c.getContext('2d'), gr=x.createRadialGradient(32,32,0,32,32,32);
+    gr.addColorStop(0,'rgba(0,0,0,0.55)'); gr.addColorStop(0.5,'rgba(0,0,0,0.3)'); gr.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=gr; x.fillRect(0,0,64,64); return new THREE.CanvasTexture(c); })();
+  var blobGeo=new THREE.PlaneGeometry(1,1); blobGeo.rotateX(-Math.PI/2);
+  var grassMat=new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide});
+  grassMat.onBeforeCompile=function(sh){ sh.uniforms.uTime=sway.uTime; sh.uniforms.uWind=sway.uWind;
+    sh.vertexShader='uniform float uTime; uniform vec3 uWind;\n'+sh.vertexShader.replace('#include <project_vertex>',[
+      'vec4 mvPosition=vec4(transformed,1.0);',
+      '#ifdef USE_INSTANCING',
+      'mvPosition=instanceMatrix*mvPosition;',
+      'float ph=instanceMatrix[3].x*0.37+instanceMatrix[3].z*0.53;',
+      'mvPosition.xz+=uWind.xz*position.y*position.y*(0.55+0.45*sin(uTime*2.1+ph))*length(instanceMatrix[1].xyz);',
+      '#endif',
+      'mvPosition=modelViewMatrix*mvPosition; gl_Position=projectionMatrix*mvPosition;'].join('\n')); };
+  var kinds=[
+    {geo:tuftGeo,mat:grassMat,cell:0.8,R:45,p:0.5,size:[0.22,0.5],seed:1},
+    {geo:bushGeo,mat:new THREE.MeshLambertMaterial({vertexColors:true}),cell:5,R:100,p:0.3,size:[0.55,1.5],seed:2,shadow:true,blob:1.7},
+    {geo:rockGeo,mat:new THREE.MeshLambertMaterial({vertexColors:true}),cell:2.2,R:55,p:0.1,size:[0.06,0.35],seed:3,blob:1.5}];
+  var nBlob=0;
+  kinds.forEach(function(K){ var n=Math.ceil(Math.pow(2*K.R/K.cell+2,2)*0.8*K.p)+16;
+    K.mesh=new THREE.InstancedMesh(K.geo,K.mat,n); K.mesh.count=0; K.mesh.frustumCulled=false; K.mesh.castShadow=!!K.shadow;
+    K.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); K.mesh.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(n*3),3); K.max=n; grp.add(K.mesh); if(K.blob) nBlob+=n; });
+  var blobs=new THREE.InstancedMesh(blobGeo,new THREE.MeshBasicMaterial({map:blobTex,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),nBlob);
+  blobs.count=0; blobs.frustumCulled=false; blobs.renderOrder=2; grp.add(blobs);
+  var M4=new THREE.Matrix4(), Q=new THREE.Quaternion(), P=new V3(), S=new V3(), UP=new V3(0,1,0), C3=new THREE.Color(), key='';
+  function fill(cx,cz,clear){
+    var nb=0;
+    kinds.forEach(function(K){ var n=0, i0=Math.floor((cx-K.R)/K.cell), i1=Math.ceil((cx+K.R)/K.cell), j0=Math.floor((cz-K.R)/K.cell), j1=Math.ceil((cz+K.R)/K.cell);
+      for(var i=i0;i<=i1;i++) for(var j=j0;j<=j1;j++){
+        if(h2(i,j,K.seed)>K.p||n>=K.max) continue;
+        var x=(i+h2(i,j,K.seed+10))*K.cell, z=(j+h2(i,j,K.seed+20))*K.cell, dc=Math.hypot(x-cx,z-cz);
+        if(dc>K.R||Math.hypot(x,z)<clear) continue;
+        var sz=(K.size[0]+(K.size[1]-K.size[0])*Math.pow(h2(i,j,K.seed+30),1.5))*(1-smooth((dc-K.R*0.75)/(K.R*0.25)));
+        Q.setFromAxisAngle(UP,h2(i,j,K.seed+40)*TAU); P.set(x,-0.03*sz,z); S.set(sz*(0.85+0.3*h2(i,j,K.seed+50)),sz,sz*(0.85+0.3*h2(i,j,K.seed+60)));
+        M4.compose(P,Q,S); K.mesh.setMatrixAt(n,M4);
+        var t=h2(i,j,K.seed+70); C3.setRGB(0.82+0.3*t,0.82+0.27*t,0.82+0.2*t); K.mesh.setColorAt(n,C3); n++;
+        if(K.blob){ P.y=0.012; S.set(sz*K.blob,1,sz*K.blob); M4.compose(P,Q,S); blobs.setMatrixAt(nb++,M4); } }
+      K.mesh.count=n; K.mesh.instanceMatrix.needsUpdate=true; if(K.mesh.instanceColor) K.mesh.instanceColor.needsUpdate=true; });
+    blobs.count=nb; blobs.instanceMatrix.needsUpdate=true;
+  }
+  /* each frame: fill the patch round (cx, cz) again when it has moved 10 m; hidden when the camera is high up */
+  function update(on,cx,cz,clear,time,wind){
+    grp.visible=on; if(!on) return;
+    sway.uTime.value=time; sway.uWind.value.copy(wind);
+    var k=Math.round(cx/10)+','+Math.round(cz/10)+','+clear.toFixed(1);
+    if(k!==key){ key=k; fill(Math.round(cx/10)*10,Math.round(cz/10)*10,clear); }
+  }
+  return {group:grp,update:update};
+})();
+/* the sky, the desert and the clouds reflected in the rocket: a small cube camera at the rocket renders the world round it
+   every few frames (everything but the rocket, its labels and the tower) */
+var envRT=new THREE.WebGLCubeRenderTarget(128,{generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter}), envCam=new THREE.CubeCamera(0.5,120000,envRT), envTick=0, envReady=false;
+scene.add(envCam);
+function updateEnv(at){
+  if(!renderer) return;
+  envCam.position.copy(at);
+  var keep=root.children.map(function(c){ return c.visible; }); root.children.forEach(function(c){ c.visible=c===mountains; });
+  var sv=shadowSheet.visible, cl=CLUTTER.group.visible, au=renderer.shadowMap.autoUpdate; shadowSheet.visible=false; CLUTTER.group.visible=false; renderer.shadowMap.autoUpdate=false;
+  envCam.update(renderer,scene);
+  renderer.shadowMap.autoUpdate=au; shadowSheet.visible=sv; CLUTTER.group.visible=cl; root.children.forEach(function(c,i){ c.visible=keep[i]; });
+  if(!envReady){ envReady=true; applyLook(); }
+}
 /* where the sun's shadows fall: an invisible sheet just above the ground that only darkens, kept under the rocket */
 var shadowSheet=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.ShadowMaterial({opacity:0.38,depthWrite:false}));
 shadowSheet.rotation.x=-Math.PI/2; shadowSheet.receiveShadow=true; shadowSheet.renderOrder=1; scene.add(shadowSheet);
@@ -398,30 +579,41 @@ function castShadows(obj,on){ obj.traverse(function(o){ if(o.isMesh&&!o.material
 function applyLook(){
   var real=LOOK==='real';
   document.querySelectorAll('#look button').forEach(function(b){ b.classList.toggle('on',b.dataset.l===LOOK); });
-  sky.visible=real; mountains.visible=real; shadowSheet.visible=real; if(window.__padSlab) window.__padSlab.visible=real;
+  sky.visible=real; mountains.visible=real; clouds.visible=real; puffs.mesh.visible=real; shadowSheet.visible=real; if(!real) CLUTTER.group.visible=false;
+  /* a light film-style grade and a soft vignette, only for the realistic look */
+  cv.style.filter=real?'contrast(1.06) saturate(1.12)':''; var vg=$('vignette'); if(vg) vg.hidden=!real;
+  if(window.__padSlab) window.__padSlab.visible=real;
   groundU.uReal.value=real?1:0; groundU.uSun.value.copy(SUN_DIR);
   ambient.intensity=real?0.12:0.7; hemi.intensity=real?0.55:0;
   sun.intensity=real?1.05:0.75; sun.color.set(real?0xfff0dc:0xffffff); sun.castShadow=real;
   if(!real) sun.position.set(0.6,1,0.8), sun.target.position.set(0,0,0);
   scene.fog.near=real?2500:9000; scene.fog.far=real?95000:42000; groundU.uFogRange.value.set(scene.fog.near,scene.fog.far);
   if(!real){ if(renderer) renderer.setClearColor(0x000000); scene.fog.color.set(0x000000); groundU.uFog.value.set(0x000000); groundU.uBase.value.set(0x23272d); }
-  [MAT.al,MAT.fg,MAT.cf,MAT.nose,MAT.tail,railMat,steel].forEach(function(m){ if(m){ m.envMap=real?skyEnv:null; m.needsUpdate=true; } });
+  [MAT.al,MAT.fg,MAT.cf,MAT.nose,MAT.tail,railMat,steel].forEach(function(m){ if(m){ m.envMap=real?(envReady?envRT.texture:skyEnv):null; m.needsUpdate=true; } });
 }
 /* each frame: the sky round the camera, the haze the colour of the horizon, the sun's shadow box round the rocket */
 function updateLook(target,Ld){
   if(LOOK!=='real') return;
   var alt=Math.max(camera.position.y,0);
   sky.position.copy(camera.position); skyU.uAlt.value=alt;
-  var hz=horizonColor(alt); scene.fog.color.copy(hz); groundU.uFog.value.copy(hz); if(renderer) renderer.setClearColor(hz);
+  var hz=horizonColor(alt); scene.fog.color.copy(hz); groundU.uFog.value.copy(hz); cloudU.uFog.value.copy(hz); puffs.U.uFog.value.copy(hz); if(renderer) renderer.setClearColor(hz);
   /* the haze is in the lowest few kilometres of air: from higher up you see further through it */
-  scene.fog.near=2500+alt*2.5; scene.fog.far=95000+alt*9; groundU.uFogRange.value.set(scene.fog.near,scene.fog.far);
+  scene.fog.near=2500+alt*2.5; scene.fog.far=95000+alt*9; groundU.uFogRange.value.set(scene.fog.near,scene.fog.far); cloudU.uFogRange.value.copy(groundU.uFogRange.value); puffs.U.uFogRange.value.copy(groundU.uFogRange.value); puffs.sort(camera.position);
   var h=Math.max(target.y,0), box=Ld*1.6+h*1.1, far=Ld*40+h*3;
   sun.target.position.copy(target); sun.position.copy(target).addScaledVector(SUN_DIR,far*0.5);
   var sc2=sun.shadow.camera; sc2.left=-box; sc2.right=box; sc2.top=box; sc2.bottom=-box; sc2.near=0.1; sc2.far=far; sc2.updateProjectionMatrix();
   /* under the rocket, offset away from the sun to where its shadow lands */
   shadowSheet.position.set(target.x-SUN_DIR.x/Math.max(SUN_DIR.y,0.2)*h,0.004+0.0004*camera.position.distanceTo(target),target.z-SUN_DIR.z/Math.max(SUN_DIR.y,0.2)*h);
   var sz=Math.max(box*4,Ld*30); shadowSheet.scale.set(sz,sz,1);
+  /* grass, bushes and stones round where you are looking, when it is near the ground; none on the concrete pad */
+  var gx=target.y<350?target.x:camera.position.x, gz=target.y<350?target.z:camera.position.z;
+  var near=Math.hypot(camera.position.x-gx,camera.position.y,camera.position.z-gz)<600;
+  var slab=Math.max(8,ROCKET_LEN*scaleMult*1.6), wv=ds&&ds.wind?ds.wind:[0,0,0];
+  CLUTTER.update(near,gx,gz,slab*0.72+0.4,performance.now()/1000,windTmp.set(wv[2]||0,0,wv[1]||0).multiplyScalar(0.012).clampLength(0,0.2));
+  /* the rocket's reflections, made again every sixth frame */
+  if((envTick++)%6===0) updateEnv(target);
 }
+var windTmp=new V3();
 
 /* world frame at the pad */
 var padAx=[makeArrow(C.x,1,G.world),makeArrow(C.y,1,G.world),makeArrow(C.z,1,G.world)];
@@ -490,9 +682,16 @@ var MAROON=0x500000;
    reflects the sky in the realistic look) */
 /* Phong with a small sky cube for the reflections: it looks right on every graphics card (the physically based materials
    need a pre-filtered sky that some cards and the browser test's software renderer draw wrongly) */
+/* the reflections grow towards the edges, where the surface is seen at a glancing angle (Fresnel), as on real paint and metal */
+var FRESNEL_ENV=THREE.ShaderChunk.envmap_fragment.replace('outgoingLight = mix( outgoingLight, envColor.xyz, specularStrength * reflectivity );',
+  'float fresK = reflectivity + ( 1.0 - reflectivity ) * ( reflectivity > 0.3 ? 0.8 : 0.35 ) * pow( 1.0 - clamp( dot( - cameraToFrag, worldNormal ), 0.0, 1.0 ), 5.0 );\n'+
+  'outgoingLight = mix( outgoingLight, envColor.xyz * ( reflectivity > 0.3 ? mix( vec3( 1.0 ), diffuseColor.rgb, 0.35 ) * 1.1 : vec3( 1.0 ) ), specularStrength * fresK );');
+function fresnel(sh){ sh.fragmentShader=sh.fragmentShader.replace('#include <envmap_fragment>',FRESNEL_ENV); }
 function paint(c,rough,metal,side){
-  return new THREE.MeshPhongMaterial({color:c,shininess:Math.round(4+90*(1-rough)*(1-rough)),specular:new THREE.Color(metal?0x8a8f96:0x2a2a2a),
-    reflectivity:metal?0.42:0.06,combine:THREE.MixOperation,side:side||THREE.FrontSide}); }
+  metal=metal>0.5;   /* bare metal; anything less is paint or resin */
+  var m=new THREE.MeshPhongMaterial({color:c,shininess:Math.round(6+110*(1-rough)*(1-rough)),specular:new THREE.Color(metal?0x9aa0a8:0x4a4a4a),
+    reflectivity:metal?(rough<0.4?0.78:0.6):(rough<0.6?0.12:0.03),combine:THREE.MixOperation,side:side||THREE.FrontSide});
+  m.onBeforeCompile=fresnel; return m; }
 var MAT={fg:paint(0xe4e4e0,0.5,0), cf:paint(MAROON,0.38,0.05),
   al:paint(0xc2c7ce,0.32,0.85), nose:paint(MAROON,0.38,0.05,THREE.DoubleSide),
   dark:paint(0x2e0000,0.7,0,THREE.DoubleSide), tail:paint(MAROON,0.38,0.05,THREE.DoubleSide),
