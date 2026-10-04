@@ -168,7 +168,7 @@ def test_a_collapsed_canopy_gives_almost_no_drag() -> None:
         full_drag_deg=0.0,
         no_drag_deg=0.001,
         collapsed_drag_fraction=0.0,
-        turbulence=1.5,  # random gusts (off by default) tip the canopy over
+        turbulence=1.5,  # random gusts tip the canopy over
     )
     fall = simulate_swing_descent(
         0.0, _state(300.0), _config(), _CANOPY, mass_kg=_MASS_KG, swing=swing
