@@ -12,7 +12,7 @@ name: Tell the dynamics site to rebuild
 # DYNAMICS_REPO is an optional repository variable, for a dynamics repository that is not tamusrt/dynamics.
 on:
   push:
-    branches: [main, Vision]
+    branches: [main, Vision, EDITH]
     paths:
       - "src/**"
       - "pyproject.toml"

@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EDITH</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#1f2328; --muted:#59636e; --card:#f6f8fa; --line:#d0d7de;
+          --up:#1a7f37; --down:#cf222e; --flat:#8c959f; --accent:#0969da; --hover:#eaeef2; --warn:#9a6700; --warnbg:#fff8c5; --ok:#1a7f37;
+          --redbg:#ffebe9; --greenbg:#dafbe1; --ring:#d0d7de; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --card:#161b22; --line:#30363d;
+          --up:#3fb950; --down:#f85149; --flat:#6e7681; --accent:#58a6ff; --hover:#21262d; --warn:#d29922; --warnbg:#272115; --ok:#3fb950;
+          --redbg:#2d1214; --greenbg:#0f2a17; --ring:#30363d; } }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; display:flex; flex-direction:column; overflow:hidden; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  header { flex:none; padding:12px 16px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; }
+  body.embedded header { display:none; }
+  header h1 { font-size:18px; margin:0; } header .sub { color:var(--muted); font-size:13px; }
+  .hctl { margin-left:auto; display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; }
+  .sub { color:var(--muted); font-size:13px; }
+  select { font:inherit; font-size:13px; padding:3px 6px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; }
+  .tabs a { font-size:13px; padding:4px 12px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); text-decoration:none; }
+  .tabs a:hover { border-color:var(--accent); }
+  .tabs a.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  main { flex:1; min-height:0; overflow:auto; padding:14px 16px 32px; }
+  .wrap { max-width:1000px; margin:0 auto; }
+  a { color:var(--accent); }
+  code { font-size:12px; }
+  h2.sec { font-size:16px; margin:26px 0 4px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  p.lead { margin:6px 0; max-width:75ch; }
+  .legend { color:var(--muted); font-size:12.5px; margin:8px 0 0; max-width:80ch; }
+  .legend b { color:var(--fg); }
+  .note { border:1px solid var(--warn); background:var(--warnbg); border-radius:8px; padding:8px 12px; font-size:13px; margin:0 0 12px; }
+  .note b { color:var(--fg); }
+  .note ul { margin:4px 0 0; padding-left:18px; }
+  .verdict { display:flex; gap:10px; align-items:center; border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:12px 0; font-size:15px; font-weight:600; }
+  .verdict.red { border-color:var(--down); background:var(--redbg); } .verdict.amber { border-color:var(--warn); background:var(--warnbg); } .verdict.green { border-color:var(--ok); background:var(--greenbg); }
+  .dot { display:inline-block; width:11px; height:11px; border-radius:50%; flex:none; background:var(--flat); }
+  .dot.red { background:var(--down); } .dot.amber { background:var(--warn); } .dot.green { background:var(--ok); }
+  .alerts { display:flex; flex-direction:column; gap:6px; margin:8px 0; }
+  .alert { display:grid; grid-template-columns:14px 1fr auto; gap:4px 10px; align-items:start; border:1px solid var(--line); border-left-width:4px; border-radius:8px; padding:8px 12px; background:var(--card); }
+  .alert.red { border-left-color:var(--down); } .alert.amber { border-left-color:var(--warn); } .alert.green { border-left-color:var(--ok); }
+  .alert .dot { margin-top:5px; }
+  .alert .t { font-weight:600; } .alert .w { color:var(--muted); font-size:12.5px; margin-top:1px; }
+  .alert .c { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .alert .c b { font-size:17px; } .alert .c small { display:block; color:var(--muted); font-size:11.5px; }
+  .kind { display:inline-block; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; margin-left:6px; vertical-align:1px; font-weight:500; }
+  details { margin-top:12px; } summary { cursor:pointer; color:var(--muted); font-size:12.5px; }
+  details > summary.big { font-size:15px; font-weight:600; color:var(--fg); }
+  table { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; }
+  th, td { text-align:right; padding:5px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; vertical-align:top; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:600; }
+  td.l, th.l { text-align:left; }
+  .tablewrap { overflow-x:auto; }
+  .figs { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin:10px 0; }
+  .fig { border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:var(--card); }
+  .fig .n { font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; } .fig .d { color:var(--muted); font-size:12px; }
+  .chart { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; margin:10px 0; }
+  .chart svg { display:block; width:100%; height:auto; }
+  .chart text { fill:var(--muted); font-size:11px; font-family:inherit; }
+  .chart .strong { fill:var(--fg); }
+  .two { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:14px; align-items:start; }
+  @media (max-width:760px) { .two { grid-template-columns:1fr; } }
+  .key { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--muted); margin:4px 2px; }
+  .key i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+  .key i.sq { border-radius:2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>EDITH</h1>
+  <div class="tabs" id="tabs">
+    <a href="../../#tab=history">History</a><a href="../../#tab=flight">Flight plots</a><a href="../../#tab=changelog">Changelog</a>
+    <a href="../index.html">JARVIS predictions</a><a href="../viewer/index.html">Vision</a><a class="on" href="#">EDITH</a>
+  </div>
+  <span class="sub" id="sub"></span>
+  <span class="hctl">
+    <label class="sub">units <select id="units"><option value="metric">metric (m, m/s)</option><option value="imperial">imperial (ft, ft/s)</option></select></label>
+  </span>
+</header>
+<main id="main">
+<div class="wrap">
+  <h2 class="sec" style="margin-top:4px">EDITH: many simulated flights, and what happens in them</h2>
+  <p class="lead"><b>EDITH is the team's Monte Carlo simulation.</b> Instead of flying the rocket once, it flies it hundreds of times. Each flight has the wind, the weather, the motor's strength and the launch rail set a little differently, the way they differ from one real launch day to the next. Counting what happens across all the flights gives the <b>chance</b> of each outcome. This page shows those chances, where the rocket is likely to peak and land, and which IREC rules it might break.</p>
+  <div class="note" id="assumed"></div>
+  <div class="verdict" id="verdict"></div>
+
+  <h2 class="sec">Alerts</h2>
+  <p class="legend" id="alertintro"></p>
+  <div class="alerts" id="alerts"></div>
+  <details id="greens"><summary class="big" id="greensum">Nothing to worry about</summary><div class="alerts" id="greenlist"></div></details>
+  <details><summary>How the colours are chosen</summary><div id="levels" class="legend"></div></details>
+
+  <h2 class="sec">Apogee: how high it goes</h2>
+  <p class="legend" id="apogeeintro"></p>
+  <div class="figs" id="apofigs"></div>
+  <div class="chart"><svg id="apohist" viewBox="0 0 900 300" role="img" aria-label="How often the rocket's apogee falls in each height band"></svg></div>
+  <div class="key"><span><i class="sq" style="background:var(--accent)"></i>within range of the target</span><span><i class="sq" style="background:var(--flat)"></i>outside the range</span><span><i class="sq" style="background:var(--warn);width:3px;height:12px;border-radius:0"></i>target</span></div>
+  <div class="tablewrap"><table id="apotable"></table></div>
+
+  <h2 class="sec">Landing: where it comes down</h2>
+  <p class="legend" id="landintro"></p>
+  <div class="two">
+    <div>
+      <div class="chart"><svg id="map" viewBox="0 0 520 520" role="img" aria-label="Map of where each simulated flight landed, seen from above with north up"></svg></div>
+      <div class="key"><span><i style="background:var(--accent)"></i>no alert</span><span><i style="background:var(--warn)"></i>IREC warning</span><span><i style="background:var(--down)"></i>IREC failure</span><span><i class="sq" style="background:none;border:2px solid var(--fg)"></i>90% of landings are inside this ring</span></div>
+    </div>
+    <div>
+      <div class="figs" id="landfigs" style="grid-template-columns:1fr 1fr"></div>
+      <div class="tablewrap"><table id="landtable"></table></div>
+    </div>
+  </div>
+
+  <h2 class="sec">The rest of the flight</h2>
+  <p class="legend">The typical value and the range the middle 80% of flights fall in (10th to 90th percentile). The IREC column is the rule the number is checked against.</p>
+  <div class="tablewrap"><table id="numbers"></table></div>
+
+  <h2 class="sec">Every check</h2>
+  <p class="legend">Red checks are IREC rules and ways to lose the rocket. Amber checks are IREC recommendations. The chance is how many of the simulated flights triggered the check.</p>
+  <div class="tablewrap"><table id="checks"></table></div>
+
+  <h2 class="sec">What EDITH does not cover</h2>
+  <ul class="legend" id="limits"></ul>
+
+  <details><summary class="big">What went into these flights</summary>
+    <p class="legend">Each flight draws every input below from the curve shown. <b>sd</b> is the typical spread: about two thirds of draws are within one sd of the middle. A <b>Weibull</b> curve is the usual shape of surface wind speeds: calm days are common, strong days are rare.</p>
+    <div class="tablewrap"><table id="inputs"></table></div>
+  </details>
+  <details><summary class="big">How much to trust it</summary>
+    <div class="legend" id="trust"></div>
+  </details>
+  <p class="legend" id="provenance"></p>
+</div>
+</main>
+<script>
+"use strict";
+const DATA = /*DATA*/null;
+const $ = (id) => document.getElementById(id);
+const R = DATA.report, A = DATA.alerts, FT = 3.28084, MI = 0.000621371;
+const embedded = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
+document.body.classList.toggle('embedded', embedded);
+const state = { units: 'imperial' };   // as on the JARVIS predictions page
+
+/* ---------- words and numbers ---------- */
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const num = (x, d) => Number(x).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const imp = () => state.units === 'imperial';
+const len = (m, d = 0) => (imp() ? num(m * FT, d) + ' ft' : num(m, d) + ' m');
+const speed = (ms, d = 1) => (imp() ? num(ms * FT, d) + ' ft/s' : num(ms, d) + ' m/s');
+const far = (m) => (imp() ? (m * MI >= 0.25 ? num(m * MI, 2) + ' mi' : num(m * FT, 0) + ' ft') : (m >= 1000 ? num(m / 1000, 2) + ' km' : num(m, 0) + ' m'));
+function pct(x) {
+  const v = x * 100;
+  if (v === 0) return '0%';
+  if (v < 0.1) return '<0.1%';
+  return v < 10 ? num(v, 1) + '%' : num(v, 0) + '%';
+}
+function chanceHTML(c) {
+  if (!c) return '';
+  if (c.estimate === 0) return '<b>under ' + pct(c.high) + '</b><small>none seen in ' + R.runs + ' flights</small>';
+  return '<b>' + pct(c.estimate) + '</b><small>likely ' + pct(c.low) + ' to ' + pct(c.high) + '</small>';
+}
+const KIND = { failure: 'IREC rule', warning: 'IREC advice', apogee: 'Apogee', quality: 'About this batch' };
+const compass = (east, north) => {
+  const parts = [];
+  if (Math.abs(east) >= 1) parts.push(far(Math.abs(east)) + (east < 0 ? ' west' : ' east'));
+  if (Math.abs(north) >= 1) parts.push(far(Math.abs(north)) + (north < 0 ? ' south' : ' north'));
+  return parts.join(', ') || 'at the pad';
+};
+
+/* ---------- the top of the page ---------- */
+function drawTop() {
+  document.title = 'EDITH · ' + DATA.name;
+  $('sub').textContent = DATA.name + ' · built ' + DATA.generated;
+  const items = ['<li>This design has no parachutes yet, so the descent uses the <b>Sol Invictus recovery system as a stand-in</b> (as on the JARVIS predictions page). Landing and parachute numbers describe that stand-in, not the real recovery system.</li>'];
+  const assumed = !R.assumptions || R.assumptions.indexOf('assumed placeholder') >= 0;
+  if (assumed) items.unshift('<li><b>The launch-site conditions are assumed, not measured.</b> The wind, temperature, motor strength and similar spreads are placeholders until the team replaces them with data for the launch site. The strength each parachute is assumed to have (' + num(R.rated_load_g, 0) + ' g at opening) is also a guess.</li>');
+  $('assumed').innerHTML = '<b>Read these chances as a guide to what to check, not as a forecast.</b><ul>' + items.join('') + '</ul>';
+  const v = A.headline;
+  $('verdict').className = 'verdict ' + v.level;
+  $('verdict').innerHTML = '<span class="dot ' + v.level + '"></span><span>' + esc(v.text) + '</span>';
+}
+
+/* ---------- alerts ---------- */
+function alertHTML(a) {
+  return '<div class="alert ' + a.level + '"><span class="dot ' + a.level + '"></span><div><div class="t">' + esc(a.title) + '<span class="kind">' + (KIND[a.kind] || a.kind) + '</span></div>' +
+    (a.text ? '<div class="w">' + esc(a.text) + '</div>' : '') + '</div><div class="c">' + chanceHTML(a.chance) + '</div></div>';
+}
+function drawAlerts() {
+  const shown = A.alerts.filter((a) => a.level !== 'green'), calm = A.alerts.filter((a) => a.level === 'green');
+  $('alertintro').innerHTML = 'Out of <b>' + R.runs + ' simulated flights</b>. Each chance has a <b>likely range</b>: we are 90% sure the true chance, under these assumptions, is inside it. "Under 1%" means none was seen in this many flights, which is not the same as impossible.';
+  $('alerts').innerHTML = shown.length ? shown.map(alertHTML).join('') : '<p class="legend">No alerts: every chance is inside the levels below.</p>';
+  $('greens').hidden = !calm.length;
+  $('greensum').textContent = 'Nothing to worry about (' + calm.length + ')';
+  $('greenlist').innerHTML = calm.map(alertHTML).join('');
+  const L = A.levels;
+  $('levels').innerHTML = 'These cut-offs are the team\'s judgement, not IREC rules, and can be changed in <code>flight_sim/edith/alerts.py</code>.<ul>' +
+    '<li><b>Chance of breaking an IREC rule:</b> red from ' + pct(L.failure_red) + ', amber from ' + pct(L.failure_amber) + ', or when the likely range reaches ' + pct(L.failure_red) + ' (too few flights to rule a red out).</li>' +
+    '<li><b>Chance of missing an IREC recommendation:</b> amber from ' + pct(L.warning_amber) + '.</li>' +
+    '<li><b>Chance of reaching the wanted apogee:</b> green from ' + pct(L.apogee_green) + ', amber from ' + pct(L.apogee_amber) + ', red below.</li></ul>';
+}
+
+/* ---------- apogee ---------- */
+function drawApogee() {
+  const g = R.apogee_range, ap = R.apogee_m, c = R.cloud;
+  $('apogeeintro').innerHTML = 'The wanted apogee is <b>' + len(g.target_m) + '</b> above the pad (assumed). "Within range" means within <b>' + (g.tolerance * 100) + '%</b> of it: ' + len(g.low_m) + ' to ' + len(g.high_m) + '.';
+  const f = (title, c2, sub) => '<div class="fig"><div class="d">' + title + '</div><div class="n">' + (c2.estimate === 0 ? 'under ' + pct(c2.high) : pct(c2.estimate)) + '</div><div class="d">' + sub + '</div></div>';
+  const range = (c2) => 'likely ' + pct(c2.low) + ' to ' + pct(c2.high);
+  $('apofigs').innerHTML = f('Within range', g.within, range(g.within)) + f('Too low', g.below, range(g.below)) + f('Too high', g.above, range(g.above)) +
+    '<div class="fig"><div class="d">Typical apogee</div><div class="n">' + len(ap.p50.estimate) + '</div><div class="d">middle of all flights</div></div>';
+  // histogram
+  const values = c.apogee.map((p) => p[2]);
+  const lo = Math.min(...values, g.low_m), hi = Math.max(...values, g.high_m);
+  const pad = (hi - lo) * 0.06, x0 = lo - pad, x1 = hi + pad, bins = 18, counts = new Array(bins).fill(0);
+  values.forEach((v) => { counts[Math.min(bins - 1, Math.floor(((v - x0) / (x1 - x0)) * bins))]++; });
+  const W = 900, H = 300, L = 46, Rr = 40, T = 12, B = 44, top = Math.max(...counts, 1), pw = W - L - Rr, ph = H - T - B;
+  const X = (v) => L + ((v - x0) / (x1 - x0)) * pw, bw = pw / bins;
+  let s = '<line x1="' + L + '" y1="' + (T + ph) + '" x2="' + (W - Rr) + '" y2="' + (T + ph) + '" stroke="var(--line)"/>';
+  counts.forEach((n, i) => {
+    const mid = x0 + ((i + 0.5) / bins) * (x1 - x0), inside = mid >= g.low_m && mid <= g.high_m, h = (n / top) * ph;
+    s += '<rect x="' + (L + i * bw + 1) + '" y="' + (T + ph - h) + '" width="' + (bw - 2) + '" height="' + h + '" rx="2" fill="' + (inside ? 'var(--accent)' : 'var(--flat)') + '" opacity=".85"><title>' + n + ' flights near ' + len(mid) + '</title></rect>';
+  });
+  s += '<line x1="' + X(g.target_m) + '" y1="' + T + '" x2="' + X(g.target_m) + '" y2="' + (T + ph) + '" stroke="var(--warn)" stroke-width="2.5"/>';
+  s += '<text x="' + X(g.target_m) + '" y="' + (T + 10) + '" text-anchor="middle" class="strong">target</text>';
+  for (let i = 0; i <= 5; i++) {
+    const v = x0 + ((x1 - x0) * i) / 5;
+    s += '<text x="' + X(v) + '" y="' + (H - 24) + '" text-anchor="middle">' + len(v) + '</text>';
+  }
+  s += '<text x="' + (L + pw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">apogee above the pad</text>';
+  s += '<text x="12" y="' + (T + ph / 2) + '" transform="rotate(-90 12 ' + (T + ph / 2) + ')" text-anchor="middle">number of flights</text>';
+  $('apohist').innerHTML = s;
+  const row = (label, i) => '<tr><td>' + label + '</td><td>' + len(i.estimate) + '</td><td>' + len(i.low) + ' to ' + len(i.high) + '</td></tr>';
+  $('apotable').innerHTML = '<tr><th>Apogee above the pad</th><th>Value</th><th>Likely range of that value</th></tr>' +
+    row('Average', ap.mean) + row('Low day (10% of flights are lower)', ap.p10) + row('Middle (half are lower)', ap.p50) + row('High day (10% are higher)', ap.p90);
+}
+
+/* ---------- landing ---------- */
+function drawLanding() {
+  const f = R.footprint, c = R.cloud;
+  if (!f) { $('landintro').textContent = 'Too few flights landed to draw a map.'; $('map').innerHTML = ''; return; }
+  $('landintro').innerHTML = 'Seen from above, north up, with the launch pad at the centre. Each dot is where one simulated flight came down. The rocket tends to fly <b>into</b> the wind on the way up and then drifts <b>with</b> it under the parachutes, so the landings can be on either side of the pad. EDITH reports where the rocket lands but does not judge it against a landing area.';
+  const pts = c.landing.map((p, i) => (p ? { e: p[0], n: p[1], s: c.status[i] } : null)).filter(Boolean);
+  const ring = DATA.ellipse;
+  let reach = 100;
+  pts.forEach((p) => { reach = Math.max(reach, Math.abs(p.e), Math.abs(p.n)); });
+  ring.forEach((p) => { reach = Math.max(reach, Math.abs(p[0]), Math.abs(p[1])); });
+  const steps = [100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000], want = reach / 3.2;
+  const step = steps.find((x) => x >= want) || 10000, outer = Math.ceil((reach * 1.05) / step) * step;
+  const S = 520, C = S / 2, k = (C - 28) / outer, X = (e) => C + e * k, Y = (n) => C - n * k;
+  let s = '';
+  for (let r = step; r <= outer + 1; r += step) {
+    s += '<circle cx="' + C + '" cy="' + C + '" r="' + r * k + '" fill="none" stroke="var(--ring)" stroke-dasharray="3 4"/>';
+    s += '<text x="' + (C + r * k * 0.707 + 3) + '" y="' + (C - r * k * 0.707 - 3) + '">' + far(r) + '</text>';
+  }
+  s += '<line x1="' + (C - outer * k) + '" y1="' + C + '" x2="' + (C + outer * k) + '" y2="' + C + '" stroke="var(--ring)"/><line x1="' + C + '" y1="' + (C - outer * k) + '" x2="' + C + '" y2="' + (C + outer * k) + '" stroke="var(--ring)"/>';
+  s += '<text x="' + C + '" y="14" text-anchor="middle" class="strong">N</text><text x="' + (S - 10) + '" y="' + (C + 4) + '" text-anchor="middle">E</text><text x="10" y="' + (C + 4) + '" text-anchor="middle">W</text><text x="' + C + '" y="' + (S - 6) + '" text-anchor="middle">S</text>';
+  if (ring.length) s += '<polygon points="' + ring.map((p) => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ') + '" fill="var(--accent)" fill-opacity=".07" stroke="var(--fg)" stroke-width="1.8"/>';
+  const col = ['var(--accent)', 'var(--warn)', 'var(--down)'];
+  [0, 1, 2].forEach((st) => pts.filter((p) => p.s === st).forEach((p) => {
+    s += '<circle cx="' + X(p.e).toFixed(1) + '" cy="' + Y(p.n).toFixed(1) + '" r="3" fill="' + col[st] + '" fill-opacity=".6"/>';
+  }));
+  s += '<path d="M' + (C - 7) + ' ' + C + 'h14M' + C + ' ' + (C - 7) + 'v14" stroke="var(--fg)" stroke-width="2.2"/><text x="' + (C + 9) + '" y="' + (C + 16) + '" class="strong">pad</text>';
+  const mx = X(f.mean_east_m.estimate), my = Y(f.mean_north_m.estimate);
+  s += '<path d="M' + mx + ' ' + (my - 6) + 'l6 6l-6 6l-6 -6z" fill="var(--fg)"/><text x="' + (mx + 9) + '" y="' + (my - 7) + '" class="strong">average landing</text>';
+  $('map').innerHTML = s;
+  const d = f.distance_from_pad_m;
+  const fig = (t, v, sub) => '<div class="fig"><div class="d">' + t + '</div><div class="n">' + v + '</div><div class="d">' + sub + '</div></div>';
+  $('landfigs').innerHTML = fig('Half of the flights land within', far(d.p50.estimate), 'of the pad') + fig('Nine in ten land within', far(d.p90.estimate), 'of the pad') +
+    fig('Average landing point', far(Math.hypot(f.mean_east_m.estimate, f.mean_north_m.estimate)), compass(f.mean_east_m.estimate, f.mean_north_m.estimate)) +
+    fig('Furthest of ' + R.runs, far(d.max), 'from the pad');
+  const rw = (label, i) => '<tr><td>' + label + '</td><td>' + far(i.estimate) + '</td><td>' + far(i.low) + ' to ' + far(i.high) + '</td></tr>';
+  $('landtable').innerHTML = '<tr><th>Distance from the pad</th><th>Value</th><th>Likely range</th></tr>' + rw('Half land within', d.p50) + rw('Nine in ten land within', d.p90) + rw('95 in 100 land within', d.p95) +
+    '<tr><td>The 90% ring is about</td><td colspan="2">' + far(f.ellipse90_semi_major_m * 2) + ' by ' + far(f.ellipse90_semi_minor_m * 2) + ', long side pointing ' + Math.round(f.ellipse90_major_axis_bearing_deg) + '° from north</td></tr>';
+}
+
+/* ---------- the rest ---------- */
+function drawNumbers() {
+  const rows = [
+    ['Speed leaving the launch rail', R.rail_exit_speed_m_s, speed, 'at least 15.24 m/s (50 ft/s); 30.48 m/s (100 ft/s) recommended'],
+    ['Fall speed under the drogue parachute', R.drogue_rate_m_s, speed, '20 to 40 m/s (66 to 131 ft/s)'],
+    ['Height the main parachute opens', R.main_deploy_altitude_m, (v) => len(v), 'at most 457 m (1,500 ft) recommended'],
+    ['Speed at landing', R.landing_speed_m_s, (v) => speed(v, 2), 'under 11 m/s (36 ft/s)'],
+    ['Biggest jolt when a parachute opens', R.peak_opening_load_g, (v) => num(v, 1) + ' g', 'assumed limit 15 g'],
+    ['Time from apogee to landing', R.descent_time_s, (v) => num(v / 60, 1) + ' min', '']
+  ].filter((r) => r[1]);
+  $('numbers').innerHTML = '<tr><th>Number</th><th>Typical</th><th>Low to high (10% to 90%)</th><th class="l">IREC</th></tr>' +
+    rows.map((r) => '<tr><td>' + r[0] + '</td><td>' + r[2](r[1].p50.estimate) + '</td><td>' + r[2](r[1].p10.estimate) + ' to ' + r[2](r[1].p90.estimate) + '</td><td class="l">' + r[3] + '</td></tr>').join('');
+}
+function drawChecks() {
+  const rows = A.alerts.filter((a) => a.kind === 'failure' || a.kind === 'warning').filter((a) => !/^any_/.test(a.id));
+  const order = ['failure', 'warning'];
+  rows.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+  $('checks').innerHTML = '<tr><th></th><th class="l">Check</th><th>Chance</th><th>Likely range</th></tr>' + rows.map((a) => {
+    const c = a.chance;
+    return '<tr><td><span class="dot ' + a.level + '"></span></td><td class="l"><b>' + esc(a.title) + '</b><span class="kind">' + (a.kind === 'failure' ? 'IREC rule' : 'IREC advice') + '</span><div class="legend" style="margin:2px 0 0">' + esc(a.text) + '</div></td><td>' + (c.estimate === 0 ? 'none seen' : pct(c.estimate)) + '</td><td>' + (c.estimate === 0 ? 'under ' + pct(c.high) : pct(c.low) + ' to ' + pct(c.high)) + '</td></tr>';
+  }).join('');
+}
+function drawLimits() {
+  $('limits').innerHTML = [
+    '<li><b>Hardware faults are not simulated.</b> EDITH only finds problems that come from the flight itself: speed, stability, wind, parachute loads. It does not model a charge that fails to fire, a flight computer fault, a tangled parachute, a broken shock cord or a motor failure. A low chance of failure here does not mean the rocket is safe.</li>',
+    '<li><b>The inputs are assumptions.</b> The likely ranges only cover the luck of the draw (how many flights were flown) and the small errors from the shortcuts below. They do not cover the inputs being wrong.</li>',
+    '<li><b>One launch condition.</b> Every flight is centred on the "' + esc(DATA.sim) + '" launch condition. The wind speed on the pad is drawn from a curve around that condition\'s wind.</li>',
+    '<li><b>The inputs are drawn independently.</b> In real life some move together (temperature and pressure, wind speed and direction), which could change the spread a little.</li>',
+    '<li><b>Shortcuts for speed.</b> Most climbs are estimated from the fully simulated ones, and parachute descents use a quicker model that leaves out the rocket swinging under the parachute and the shock cord bouncing. Flights close to a limit are re-flown in full, and the batch checks the quick model against the full one (see "How much to trust it").</li>',
+    '<li><b>No landing area.</b> Where the rocket lands is shown, not judged.</li>'
+  ].join('');
+}
+function drawInputs() {
+  $('inputs').innerHTML = '<tr><th>Input</th><th class="l">Curve</th><th class="l">Numbers</th></tr>' + R.inputs.map((r) => '<tr><td>' + esc(r.input) + '</td><td class="l">' + esc(r.curve) + '</td><td class="l">' + esc(r.numbers) + '</td></tr>').join('');
+}
+function drawTrust() {
+  const a = R.audit, c = R.fast_reco_check, e = R.surrogate_error;
+  let h = '<p>' + R.runs + ' flights in ' + R.rounds + ' rounds (' + num(R.seconds, 0) + ' s on ' + R.workers + ' core' + (R.workers === 1 ? '' : 's') + '). It stopped because ' + esc(R.stopped_because) + '.</p>' +
+    '<p>' + R.full_climbs + ' climbs were fully simulated and ' + R.surrogate_climbs + ' were estimated from them; ' + num(a.share_flown_from_surrogate * 100, 0) + '% of the flights shown use an estimated climb. ' + R.reflown_for_closeness_or_audit + ' were re-flown in full because they were close to a limit or as a spot check. In the random spot check, ' + a.random_audit_disagreements + ' of ' + a.random_audit_runs + ' flights got a different pass or fail from the estimate.</p>' +
+    '<p>The estimate of the highest point is typically off by about ' + len(a.error_scale.apogee_m) + '.</p>';
+  if (c) h += '<p><b>Quick descent model against the full one</b> (' + c.runs + ' flights flown both ways): landing within ' + far(c.largest_landing_offset_m) + ' (' + num(c.largest_offset_share_of_drift * 100, 1) + '% of the drift), landing speed within ' + num(c.largest_landing_speed_diff_m_s, 2) + ' m/s, parachute load within ' + num(c.largest_peak_load_diff_percent, 1) + '%, ' + (c.same_pass_fail ? 'the same pass or fail on every flight' : '<b>a different pass or fail on some flight</b>') + '. The quick model took ' + num(c.fast_seconds_per_run, 1) + ' s per flight against ' + num(c.full_seconds_per_run, 1) + ' s.</p>';
+  $('trust').innerHTML = h;
+  $('provenance').textContent = 'Built ' + DATA.generated + (DATA.cached ? ' (the flights were simulated earlier; nothing they depend on has changed since)' : '') + ' · random seed ' + R.settings.seed + ' · site settings: ' + R.site + '.';
+}
+
+/* ---------- the link and the units ---------- */
+function readHash() {
+  const p = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (p.get('units') === 'metric' || p.get('units') === 'imperial') state.units = p.get('units');
+}
+function update() {
+  $('units').value = state.units;
+  history.replaceState(null, '', '#units=' + state.units + (embedded ? '&embed=1' : ''));
+  drawTop(); drawAlerts(); drawApogee(); drawLanding(); drawNumbers(); drawChecks(); drawLimits(); drawInputs(); drawTrust();
+}
+readHash();
+$('units').onchange = () => { state.units = $('units').value; update(); };
+window.addEventListener('hashchange', () => { readHash(); update(); });
+update();
+</script>
+</body>
+</html>

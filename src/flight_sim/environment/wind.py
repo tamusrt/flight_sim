@@ -1,5 +1,6 @@
 """Wind models giving the velocity of the air at an altitude."""
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Annotated
@@ -95,18 +96,42 @@ class LayeredWind(WindModel, UnitChecked):
 
     def speed_and_azimuth(self, height_m: float) -> tuple[float, float]:
         """Speed in m/s and from-azimuth in radians at a height above the pad."""
+        base_speed, base_azimuth = self._base()
         h = max(height_m, 0.0)
-        ramp = 1.0 - np.exp(-h / self.ramp_m) if self.ramp_m > 0 else 1.0
+        ramp = 1.0 - math.exp(-h / self.ramp_m) if self.ramp_m > 0 else 1.0
         wave = sum(
-            a * np.sin(2 * np.pi * h / length + p) for length, a, p in self.speed_layers
+            a * math.sin(2 * math.pi * h / length + p)
+            for length, a, p in self.speed_layers
         )
         turn = sum(
-            b * np.sin(2 * np.pi * h / length + p)
+            b * math.sin(2 * math.pi * h / length + p)
             for length, b, p in self.direction_layers
         )
-        speed = float(self.speed.m_as("m/s")) * max(1.0 + ramp * wave, 0.0)
-        azimuth = float(self.from_azimuth.m_as("rad")) + np.radians(ramp * turn)
+        speed = base_speed * max(1.0 + ramp * wave, 0.0)
+        azimuth = base_azimuth + math.radians(ramp * turn)
         return speed, float(azimuth)
+
+    def _base(self) -> tuple[float, float]:
+        """The base speed in m/s and azimuth in radians, converted once.
+
+        Converting through the unit library on every lookup costs more than
+        the rest of the wind, and a descent looks the wind up very often, so
+        the numbers are kept beside the quantities they came from.
+        """
+        cached = self.__dict__.get("_base_cache")
+        if (
+            cached is None
+            or cached[0] is not self.speed
+            or cached[1] is not self.from_azimuth
+        ):
+            cached = (
+                self.speed,
+                self.from_azimuth,
+                float(self.speed.m_as("m/s")),
+                float(self.from_azimuth.m_as("rad")),
+            )
+            self.__dict__["_base_cache"] = cached
+        return cached[2], cached[3]
 
     def velocity(self, altitude_m: float) -> np.ndarray:
         """Return the wind velocity in the world frame in m/s at an altitude."""

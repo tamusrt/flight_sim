@@ -78,6 +78,12 @@
   .irectab td.ok { color:var(--up); } .irectab td.warn { color:var(--warn); } .irectab td.bad { color:var(--down); font-weight:600; } .irectab td.na { color:var(--muted); }
   .irectab td span { color:var(--fg); font-weight:400; margin-left:4px; }
   .warn.good { border-color:var(--ok); }
+  .edithcard { border:1px solid var(--line); border-left-width:4px; border-radius:8px; padding:10px 14px; margin:0 0 12px; background:var(--card); }
+  .edithcard.red { border-left-color:var(--down); } .edithcard.amber { border-left-color:var(--warn); } .edithcard.green { border-left-color:var(--ok); }
+  .edithcard h3 { margin:0 0 2px; font-size:15px; } .edithcard .eh { color:var(--muted); font-size:12.5px; margin:0 0 8px; }
+  .edithcard .ef { display:flex; flex-wrap:wrap; gap:6px 24px; margin:6px 0; } .edithcard .ef div { min-width:140px; }
+  .edithcard .ef b { font-size:20px; font-variant-numeric:tabular-nums; } .edithcard .ef span { display:block; color:var(--muted); font-size:12px; }
+  .edithcard ul { margin:6px 0; padding-left:18px; } .edithcard li.red::marker { color:var(--down); } .edithcard li.amber::marker { color:var(--warn); }
   h2.sec { font-size:15px; margin:22px 0 4px; border-bottom:1px solid var(--line); padding-bottom:4px; }
   table { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; }
   th, td { text-align:right; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -133,6 +139,7 @@
   <main id="main">
    <section id="view-pred">
     <div class="warnings" id="warnings"></div>
+    <div class="edithcard" id="edithcard" hidden></div>
     <div class="row" id="metrics"></div>
     <div class="chartbox"><div id="plot" style="position:absolute;inset:10px"></div><div class="empty" id="empty" hidden></div></div>
     <p class="legend" id="chartnote"></p>
@@ -212,6 +219,7 @@
 <script>
 "use strict";
 const DATA = /*DATA*/null;
+const EDITH = /*EDITHSUMMARY*/null;   // the EDITH summary, added after this page is built (only when EDITH is on)
 const W = WhatIf;
 const $ = (id) => document.getElementById(id);
 const FT = 0.3048, IN = 0.0254, LB = 0.45359237, G0 = 9.80665;
@@ -870,12 +878,30 @@ function tellParent(type) {
 }
 function shareSel() { tellParent('jarvis-sel'); }
 
+/* ---------- the EDITH card: the chances from the many-flight simulation, when it has been run ---------- */
+function drawEdithCard() {
+  const box = $('edithcard'); if (!EDITH) { box.hidden = true; return; }
+  const pct = (x) => { const v = x * 100; return v === 0 ? '0%' : v < 0.1 ? '<0.1%' : v < 10 ? v.toFixed(1) + '%' : Math.round(v) + '%'; };
+  const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const chance = (c) => (c.estimate === 0 ? 'under ' + pct(c.high) : pct(c.estimate));
+  const range = (c) => (c.estimate === 0 ? 'none seen in ' + EDITH.runs + ' flights' : 'likely ' + pct(c.low) + ' to ' + pct(c.high));
+  box.hidden = false; box.className = 'edithcard ' + EDITH.headline.level;
+  box.innerHTML = '<h3>EDITH: ' + EDITH.runs + ' simulated flights</h3>' +
+    '<p class="eh">EDITH is the team\'s Monte Carlo simulation: it flies this rocket many times with the wind, weather and motor varied a little each time, and counts what happens. The conditions are assumed, not measured.</p>' +
+    '<div class="ef"><div><b>' + chance(EDITH.any_failure.chance) + '</b><span>chance of any IREC failure (' + range(EDITH.any_failure.chance) + ')</span></div>' +
+    '<div><b>' + chance(EDITH.apogee.chance) + '</b><span>chance the apogee is within range of the target (' + range(EDITH.apogee.chance) + ')</span></div></div>' +
+    '<p style="margin:4px 0"><b>' + esc(EDITH.headline.text) + '</b></p>' +
+    (EDITH.top.length ? '<ul>' + EDITH.top.map((a) => '<li class="' + a.level + '">' + esc(a.title) + (a.chance ? ': ' + chance(a.chance) : '') + '</li>').join('') + '</ul>' : '') +
+    '<a id="edithlink" href="' + EDITH.link + '">See every chance, the apogee spread and the landing map →</a>';
+  if (embedded) $('edithlink').onclick = (ev) => { ev.preventDefault(); try { window.top.location.hash = '#tab=edith'; } catch (e) { location.href = EDITH.link; } };
+}
+
 /* ---------- drawing everything ---------- */
 function update() {
   $('units').value = state.units; $('stab').value = state.stab;
   assignColors(); writeHash();
   if (!showTab()) return;
-  refreshNav(); buildMetrics(); drawChart(); drawWeather(); drawClimb(); drawDescent(); drawMore(); geometryTable(); drawNotes();
+  drawEdithCard(); refreshNav(); buildMetrics(); drawChart(); drawWeather(); drawClimb(); drawDescent(); drawMore(); geometryTable(); drawNotes();
   if (plotDiv.data && Plotly.Plots) requestAnimationFrame(() => Plotly.Plots.resize(plotDiv));
 }
 

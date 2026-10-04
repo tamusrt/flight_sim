@@ -31,6 +31,7 @@ from flight_sim.descent import (
     _Descent,
     _nose_along,
     air_at,
+    launch_elevation_m,
 )
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.units import vector
@@ -192,7 +193,7 @@ class _SwingDescent(_Descent):
         wind = ground_wind + self.gust
         pull = self.config.truth.gravity.magnitude(
             self.latitude_rad,
-            float(self.config.truth.launch_elevation.m_as("m")) + height,
+            launch_elevation_m(self.config.truth) + height,
         )
         gravity = np.array([-pull, 0.0, 0.0])
         relative = y[3:6] - wind

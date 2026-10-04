@@ -29,6 +29,7 @@ as zero.
 
 import math
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 import numpy as np
 import r3f
@@ -42,7 +43,7 @@ from flight_sim.vehicle.rocket_state import RocketState
 
 _STANDARD_GRAVITY = 9.80665  # m/s**2, for loads in g
 _TURN_TO_HANG_S = 2.0  # Display only: time to swing under the first canopy
-_LOAD_WINDOW_S = 1.0  # Time after full inflation still counted as opening
+LOAD_WINDOW_S = 1.0  # Time after full inflation still counted as opening
 _OPENING_STEP_S = 0.002  # Longest step while a canopy is opening
 # Overinflation: right after it fills, a canopy overshoots its steady drag area
 # by about 10 percent and settles within half a fill distance (Knacke,
@@ -267,6 +268,26 @@ class DescentResult:
     landed: bool
 
 
+def inflation_fractions(progress: np.ndarray) -> np.ndarray:
+    """Share of full drag area at each progress through the fill distance.
+
+    The same law as ``_Opening.open_fraction`` (squared growth over the fill
+    distance, then the overinflation bulge), for many points at once. A
+    progress of 1 is the end of the fill distance.
+    """
+    p = np.asarray(progress, dtype=float)
+    grow = np.maximum(p, 0.0) ** 2
+    past = np.clip((p - 1.0) / _OVERSHOOT_SPAN, 0.0, 1.0)
+    bulge = 1.0 + _OVERINFLATION * np.sin(np.pi * past)
+    settled = np.where(past >= 1.0, 1.0, bulge)
+    result: np.ndarray = np.where(p <= 1.0, grow, settled)
+    return result
+
+
+# How far past the fill distance a canopy is still settling (in fill distances)
+SETTLING_SPAN = 1.0 + _OVERSHOOT_SPAN
+
+
 @dataclass
 class _Opening:
     """A released canopy while the descent is integrated."""
@@ -297,7 +318,22 @@ class _Opening:
         """Whether a time since apogee is in its opening-load window."""
         if elapsed_s < self.time_s:
             return False
-        return self.inflated_s is None or elapsed_s <= self.inflated_s + _LOAD_WINDOW_S
+        return self.inflated_s is None or elapsed_s <= self.inflated_s + LOAD_WINDOW_S
+
+
+def launch_elevation_m(truth: Any) -> float:
+    """The pad's height above sea level in metres, converted once per quantity.
+
+    The conversion through the unit library is slow next to the rest of a
+    descent step, and a descent asks for it many thousands of times, so the
+    plain number is kept beside the quantity it came from.
+    """
+    quantity = truth.launch_elevation
+    cached = truth.__dict__.get("_elevation_cache")
+    if cached is None or cached[0] is not quantity:
+        cached = (quantity, float(quantity.m_as("m")))
+        truth.__dict__["_elevation_cache"] = cached
+    return float(cached[1])
 
 
 def air_at(
@@ -305,7 +341,7 @@ def air_at(
 ) -> tuple[AtmosphereConditions, np.ndarray]:
     """Air conditions and wind at a height above the pad, in m."""
     truth = config.truth
-    altitude = float(truth.launch_elevation.m_as("m")) + height_m
+    altitude = launch_elevation_m(truth) + height_m
     return truth.atmosphere.conditions(altitude), truth.wind.velocity(altitude)
 
 
@@ -345,7 +381,7 @@ class _Descent:
         acceleration = self.drag_acceleration(y)
         truth = self.config.truth
         acceleration[0] -= truth.gravity.magnitude(
-            self.latitude_rad, float(truth.launch_elevation.m_as("m")) + float(y[0])
+            self.latitude_rad, launch_elevation_m(truth) + float(y[0])
         )
         _, wind = self.air(float(y[0]))
         airspeed = float(np.linalg.norm(y[3:6] - wind))

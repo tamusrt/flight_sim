@@ -1,0 +1,296 @@
+"""Run EDITH for one rocket of the dynamics site and add it to that rocket's pages.
+
+    python -m flight_sim.whatif.edith_site --ork ... --aero ... --motor ... --out site/predictions
+
+This runs after the JARVIS predictions page and VISION are built (``flight_sim.whatif.build``)
+and adds to them:
+
+* ``<out>/edith/index.html``: the EDITH page, with every chance and picture;
+* a summary card on ``<out>/index.html`` (the JARVIS predictions page);
+* the cloud of simulated flights in the VISION page of the default launch condition,
+  with a switch to show where the flights peaked or came down.
+
+EDITH is the team's Monte Carlo simulation: it flies the rocket many times with the wind,
+weather and motor strength varied a little each time, and counts what happens. It takes a
+few minutes, so the result is kept (``--cache``) and reused until the design, the aero
+table, the motor, the site settings or the simulator code change. Whatever goes wrong here
+leaves the JARVIS pages as they were: this program exits with an error and changes nothing.
+"""
+
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import time
+from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import flight_sim
+from flight_sim.edith import alerts
+from flight_sim.edith.batch import Settings, run_batch
+from flight_sim.edith.inputs import SiteConfig
+from flight_sim.edith.run import RocketSpec
+from flight_sim.ork import load_ork
+
+_HERE = Path(__file__).parent
+_SUMMARY_MARK = "/*EDITHSUMMARY*/null"
+_CLOUD_MARK = "<!--EDITH-->"
+_ELLIPSE_POINTS = 72
+_TOP_ALERTS = 4
+
+# The code whose change changes the results; the pages and this file do not
+_SKIP_DIRS = {"whatif", "__pycache__"}
+
+
+def code_digest() -> str:
+    """A short fingerprint of the simulator code, so a code change reruns EDITH."""
+    root = Path(flight_sim.__file__).parent
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*.py")):
+        if _SKIP_DIRS & set(path.relative_to(root).parts):
+            continue
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def cache_key(args: argparse.Namespace, site: SiteConfig, settings: Settings) -> str:
+    """What the result depends on: the design files, the settings and the code."""
+    digest = hashlib.sha256()
+    for name in ("ork", "aero", "motor"):
+        digest.update(Path(getattr(args, name)).read_bytes())
+    digest.update(str(args.sim).encode())
+    digest.update(json.dumps(asdict(site), sort_keys=True).encode())
+    keep = {
+        k: v
+        for k, v in asdict(settings).items()
+        if k not in ("time_limit_s", "workers")
+    }
+    digest.update(json.dumps(keep, sort_keys=True).encode())
+    digest.update(code_digest().encode())
+    return digest.hexdigest()[:20]
+
+
+def ellipse(report: dict[str, Any]) -> list[list[float]]:
+    """Points (east, north in metres) round the 90% landing ellipse; empty without one."""
+    foot = report.get("footprint")
+    if not foot:
+        return []
+    cx = foot["mean_east_m"]["estimate"]
+    cy = foot["mean_north_m"]["estimate"]
+    a = foot["ellipse90_semi_major_m"]
+    b = foot["ellipse90_semi_minor_m"]
+    bearing = math.radians(foot["ellipse90_major_axis_bearing_deg"])
+    major = (math.sin(bearing), math.cos(bearing))  # (east, north)
+    minor = (math.cos(bearing), -math.sin(bearing))
+    points = []
+    for i in range(_ELLIPSE_POINTS):
+        t = 2.0 * math.pi * i / _ELLIPSE_POINTS
+        u, v = a * math.cos(t), b * math.sin(t)
+        points.append(
+            [
+                round(cx + u * major[0] + v * minor[0], 1),
+                round(cy + u * major[1] + v * minor[1], 1),
+            ]
+        )
+    return points
+
+
+def page_data(
+    report: dict[str, Any], name: str, sim: str, cached: bool
+) -> dict[str, Any]:
+    """Everything the EDITH page needs, as one JSON-able dict."""
+    shown = {k: v for k, v in report.items() if k != "footprint"}
+    foot = dict(report["footprint"] or {})
+    foot.pop("points_east_north_m", None)  # the cloud has the landing points
+    shown["footprint"] = foot or None
+    return {
+        "name": name,
+        "sim": sim,
+        "generated": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
+        "cached": cached,
+        "report": shown,
+        "alerts": alerts.build(report),
+        "ellipse": ellipse(report),
+    }
+
+
+def summary(data: dict[str, Any]) -> dict[str, Any]:
+    """The small version of the result for the card on the JARVIS page."""
+    report, built = data["report"], data["alerts"]
+    first = [a for a in built["alerts"] if a["level"] != "green"][:_TOP_ALERTS]
+    return {
+        "headline": built["headline"],
+        "top": first,
+        "any_failure": next(a for a in built["alerts"] if a["id"] == "any_failure"),
+        "apogee": next(a for a in built["alerts"] if a["id"] == "apogee_range"),
+        "runs": report["runs"],
+        "sim": data["sim"],
+        "link": "edith/index.html",
+        "generated": data["generated"],
+    }
+
+
+def write_page(data: dict[str, Any], out_dir: Path) -> Path:
+    """Write ``edith/index.html`` with the data inlined."""
+    template = (_HERE / "edith_page.html").read_text(encoding="utf-8")
+    page = template.replace("/*DATA*/null", json.dumps(data, separators=(",", ":")))
+    target = out_dir / "edith" / "index.html"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(page, encoding="utf-8")
+    return target
+
+
+def patch_jarvis(out_dir: Path, card: dict[str, Any]) -> bool:
+    """Put the summary card's data into the JARVIS predictions page."""
+    page = out_dir / "index.html"
+    if not page.is_file():
+        return False
+    text = page.read_text(encoding="utf-8")
+    if _SUMMARY_MARK not in text:
+        return False
+    page.write_text(
+        text.replace(_SUMMARY_MARK, json.dumps(card, separators=(",", ":"))),
+        encoding="utf-8",
+    )
+    return True
+
+
+def _viewer_files(out_dir: Path) -> list[Path]:
+    """The VISION pages of the default launch condition (the flights EDITH is centred on)."""
+    manifest = out_dir / "viewer" / "sims.json"
+    files = [out_dir / "viewer" / "index.html"]
+    if manifest.is_file():
+        info = json.loads(manifest.read_text(encoding="utf-8"))
+        default = info.get("sims", {}).get(info.get("default", ""))
+        if default:
+            files.append(out_dir / "viewer" / default)
+    return [f for f in dict.fromkeys(files) if f.is_file()]
+
+
+def cloud_data(data: dict[str, Any]) -> dict[str, Any]:
+    """The flights as VISION draws them."""
+    report = data["report"]
+    cloud, rng = report["cloud"], report["apogee_range"]
+    return {
+        "n": cloud["n"],
+        "apogee": cloud["apogee"],
+        "landing": cloud["landing"],
+        "status": cloud["status"],
+        "range": cloud["range"],
+        "target_m": rng["target_m"],
+        "low_m": rng["low_m"],
+        "high_m": rng["high_m"],
+        "ellipse": data["ellipse"],
+    }
+
+
+def patch_viewers(out_dir: Path, cloud: dict[str, Any]) -> int:
+    """Give the VISION pages of the default launch condition the cloud of flights."""
+    done = 0
+    for path in _viewer_files(out_dir):
+        text = path.read_text(encoding="utf-8")
+        if _CLOUD_MARK not in text:
+            continue
+        # viewer/index.html and viewer/<name>/index.html are one folder apart
+        link = (
+            "../edith/index.html"
+            if path.parent.name == "viewer"
+            else "../../edith/index.html"
+        )
+        script = (
+            "<script>window.EDITH_CLOUD="
+            + json.dumps({**cloud, "link": link}, separators=(",", ":"))
+            + ";</script>"
+        )
+        path.write_text(text.replace(_CLOUD_MARK, script), encoding="utf-8")
+        done += 1
+    return done
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    """The batch's report: from the cache when nothing it depends on has changed."""
+    site = SiteConfig.load(args.site) if args.site else SiteConfig()
+    settings = Settings(
+        round_size=args.round_size,
+        max_rounds=args.max_rounds,
+        time_limit_s=args.minutes * 60.0,
+        workers=args.workers,
+    )
+    key = cache_key(args, site, settings)
+    cache = Path(args.cache) / f"edith-{key}.json" if args.cache else None
+    if cache is not None and cache.is_file():
+        print(
+            f"EDITH: reusing the result kept for these inputs ({cache.name})",
+            flush=True,
+        )
+        return {"report": json.loads(cache.read_text(encoding="utf-8")), "cached": True}
+    spec = RocketSpec("ork", args.ork, args.aero, args.motor, args.sim, args.name)
+    started = time.perf_counter()
+    report = run_batch(spec, site, settings)
+    print(
+        f"EDITH: {report['runs']} flights in {time.perf_counter() - started:.0f} s",
+        flush=True,
+    )
+    finished = report["stopped_because"] != "reached the time limit"
+    if cache is not None and finished:  # a result cut short is not kept
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        for old in cache.parent.glob("edith-*.json"):
+            old.unlink()
+        cache.write_text(json.dumps(report), encoding="utf-8")
+    return {"report": report, "cached": False}
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Command line entry."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ork", required=True)
+    parser.add_argument("--aero", required=True)
+    parser.add_argument("--motor", required=True)
+    parser.add_argument("--sim", default=None)
+    parser.add_argument("--name", default="SRT14")
+    parser.add_argument("--out", required=True, help="the rocket's predictions folder")
+    parser.add_argument(
+        "--site", default=None, help="site settings (JSON); placeholders if left out"
+    )
+    parser.add_argument(
+        "--cache", default=None, help="folder that keeps the result between builds"
+    )
+    parser.add_argument(
+        "--minutes",
+        type=float,
+        default=10.0,
+        help="stop starting new rounds after this long",
+    )
+    parser.add_argument("--round-size", type=int, default=64)
+    parser.add_argument("--max-rounds", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=None)
+    args = parser.parse_args(argv)
+    out = Path(args.out)
+    if not (out / "index.html").is_file():
+        raise SystemExit(
+            f"{out}: build the JARVIS predictions page first (flight_sim.whatif.build)"
+        )
+    # the launch condition the page calls the default; EDITH is centred on it
+    sims = load_ork(args.ork).sims
+    args.sim = args.sim if args.sim in sims else next(iter(sims))
+    result = run(args)
+    data = page_data(result["report"], args.name, args.sim, result["cached"])
+    page = write_page(data, out)
+    carded = patch_jarvis(out, summary(data))
+    viewers = patch_viewers(out, cloud_data(data))
+    print(
+        f"EDITH page: {page} (summary on the JARVIS page: {'yes' if carded else 'no'}, "
+        f"VISION pages with the flights: {viewers})",
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    main()

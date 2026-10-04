@@ -123,6 +123,8 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <label class="chip" id="conjWrap" hidden title="Use the conjugate of the attitude quaternion in the loaded log. Try this if the rocket turns the wrong way."><input type="checkbox" id="conj">Conjugate q</label>
       <label class="btn" title="Replay a flight log (JSON) instead of the simulation">Load telemetry<input type="file" id="file" accept=".json,application/json" hidden></label>
       <label class="btn" id="realBtn" hidden>Showing simulation</label>
+      <div class="seg" id="spread" hidden title="EDITH is the team's many-flight simulation. Show where its simulated flights peaked or came down, around the flight being replayed."><button data-s="off" class="on">No spread</button><button data-s="apogee">EDITH apogee spread</button><button data-s="landing">EDITH landing spread</button></div>
+      <a class="btn" id="edLink" style="text-decoration:none" href="#" hidden title="Open the EDITH page: every chance, the apogee spread and the landing map">EDITH page</a>
       <label class="btn" id="orBtn" hidden title="Add OpenRocket's simulated flight path for the same launch condition, from the latest results on the History tab">Load OpenRocket</label>
     </div>
   </header>
@@ -131,6 +133,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
     <div class="stage" id="stage">
       <canvas id="cv"></canvas>
       <div class="note" id="scaleNote"></div>
+      <div class="note" id="edNote" style="bottom:22px;max-width:92%;white-space:normal" hidden></div>
       <div class="banner" id="banner" hidden></div>
       <div class="nogl" id="nogl" hidden>WebGL isn't available here, so the 3D view can't draw. The readouts on the right still work.</div>
     </div>
@@ -180,7 +183,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
   </aside>
 </div>
 
-<!--TELEMETRY-->
+<!--TELEMETRY--><!--EDITH-->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (function(){
@@ -619,6 +622,7 @@ function getFrame(tt){
 /* the clock starts 5 s before the data does: the rocket sits on the pad until t = 0 (display only) */
 var TMIN=-5, tNow=0, tMax=1, prevT=0, playing=false, rate=1, last=performance.now(), view='follow';
 var cam={az:0.62,azT:0.62,el:0.3,elT:0.3,dist:99,distT:99,tgt:new V3(),pan:new V3()}, wideC=new V3(), wideD=6000;
+var spreadFrame=null;   /* while an EDITH spread is shown: {c: centre, d: distance, el: elevation} for the whole-flight view */
 /* what the recovery is doing at a time: the latest separation or canopy event, which also reads for a drogue then a main */
 function recoPhase(t){ var st=null; events.forEach(function(e){ if(e.t>t) return; if(e.k==='charge') st='sep'; else if(e.k==='deploy') st=e; else if(e.k==='disreef') st='open'; });
   if(st===null) return 'Free fall ↓'; if(st==='sep') return 'Separation ↓'; if(st==='open') return 'Under main ↓';
@@ -715,7 +719,7 @@ function setDataset(d){
   applyTheme();
   var ap=new V3(ds.pos[3*apoIdx],ds.pos[3*apoIdx+1],ds.pos[3*apoIdx+2]), im=new V3(ds.pos[3*(d.N-1)],ds.pos[3*(d.N-1)+1],ds.pos[3*(d.N-1)+2]);
   apoMk.position.copy(ap); impMk.position.copy(im); apoLb.position.copy(ap); impLb.position.copy(im);
-  wideC.set(maxA*0.5,ap.y*0.5,ap.z*0.5); wideD=Math.max(maxA*2.3,900);
+  wideC.set(maxA*0.5,ap.y*0.5,ap.z*0.5); wideD=Math.max(maxA*2.3,900); if(window.__edithFrame) window.__edithFrame();
   var w=new V3(0,d.wind[1],d.wind[2]); windArrow.userData.dir=w.lengthSq()>0.01?w.clone().normalize():null; windArrow.userData.mag=w.length();
   $('conjWrap').hidden=d.demo;
 }
@@ -736,7 +740,7 @@ function followDist(apart){
 }
 function setView(v){
   view=v; cam.pan.set(0,0,0); document.querySelectorAll('#views button').forEach(function(b){b.classList.toggle('on',b.dataset.v===v)});
-  if(v==='follow'){cam.distT=followDist(false);cam.elT=0.3;cam.azT=0.62;} else {cam.distT=wideD;cam.elT=0.18;cam.azT=0.9;}
+  if(v==='follow'){cam.distT=followDist(false);cam.elT=0.3;cam.azT=0.62;} else {cam.distT=spreadFrame?spreadFrame.d:wideD;cam.elT=spreadFrame?spreadFrame.el:0.18;cam.azT=0.9;}
 }
 var ptrs=new Map(), pinch=0;
 function pd(){var a=Array.from(ptrs.values());return Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)}
@@ -775,6 +779,58 @@ $('mult').onchange=function(){ var v=parseFloat(this.value); if(!(v>0)) v=scaleM
   if(view==='follow'){ var f=Math.pow(scaleMult/was,1-SEEN_POWER); cam.dist*=f; cam.distT*=f; } };
 $('rate').onchange=function(){rate=parseFloat(this.value)};
 document.querySelectorAll('#views button').forEach(function(b){b.onclick=function(){setView(b.dataset.v)}});
+/* ---------- EDITH: the cloud of simulated flights (only when the page was built with EDITH) ---------- */
+(function(){
+  var EC=window.EDITH_CLOUD; if(!EC||!EC.n) return;
+  var grp=new THREE.Group(), apPts=null, lnPts=null, rings=null, mode='off';
+  root.add(grp);
+  function pts(positions,colors,size){
+    var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3)); g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+    var p=new THREE.Points(g,new THREE.PointsMaterial({size:size,sizeAttenuation:false,vertexColors:true,transparent:true,opacity:.8})); p.frustumCulled=false; p.visible=false; grp.add(p); return p;
+  }
+  function rgb(hex,out){ out.push(((hex>>16)&255)/255,((hex>>8)&255)/255,(hex&255)/255); }
+  /* sim coordinates: X up, Y east, Z north; the flights' points are [east, north, height] or [east, north] */
+  var ap=[],apc=[],ln=[],lnc=[];
+  var RANGE=[0x6f9bd0,0x8fbf8f,0xd9a56f], STATUS=[0x6f9bd0,0xd9bd7a,0xe0606a];   /* below / within / above; none / warning / failure */
+  var ax0=0,ax1=0,ay0=0,ay1=0,az0=0,az1=0,hmax=0;
+  EC.apogee.forEach(function(p,i){
+    ap.push(p[2],p[0],p[1]); rgb(RANGE[EC.range[i]+1],apc);
+    ax0=Math.min(ax0,p[2]);ax1=Math.max(ax1,p[2]); ay0=Math.min(ay0,p[0]);ay1=Math.max(ay1,p[0]); az0=Math.min(az0,p[1]);az1=Math.max(az1,p[1]); hmax=Math.max(hmax,Math.abs(p[0]),Math.abs(p[1]));
+  });
+  var ly0=0,ly1=0,lz0=0,lz1=0;
+  EC.landing.forEach(function(p,i){ if(!p) return; ln.push(0.5,p[0],p[1]); rgb(STATUS[EC.status[i]],lnc); ly0=Math.min(ly0,p[0]);ly1=Math.max(ly1,p[0]); lz0=Math.min(lz0,p[1]);lz1=Math.max(lz1,p[1]); });
+  EC.ellipse.forEach(function(p){ ly0=Math.min(ly0,p[0]);ly1=Math.max(ly1,p[0]); lz0=Math.min(lz0,p[1]);lz1=Math.max(lz1,p[1]); });
+  apPts=pts(ap,apc,5); lnPts=pts(ln,lnc,4.5);
+  /* the 90% landing outline on the ground, and flat rings at the target apogee and the edges of its range */
+  var lines=new THREE.Group(); lines.visible=false; grp.add(lines);
+  function loop(vs,color,op){ var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(vs,3)); var l=new THREE.LineLoop(g,new THREE.LineBasicMaterial({color:color,transparent:true,opacity:op})); l.frustumCulled=false; return l; }
+  var el=[]; EC.ellipse.forEach(function(p){ el.push(0.5,p[0],p[1]); });
+  var outline=loop(el,0xe6e6e0,0.95); outline.visible=false; grp.add(outline);
+  var ringR=Math.max(hmax*1.15,300), ringsG=new THREE.Group(); ringsG.visible=false; grp.add(ringsG);
+  [[EC.low_m,0.35],[EC.target_m,0.95],[EC.high_m,0.35]].forEach(function(h){ var v=[]; for(var i=0;i<72;i++){ var a=i/72*TAU; v.push(h[0],ringR*Math.cos(a),ringR*Math.sin(a)); } ringsG.add(loop(v,0xd9bd7a,h[1])); });
+  function frame(m){
+    if(m==='apogee'){ var sy=Math.max(ay1-ay0,az1-az0,1); var c=new V3((ax0+ax1)/2,(ay0+ay1)/2,(az0+az1)/2);
+      return {c:c,d:Math.max(Math.max(ax1-Math.min(ax0,0),sy)*2.4,900),el:0.18}; }
+    var c2=new V3(0,(ly0+ly1)/2,(lz0+lz1)/2); return {c:c2,d:Math.max(Math.max(ly1-ly0,lz1-lz0,200)*2.3,900),el:1.05};
+  }
+  var NOTES={
+    apogee:'EDITH: each dot is where one of '+EC.n+' simulated flights peaked. Green: within range of the target ('+fmt(EC.low_m,0)+' to '+fmt(EC.high_m,0)+' m above the pad). Blue: too low. Amber: too high. Rings: the target and the edges of its range. Conditions are assumed.',
+    landing:'EDITH: each dot is where one of '+EC.n+' simulated flights came down. Blue: no alert. Amber: IREC warning. Red: IREC failure. The outline holds 90% of the landings. Conditions are assumed.'
+  };
+  function setSpread(m){
+    mode=m; apPts.visible=m==='apogee'; ringsG.visible=m==='apogee'; lnPts.visible=m==='landing'; outline.visible=m==='landing';
+    spreadFrame=m==='off'?null:frame(m);
+    document.querySelectorAll('#spread button').forEach(function(b){ b.classList.toggle('on',b.dataset.s===m); });
+    var n=$('edNote'); n.hidden=m==='off'; n.textContent=NOTES[m]||'';
+    if(m!=='off') setView('wide');
+  }
+  window.__edithFrame=function(){ if(mode!=='off') spreadFrame=frame(mode); };
+  $('spread').hidden=false;
+  document.querySelectorAll('#spread button').forEach(function(b){ b.onclick=function(){ setSpread(b.dataset.s); }; });
+  var lk=$('edLink'); lk.hidden=false; lk.href=EC.link;
+  if(window.top!==window.self) lk.onclick=function(e){ e.preventDefault(); try{ window.top.location.hash='#tab=edith'; }catch(err){ location.href=EC.link; } };
+  window.__viewerSpread=setSpread;
+})();
 document.querySelectorAll('input[data-k]').forEach(function(c){c.onchange=function(){ vis[c.dataset.k]=c.checked; G[c.dataset.k].visible=c.checked; }});
 $('conj').onchange=function(){ if(rawTel){ var keep=tNow; setDataset(fromTelemetry(rawTel.j,$('conj').checked,rawTel.name)); tNow=Math.min(keep,tMax); } };
 $('file').onchange=function(){
@@ -1045,7 +1101,7 @@ function draw(dtReal){
   /* the view is centred on the middle of the rocket as drawn (the aft body once the nose has come off), exactly, with no
      lag, so neither the scale nor the playback speed moves it; the pan adds to that */
   if(view==='follow'){ cam.tgt.copy(pos).addScaledVector(F.xb,(cg-(sep?(VEH.sep+VEH.length)/2:VEH.length/2))*sc); }
-  else cam.tgt.lerp(wideC,k);
+  else cam.tgt.lerp(spreadFrame?spreadFrame.c:wideC,k);
   var tt=s2t(w1.copy(cam.tgt).add(cam.pan),new V3()), d=cam.dist;
   camera.position.set(tt.x+d*Math.cos(cam.el)*Math.sin(cam.az), tt.y+d*Math.sin(cam.el), tt.z+d*Math.cos(cam.el)*Math.cos(cam.az));
   /* the camera stays above the ground (a little over it at the lowest), so the ground is never seen from underneath */
@@ -1202,7 +1258,7 @@ Object.keys(vis).forEach(function(k){ G[k].visible=vis[k]; });
 tNow=-2; prevT=tNow; /* opens 2 s before launch */
 setView('follow'); cam.dist=cam.distT; /* and starts at its framing, with no zoom in from far away */
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
-window.__viewer={set:function(t){tNow=t;prevT=t},view:setView,cam:cam,camera:camera,rocketLength:ROCKET_LEN,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
+window.__viewer={spread:function(m){ if(window.__viewerSpread) window.__viewerSpread(m); },set:function(t){tNow=t;prevT=t},view:setView,cam:cam,camera:camera,rocketLength:ROCKET_LEN,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
 /* ---------- OpenRocket's flight path for the same launch condition ----------
    On the dynamics site the History tab keeps OpenRocket's newest run of every simulation (data.json lists them,
    flights/<id>.js holds the time series). Loading it here, rather than copying it in when this page is built,
