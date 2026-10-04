@@ -31,6 +31,7 @@ from xml.etree import ElementTree as ET
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
+from flight_sim import tumble
 from flight_sim.__main__ import (
     get_default_config,
     get_launch_state,
@@ -38,6 +39,7 @@ from flight_sim.__main__ import (
 )
 from flight_sim.descent import DescentResult, ReefedParachute, air_at, simulate_descent
 from flight_sim.events import APOGEE
+from flight_sim.flight_computer import _eject, _retime
 from flight_sim.integration import adaptive_step
 from flight_sim.motor_file import load_motor
 from flight_sim.ork import OrkRocket, SavedSim, load_ork, saved_motor
@@ -223,6 +225,31 @@ def _landing(descent: DescentResult, mass_kg: float) -> dict[str, Any]:
             {"name": d.name, "t": round(d.time_s, 2), "alt": round(d.altitude_m, 1)}
             for d in descent.deployments
         ],
+        **_stages(descent),
+    }
+
+
+def _stages(descent: DescentResult) -> dict[str, Any]:
+    """Drogue descent rate and main deployment altitude, for the IREC checks.
+
+    With two or more canopy events, the drogue rate is the vertical speed just before
+    the last opens (the drogue has settled by then); the main opens at the last
+    one's altitude. With one, there is no drogue and the main opens at the first.
+    """
+    deps = descent.deployments
+    if not deps:
+        return {"drogueV": None, "mainAlt": None}
+    if len(deps) < 2:
+        return {"drogueV": None, "mainAlt": round(deps[0].altitude_m, 1)}
+    t_main = deps[-1].time_s
+    before = [
+        abs(float(s.velocity.m_as("m/s")[0]))
+        for t, s in zip(descent.times_s, descent.states, strict=True)
+        if t < t_main - 0.5
+    ]
+    return {
+        "drogueV": round(before[-1], 2) if before else None,
+        "mainAlt": round(deps[-1].altitude_m, 1),
     }
 
 
@@ -389,7 +416,7 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
     series = climb.series()
     if profile.scheme is not None and hit is APOGEE:
         mass = properties.mass_properties(time).mass
-        descent = simulate_descent(time, state, config, profile.recovery, mass_kg=mass)
+        descent = _tumble_then_descend(profile, properties, config, time, state, mass)
         # one sample a second of the way down (the descent is sampled every 0.1 s)
         down = [
             _row(t, s)
@@ -410,6 +437,48 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
             series[key] += [None] * len(down)
     result.update(series)
     return result
+
+
+def _tumble_then_descend(  # pylint: disable=too-many-arguments
+    profile: Any,
+    properties: Any,
+    config: Any,
+    apogee_s: float,
+    state: Any,
+    mass_kg: float,
+) -> DescentResult:
+    """From apogee: tumble (6-DOF) until line stretch, then the point-mass descent.
+
+    The separation charge fires the flight computer's delay after apogee and the
+    canopy starts to open at line stretch, as in VISION; until then the rocket
+    is free to turn over (``flight_sim.tumble``). Then the cheaper point-mass
+    descent takes over from where the tumble left the rocket.
+    """
+    scheme = profile.scheme
+    charge = getattr(scheme, "apogee_charge", None)
+    if charge is None:
+        return simulate_descent(
+            apogee_s, state, config, profile.recovery, mass_kg=mass_kg
+        )
+    fire = apogee_s + scheme.computer.apogee_delay_s
+    before = tumble.fly(apogee_s, state, properties, config, until_s=fire)
+    separation = _eject(before[-1][1], config, charge, mass_kg)
+    stretch = fire + separation.line_stretch_s if separation.separated else fire
+    after = tumble.fly(
+        fire,
+        before[-1][1],
+        properties,
+        config,
+        until_s=stretch,
+        fire_s=fire if separation.separated else None,
+        separation_speed_m_s=separation.speed_m_s,
+        nose_share=charge.nose_mass_kg / mass_kg,
+    )
+    tumbled = tumble.resample(before + after[1:], 0.1)
+    start_s, start = tumbled[-1]
+    recovery = _retime(profile.recovery, 0.0, None)
+    descent = simulate_descent(start_s, start, config, recovery, mass_kg=mass_kg)
+    return tumble.join(tumbled, descent)
 
 
 def _recovery_data(profile: Any) -> dict[str, Any] | None:

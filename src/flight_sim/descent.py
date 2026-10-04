@@ -15,9 +15,11 @@ A canopy is released either a set time after apogee or when the rocket
 falls through a set height above the pad. It then inflates while the rocket
 travels ``fill_constant * diameter`` through the air (Knacke's
 filling-distance rule), with its drag area growing with the square of the
-share of that distance covered. A canopy released at apogee, where the
-airspeed is low, therefore takes longer to open than one released fast. The
-deceleration during the opening is reported as the opening load.
+share of that distance covered; it then overshoots its steady drag area by
+10 percent and settles within half a fill distance (overinflation). A
+canopy released at apogee, where the airspeed is low, therefore takes
+longer to open than one released fast. The deceleration during the
+opening is reported as the opening load.
 
 The attitude is not simulated. For display, the rocket keeps its apogee
 attitude until the first canopy is released, then turns over two seconds to
@@ -42,6 +44,11 @@ _STANDARD_GRAVITY = 9.80665  # m/s**2, for loads in g
 _TURN_TO_HANG_S = 2.0  # Display only: time to swing under the first canopy
 _LOAD_WINDOW_S = 1.0  # Time after full inflation still counted as opening
 _OPENING_STEP_S = 0.002  # Longest step while a canopy is opening
+# Overinflation: right after it fills, a canopy overshoots its steady drag area
+# by about 10 percent and settles within half a fill distance (Knacke,
+# Parachute Recovery Systems Design Manual, ch. 5; an assumed typical value)
+_OVERINFLATION = 0.10
+_OVERSHOOT_SPAN = 0.5
 
 
 @dataclass(frozen=True)
@@ -278,7 +285,13 @@ class _Opening:
         if fill <= 0.0:
             return 1.0
         progress = (air_distance_m - self.air_distance_m) / fill
-        return min(max(progress, 0.0), 1.0) ** 2
+        if progress <= 1.0:
+            return max(progress, 0.0) ** 2
+        # just after it fills the canopy bulges past its steady size and settles
+        past = (progress - 1.0) / _OVERSHOOT_SPAN
+        if past >= 1.0:
+            return 1.0
+        return 1.0 + _OVERINFLATION * math.sin(math.pi * past)
 
     def loading(self, elapsed_s: float) -> bool:
         """Whether a time since apogee is in its opening-load window."""

@@ -55,7 +55,8 @@ def test_csv_has_the_flight_sim_columns_and_conventions(tmp_path: Path) -> None:
     """Cx = -CA, Cz = -CN cos(phi), Cy = -CN sin(phi), moments about the nose tip."""
     out = tmp_path / "aero.csv"
     summary = convert(_write(tmp_path), out)
-    assert summary.alphas == [0, 1, 2] and summary.rows == 4 * 3 * 25
+    # RASAero's 0-2 degrees, then 10 to 180 degrees from the crossflow model
+    assert summary.alphas == [0, 1, 2] and summary.rows == 4 * (3 + 18) * 25
     assert not summary.power_differs
     rows = _rows(out)
     assert list(rows[0]) == [

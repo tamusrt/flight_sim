@@ -87,7 +87,7 @@ def test_heavy_canopy_limit_is_a_simple_pendulum() -> None:
 
 def test_gusts_are_repeatable_and_horizontal() -> None:
     """The same seed gives the same gusts, and none blows up or down."""
-    swing = CanopySwing(line_length_m=10.0)
+    swing = CanopySwing(line_length_m=10.0, turbulence=1.5)
     first, second = Gusts(swing, 4.0), Gusts(swing, 4.0)
     values = [first.advance(0.1).copy() for _ in range(50)]
     again = [second.advance(0.1).copy() for _ in range(50)]
@@ -168,6 +168,7 @@ def test_a_collapsed_canopy_gives_almost_no_drag() -> None:
         full_drag_deg=0.0,
         no_drag_deg=0.001,
         collapsed_drag_fraction=0.0,
+        turbulence=1.5,  # random gusts (off by default) tip the canopy over
     )
     fall = simulate_swing_descent(
         0.0, _state(300.0), _config(), _CANOPY, mass_kg=_MASS_KG, swing=swing
@@ -199,7 +200,7 @@ def test_before_the_canopy_there_is_no_line() -> None:
 
 def test_the_wind_swings_the_hang_a_little_and_gusts_repeat() -> None:
     """Turbulence in a steady wind swings the rocket a few degrees, repeatably."""
-    swing = CanopySwing(line_length_m=8.0)
+    swing = CanopySwing(line_length_m=8.0, turbulence=1.5)
     config = _config(wind_m_s=5.0)
     first = simulate_swing_descent(
         0.0, _state(400.0), config, _CANOPY, mass_kg=_MASS_KG, swing=swing

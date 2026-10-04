@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from flight_sim import tumble
 from flight_sim.canopy_swing import CanopySwing
 from flight_sim.descent import (
     DescentResult,
@@ -37,6 +38,7 @@ from flight_sim.integration import IntegrationConfiguration
 from flight_sim.recovery_motion import EjectionCharge, Separation
 from flight_sim.swing_descent import SwingTrace, simulate_swing_descent
 from flight_sim.utilities.dcm import body_to_world
+from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
 Sample = tuple[float, RocketState]
@@ -239,6 +241,7 @@ def plan_recovery(  # pylint: disable=too-many-locals
     *,
     mass_kg: float,
     swing: CanopySwing | None = None,
+    properties: RocketProperties | None = None,
 ) -> RecoveryPlan:
     """Fly the descent with the events where the flight computer puts them.
 
@@ -256,6 +259,9 @@ def plan_recovery(  # pylint: disable=too-many-locals
         mass_kg (float): Mass of the rocket after the burn, in kg.
         swing (CanopySwing | None): When given, the descents are flown with
             the rocket swinging under its canopy instead of as a point mass.
+        properties (RocketProperties | None): When given, the rocket is flown
+            with the 6-DOF model from apogee to line stretch, so it can tumble
+            (``tumble``), and the descent starts from where that leaves it.
 
     Returns:
         RecoveryPlan: The timeline and the descent flown with it.
@@ -277,10 +283,34 @@ def plan_recovery(  # pylint: disable=too-many-locals
     separation = _eject(_state_at(coasting, fire), config, charge, mass_kg)
     line_stretch = fire + separation.line_stretch_s
 
-    planned = _retime(recovery, line_stretch - apogee_time, None)
-    descent, trace = _fly(
-        apogee_time, apogee_state, config, planned, mass_kg=mass_kg, swing=swing
-    )
+    # from apogee to line stretch the rocket is free to tumble: the 6-DOF model
+    start_time, start_state = apogee_time, apogee_state
+    tumbled: list[Sample] | None = None
+    if properties is not None:
+        tumbled = tumble.resample(
+            tumble.fly(
+                apogee_time,
+                apogee_state,
+                properties,
+                config,
+                until_s=min(line_stretch, apogee_time + tumble.MAX_TUMBLE_S),
+                fire_s=fire if separation.separated else None,
+                separation_speed_m_s=separation.speed_m_s,
+                nose_share=charge.nose_mass_kg / mass_kg,
+            )
+        )
+        start_time, start_state = tumbled[-1]
+
+    def fly(planned: RecoverySystem) -> tuple[DescentResult, SwingTrace | None]:
+        descent, trace = _fly(
+            start_time, start_state, config, planned, mass_kg=mass_kg, swing=swing
+        )
+        if tumbled is None:
+            return descent, trace
+        return tumble.join(tumbled, descent), _pad_trace(trace, tumbled)
+
+    planned = _retime(recovery, max(line_stretch - start_time, 0.0), None)
+    descent, trace = fly(planned)
     command = computer.main_command(
         computer.sense(
             flight + list(zip(descent.times_s, descent.states, strict=True)), config
@@ -296,10 +326,8 @@ def plan_recovery(  # pylint: disable=too-many-locals
                 [float(s.position.m_as("m")[0]) for s in descent.states],
             )
         )
-        planned = _retime(recovery, line_stretch - apogee_time, true_altitude)
-        descent, trace = _fly(
-            apogee_time, apogee_state, config, planned, mass_kg=mass_kg, swing=swing
-        )
+        planned = _retime(recovery, max(line_stretch - start_time, 0.0), true_altitude)
+        descent, trace = fly(planned)
     return RecoveryPlan(
         recovery=planned,
         descent=descent,
@@ -310,6 +338,20 @@ def plan_recovery(  # pylint: disable=too-many-locals
         line_stretch_s=line_stretch,
         main_command_s=command,
         main_true_altitude_m=true_altitude,
+    )
+
+
+def _pad_trace(trace: SwingTrace | None, tumbled: list[Sample]) -> SwingTrace | None:
+    """The swing trace with an empty entry (no line yet) for each tumble sample."""
+    if trace is None:
+        return None
+    count = len(tumbled)
+    return SwingTrace(
+        line_directions=[np.zeros(3)] * count + trace.line_directions,
+        canopy_velocities=[s.velocity.m_as("m/s") for _, s in tumbled]
+        + trace.canopy_velocities,
+        angles_rad=[0.0] * count + trace.angles_rad,
+        drag_fractions=[0.0] * count + trace.drag_fractions,
     )
 
 

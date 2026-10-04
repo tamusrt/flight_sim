@@ -370,6 +370,17 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     torque_body[0] += _fin_roll_torque(
         velocity, altitude, float(angular_velocity[0]), inputs
     )
+    if properties.damping is not None:
+        conditions = inputs.atmosphere.conditions(altitude)
+        airspeed = float(np.linalg.norm(velocity - inputs.wind.velocity(altitude)))
+        torque_body += properties.damping.torque(
+            angular_velocity,
+            airspeed_m_s=airspeed,
+            mach=airspeed / conditions.speed_of_sound,
+            air_density=conditions.air_density,
+            cg_m=-float(mass_properties.cg_location[0]),
+            fins=properties.fins,
+        )
     force_body[0] += properties.engine.get_thrust(time)
     acceleration = to_world @ force_body / mass_properties.mass
     acceleration[0] -= inputs.gravity.magnitude(inputs.latitude_rad, altitude)

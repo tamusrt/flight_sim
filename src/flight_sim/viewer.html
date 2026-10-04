@@ -444,14 +444,22 @@ function profileFull(D0,spill,u){ var Rp=0.35*D0, H=0.42*Rp*2, rs=spill/2*0.7, a
 function profileReefed(D0,spill,mouth,u){ var Rb=0.17*D0, Hr=0.62*D0, rs=spill/2*0.5; return [Hr*(1-u), rs*(1-u)+mouth/2*0.62*u+Rb*Math.pow(Math.sin(Math.PI*Math.min(u*1.05,1)),0.9)]; }
 function profilePacked(u){ return [0.254*(1-u), 0.07]; }
 function profileCollapsed(D0,spill,u){ return [0.03*D0*(1-u), spill/2*0.7+(0.5*D0-spill/2*0.7)*u]; }
-function setCanopyShape(D0,spill,mouth,stage,blend){
-  /* stage 0: packed->reefed by blend, stage 1: reefed->full by blend */
+function setCanopyShape(D0,spill,mouth,stage,blend,warp,thW,tw){
+  /* stage 0: packed->reefed by blend, stage 1: reefed->full by blend.
+     warp 0..1 with the airflow from angle thW around the canopy axis, tw the time (for the flutter) */
+  warp=warp||0; thW=thW||0; tw=tw||0;
   var prof=[]; for(var i=0;i<=CN;i++){ var u=i/CN, A, B;
     if(stage===0){ A=profilePacked(u); B=profileReefed(D0,spill,mouth,u); } else if(stage===1){ A=profileReefed(D0,spill,mouth,u); B=profileFull(D0,spill,u); } else { A=profileFull(D0,spill,u); B=profileCollapsed(D0,spill,u); }
     prof.push([A[0]+(B[0]-A[0])*blend, A[1]+(B[1]-A[1])*blend]); }
-  var v=0; function put(h,r,th){ canPos[v++]=h; canPos[v++]=r*Math.cos(th); canPos[v++]=r*Math.sin(th); }
-  for(i=0;i<CN;i++) for(var j=0;j<CM;j++){ var t0=j/CM*TAU, t1=(j+1)/CM*TAU, p=prof[i], q=prof[i+1];
-    put(p[0],p[1],t0); put(q[0],q[1],t0); put(q[0],q[1],t1); put(p[0],p[1],t0); put(q[0],q[1],t1); put(p[0],p[1],t1); }
+  var Rmax=0; for(i=0;i<=CN;i++) Rmax=Math.max(Rmax,prof[i][1]);
+  var v=0; function put(h,r,th,u){
+    if(warp>0){ var side=Math.cos(th-thW);
+      r*=1-warp*0.3*Math.max(side,0)+warp*0.1*Math.max(-side,0);              /* windward side pushed in, leeward bulging */
+      r*=1+warp*0.05*Math.sin(GORES*0.5*th+7*tw+u*4);                        /* gores fluttering */
+      h+=warp*0.15*Rmax*side*u; }                                              /* rim tilting away from the air */
+    canPos[v++]=h; canPos[v++]=r*Math.cos(th); canPos[v++]=r*Math.sin(th); }
+  for(i=0;i<CN;i++) for(var j=0;j<CM;j++){ var t0=j/CM*TAU, t1=(j+1)/CM*TAU, p=prof[i], q=prof[i+1], u0=i/CN, u1=(i+1)/CN;
+    put(p[0],p[1],t0,u0); put(q[0],q[1],t0,u1); put(q[0],q[1],t1,u1); put(p[0],p[1],t0,u0); put(q[0],q[1],t1,u1); put(p[0],p[1],t1,u0); }
   canGeo.attributes.position.needsUpdate=true; canGeo.computeVertexNormals(); canGeo.computeBoundingSphere();
   return prof[CN]; /* skirt [height, radius] */
 }
@@ -578,7 +586,9 @@ function fromTelemetry(j,conj,name){
     o.xb.push(1-2*(y*y+z*z), 2*(x*y+w*z), 2*(x*z-w*y));
     o.yb.push(2*(x*y-w*z), 1-2*(x*x+z*z), 2*(y*z+w*x));
     o.zb.push(2*(x*z+w*y), 2*(y*z-w*x), 1-2*(x*x+y*y));
-    var ar=[Vv[0]-wind[0],Vv[1]-wind[1],Vv[2]-wind[2]];
+    /* the wind where the rocket is (it changes with height), or the one ground wind of older files */
+    var wh=has('wind_at')?[0,1,2].map(function(c){return L(j.wind_at[i][c],j.wind_at[i+1][c])}):wind;
+    var ar=[Vv[0]-wh[0],Vv[1]-wh[1],Vv[2]-wh[2]];
     o.pos.push(P[0],P[1],P[2]); o.vel.push(Vv[0],Vv[1],Vv[2]); o.air.push(ar[0],ar[1],ar[2]);
     o.thrust.push(j.thrust&&j.thrust.length===n?L(j.thrust[i],j.thrust[i+1]):0);
     o.mass.push(j.mass&&j.mass.length===n?L(j.mass[i],j.mass[i+1]):0);
@@ -916,10 +926,19 @@ function drawRecovery(sc,pos,cg,te,tq,land){
   }
   placeSection(aftSec,BC,bX,bY,bZ,cg);
   placeSection(noseSec,Nn,xn,yn,zn,VEH.sep);
-  var key=stage+':'+blend.toFixed(3), skirt;
-  if(key!==canKey){ canKey=key; canopy.userData.skirt=setCanopyShape(R.diameter,R.spill_hole,R.reefed_opening,stage,blend); }
-  skirt=canopy.userData.skirt;
   var canZ=new V3().crossVectors(cAx,cUp), su=1+0.3*flat, sz=1-0.86*flat;
+  /* warping (for the look only, the drag comes from the simulation): strong while the canopy is still filling
+     (blend < 1 in its stage) or when the air meets it at a large angle (swing), weak once it is full and upright.
+     The air pushes the windward side in, the leeward side bulges, the rim tilts and the gores flutter. */
+  var warp=0, thW=0;
+  if(!land&&stage<2){
+    var filling=1-blend, tilt=smooth((F.swing-10)/50);
+    warp=0.05+0.95*Math.max(filling*0.9,tilt);
+    thW=Math.atan2(F.air.dot(canZ),F.air.dot(cUp));
+  }
+  var key=stage+':'+blend.toFixed(3)+(warp>0?':'+warp.toFixed(3)+':'+thW.toFixed(2)+':'+tq.toFixed(2):''), skirt;
+  if(key!==canKey){ canKey=key; canopy.userData.skirt=setCanopyShape(R.diameter,R.spill_hole,R.reefed_opening,stage,blend,warp,thW,tq); }
+  skirt=canopy.userData.skirt;
   basis.makeBasis(cAx,cUp,canZ); basis.setPosition(Sk);
   canopy.matrix.copy(basis).multiply(mS.makeScale(sc,sc*su,sc*sz)).multiply(mT.makeTranslation(-skirt[0],0,0)); canopy.matrixWorldNeedsUpdate=true;
   canopy.visible=stretched||Nn.distanceTo(A)>cn*0.5;

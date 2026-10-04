@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 import numpy as np
 import pandas as pd  # type: ignore
 
+from flight_sim.aero_extend import extend_values
 from flight_sim.units import Scalar, UnitChecked, Vector
 from flight_sim.utilities.dcm import missile_to_body
 
@@ -144,7 +145,9 @@ def aero_table_from_csv(
             components. Defaults to "body".
 
     Returns:
-        AeroTable: Lookup over the CSV's grid.
+        AeroTable: Lookup over the CSV's grid, carried on to 180 degrees
+            of angle of attack (``flight_sim.aero_extend``) when the CSV
+            stops short of it.
     """
     data_frame = pd.read_csv(filepath)
 
@@ -163,6 +166,9 @@ def aero_table_from_csv(
         ],
         axis=-1,
     )
+    # a table that stops short of 180 degrees (RASAero's stops at 30) is
+    # carried on with the crossflow model, for the tumble after apogee
+    alpha_axis, values = extend_values(mach_axis, alpha_axis, values)
     return AeroTable(
         mach_axis,
         alpha_axis,

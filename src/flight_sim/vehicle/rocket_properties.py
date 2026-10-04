@@ -3,6 +3,8 @@
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.vehicle.engine import Engine
 from flight_sim.vehicle.mass_properties import (
@@ -104,6 +106,112 @@ class TrapezoidFinSet:
         return 2.0 * math.pi * aspect / (1.0 + math.sqrt(1.0 + compressible**2))
 
 
+_CROSSFLOW_CD = 1.2  # A cylinder or a flat fin across the flow, subsonic
+
+
+@dataclass(frozen=True)
+class PitchDamping:
+    """The air resisting the rocket turning end over end (pitch and yaw).
+
+    A rocket turning at rate ``w`` about its centre of gravity moves each part of
+    it sideways through the air at ``w`` times its distance from the CG, and the
+    air pushes back. The aero table has no rates in it, so this adds that torque:
+
+    * fins at distance ``l`` aft of the CG meet the air at an extra angle
+      ``w l / V`` (the usual pitch damping, linear in ``w``), and when the rocket
+      is slow, as near apogee, they are pushed flat through the air like plates,
+      ``0.5 rho Cd (w l)^2`` per unit area;
+    * the body, a cylinder of diameter ``D`` whose ends are ``a`` and ``b`` from
+      the CG, gives ``0.5 rho Cd D w^2 (a^4 + b^4) / 4`` as it sweeps through the air.
+
+    The fins count as half their number (on average half of them face the
+    turn). This is what slows a tumble after apogee and keeps the climb from
+    oscillating without end; it costs one atmosphere lookup a step.
+
+    Attributes:
+        body_length_m (float): Nose tip to the aft end.
+        body_diameter_m (float): Body diameter.
+        fin_station_m (float): Centre of the fins' area, from the nose tip.
+        crossflow_cd (float): Drag coefficient of the body and fins across the flow.
+    """
+
+    body_length_m: float
+    body_diameter_m: float
+    fin_station_m: float
+    crossflow_cd: float = _CROSSFLOW_CD
+
+    @classmethod
+    def estimate(cls, table: "AeroTable", diameter_m: float) -> "PitchDamping":
+        """A rough damping from the aero table alone, for a rocket with no geometry.
+
+        The fins are put at the table's small-angle centre of pressure (Mach 0.3,
+        2 degrees) and the body made 15 percent longer than that.
+        """
+        c = table(0.3, 2.0, 0.0)
+        xcp = (
+            c.cmy * table.reference_length_m / c.cz
+            if abs(c.cz) > 1e-9
+            else 20 * diameter_m
+        )
+        xcp = abs(xcp)
+        return cls(
+            body_length_m=xcp / 0.85, body_diameter_m=diameter_m, fin_station_m=xcp
+        )
+
+    def torque(  # pylint: disable=too-many-arguments
+        self,
+        angular_velocity: np.ndarray,
+        *,
+        airspeed_m_s: float,
+        mach: float,
+        air_density: float,
+        cg_m: float,
+        fins: "TrapezoidFinSet | None",
+    ) -> np.ndarray:
+        """The damping torque in body axes, N m, opposing the pitch and yaw rate.
+
+        Args:
+            angular_velocity (np.ndarray): Body rates in rad/s; the roll part is
+                left to the fins' own roll damping.
+            airspeed_m_s (float): Speed through the air.
+            mach (float): Mach number.
+            air_density (float): kg/m**3.
+            cg_m (float): Centre of gravity, metres aft of the nose tip.
+            fins (TrapezoidFinSet | None): The fins, for their area and lift slope.
+        """
+        turn = np.array([0.0, angular_velocity[1], angular_velocity[2]])
+        rate = float(np.linalg.norm(turn))
+        if rate < 1e-9:
+            return np.zeros(3)
+        half_rho = 0.5 * air_density
+        aft = max(self.body_length_m - cg_m, 0.0)
+        fore = max(cg_m, 0.0)
+        body = (
+            half_rho
+            * self.crossflow_cd
+            * self.body_diameter_m
+            * rate**2
+            * (fore**4 + aft**4)
+            / 4.0
+        )
+        fin = 0.0
+        if fins is not None:
+            arm = self.fin_station_m - cg_m
+            area = fins.planform_area_m2 * fins.fin_count / 2.0
+            sideways = rate * abs(arm)
+            fin = (
+                half_rho
+                * area
+                * (
+                    fins.normal_force_slope(mach) * airspeed_m_s * sideways
+                    + self.crossflow_cd * sideways**2
+                )
+                * abs(arm)
+            )
+        result: np.ndarray = -(body + fin) * turn / rate
+        return result
+
+
 @dataclass
 class RocketProperties:
     """Aerodynamics, motor and dry mass properties of the rocket."""
@@ -117,6 +225,9 @@ class RocketProperties:
     # Fins for the roll damping and misalignment torques. None leaves roll
     # to the aerodynamic table alone.
     fins: TrapezoidFinSet | None = None
+
+    # The air resisting pitch and yaw rates. None leaves them undamped.
+    damping: PitchDamping | None = None
 
     def mass_properties(self, time: float) -> MassPropertiesSI:
         """Return the whole rocket's mass properties at a simulation time in s."""

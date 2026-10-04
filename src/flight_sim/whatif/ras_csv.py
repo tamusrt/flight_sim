@@ -5,6 +5,10 @@ tools/whatif/rasaero_sweep.py in the dynamics repo) in one folder, then run:
 
     python -m flight_sim.whatif.ras_csv --in DIR --out FILE
 
+Above RASAero's last angle (30 degrees) the CSV carries on to 180 degrees in 10 degree
+steps from a crossflow model fitted to RASAero's rows (flight_sim.aero_extend), for the
+tumble after apogee.
+
 Output columns match flight_sim's aero loader:
     Mach, Alpha, Phi, Cx, Cy, Cz, CMx, CMy, CMz
 
@@ -26,6 +30,10 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
+
+from flight_sim.aero_extend import extend
 
 IN_TO_M = 0.0254
 
@@ -171,6 +179,43 @@ def _rows(
     return rows
 
 
+def _with_tumble_rows(
+    tables: dict[int, dict[int, dict[str, float]]],
+    alphas: list[int],
+    mach_key: int,
+    options: Options,
+) -> list[tuple[int, dict[str, float]]]:
+    """RASAero's rows for one Mach, then 40 to 180 degrees from the crossflow model.
+
+    RASAero stops at 30 degrees; the tumble after apogee needs every angle, so the
+    rows above are made by ``flight_sim.aero_extend`` from RASAero's own rows.
+    """
+    key = "xcp_in" if options.cp == "alpha" else "xcp_header_in"
+    blocks = [tables[a][mach_key] for a in alphas]
+    added, cn, ca, xcp = extend(
+        np.array(alphas, dtype=float),
+        mach_key / 100,
+        np.array([b["cn"] for b in blocks]),
+        np.array([b["ca"] for b in blocks]),
+        np.array([b[key] for b in blocks]),
+        options.ref_length / IN_TO_M,
+    )
+    rows = list(zip(alphas, blocks, strict=True))
+    for deg, n, a, x in zip(added, cn, ca, xcp, strict=True):
+        rows.append(
+            (
+                round(deg),
+                {
+                    "cn": float(n),
+                    "ca": float(a),
+                    "xcp_in": float(x),
+                    "xcp_header_in": float(x),
+                },
+            )
+        )
+    return rows
+
+
 def convert(source: Path, out: Path, options: Options | None = None) -> Summary:
     """Read the alpha files in ``source``; write the flight_sim aero CSV to ``out``."""
     options = options or Options()
@@ -182,8 +227,8 @@ def convert(source: Path, out: Path, options: Options | None = None) -> Summary:
         writer = csv.writer(handle)
         writer.writerow(["Mach", "Alpha", "Phi", "Cx", "Cy", "Cz", "CMx", "CMy", "CMz"])
         for mach_key in mach_keys:
-            for alpha in alphas:
-                for row in _rows(tables[alpha][mach_key], mach_key, alpha, options):
+            for alpha, block in _with_tumble_rows(tables, alphas, mach_key, options):
+                for row in _rows(block, mach_key, alpha, options):
                     writer.writerow(
                         [f"{x + 0.0:.6g}" if isinstance(x, float) else x for x in row]
                     )

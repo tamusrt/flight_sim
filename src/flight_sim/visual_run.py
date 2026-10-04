@@ -3,9 +3,10 @@
 Usage: uv run python -m flight_sim.visual_run [--max-time SECONDS] [--apogee]
 
 The flight is the standard launch of ``python -m flight_sim``, flown by the
-same code and only drawn. After apogee the descent is flown with the extended
-recovery model of ``recovery_extension`` (flight computer, nose ejection,
-rocket swinging under its canopy); ``--apogee`` stops at apogee instead.
+same code and only drawn. After apogee the rocket is flown with the 6-DOF model
+until line stretch, so it can tumble (``tumble``), then the descent is flown with
+the extended recovery model of ``recovery_extension`` (flight computer, nose
+ejection, rocket swinging under its canopy); ``--apogee`` stops at apogee instead.
 """
 
 # The flight loop deliberately mirrors __main__.main, which it must not change
@@ -133,7 +134,9 @@ def _log_recovery(
     if scheme is None:
         return
     apogee_mass = properties.mass_properties(flight[-1][0])
-    plan = recovery_extension.plan_full_recovery(flight, config, scheme, apogee_mass)
+    plan = recovery_extension.plan_full_recovery(
+        flight, config, scheme, apogee_mass, properties
+    )
     print(f"Recovery: {scheme.kind}")
     if plan.separation.separated:
         print(f"charge fires at {plan.fire_s:.2f} seconds")

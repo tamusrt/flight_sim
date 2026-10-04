@@ -167,7 +167,8 @@ def test_opening_load_matches_a_hand_estimate() -> None:
         0.0, heavy, config, RecoverySystem((parachute,)), mass_kg=1e5, max_time_s=2.0
     )
     density = config.truth.atmosphere.conditions(100.0).air_density
-    expected = 0.5 * density * 20.0**2 * parachute.drag_area_m2 / 1e5 / _G
+    # the peak comes as the canopy overinflates, 10% past its steady drag area
+    expected = 0.5 * density * 20.0**2 * parachute.drag_area_m2 / 1e5 / _G * 1.10
     # Within 0.5%: the air thickens slightly as it drops 36 m while opening
     assert result.deployments[0].peak_load_g == pytest.approx(expected, rel=5e-3)
     assert result.deployments[0].inflation_time_s == pytest.approx(0.8, rel=1e-3)

@@ -112,7 +112,6 @@ def test_profile_takes_conditions_from_the_saved_sim(
     assert profile.wind.speed.m_as("m/s") == pytest.approx(3.0)
     assert profile.pad_elevation_m == pytest.approx(100.0)
     assert profile.pad_temperature_k == pytest.approx(295.0)
-    # the thrust-curve file's 10 kg motor, not the 11.6 kg the saved mass would leave
-    airframe = load_ork(files[0]).airframe_mass_kg
-    assert profile.mass_properties.launch_mass_kg == pytest.approx(airframe + 10.0)
+    # the motor masses come from the saved run, so liftoff mass is OpenRocket's own
+    assert profile.mass_properties.launch_mass_kg == pytest.approx(16.3)
     assert profile.mass_properties.propellant_mass_kg == pytest.approx(4.0)

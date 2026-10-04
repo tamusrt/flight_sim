@@ -65,19 +65,19 @@ def test_bad_files_are_refused(tmp_path: Path) -> None:
         load_motor(tmp_path / "m.csv")
 
 
-def test_the_motor_files_masses_replace_the_saved_ones(tmp_path: Path) -> None:
-    """A newer motor file is flown with its own propellant and total mass."""
+def test_the_ork_masses_are_flown_with_the_files_thrust(tmp_path: Path) -> None:
+    """The motor masses come from the .ork's saved simulation, not the motor file."""
     ork = load_ork(write_ork(tmp_path / "t.ork"))
     saved = saved_motor(ork)
     motor = motor_with_file(saved, load_motor(write_rse(tmp_path / "m.rse")))
-    assert motor.propellant_kg == pytest.approx(3.5) and motor.mass_kg == pytest.approx(
-        9.0
-    )
+    assert motor.propellant_kg == pytest.approx(saved.propellant_kg)
+    assert motor.mass_kg == pytest.approx(saved.mass_kg)
     assert (motor.x_m, motor.length_m) == (saved.x_m, saved.length_m)
     profile = profile_from_ork(
         write_ork(tmp_path / "t.ork"),
         str(write_aero_csv(tmp_path / "a.csv")),
         str(tmp_path / "m.rse"),
     )
-    assert profile.mass_properties.propellant_mass_kg == pytest.approx(3.5)
+    props = profile.mass_properties
+    assert props.propellant_mass_kg == pytest.approx(saved.propellant_kg)
     assert profile.motor_file.endswith(".eng")

@@ -74,6 +74,9 @@
   .warnings:empty { display:none; }
   .warn { border:1px solid var(--warn); background:var(--warnbg); border-radius:8px; padding:6px 10px; font-size:13px; }
   .warn.bad { border-color:var(--down); }
+  .irec { margin:14px 0 4px; } .irec h3 { margin:0 0 4px; font-size:15px; }
+  .irectab td.ok { color:var(--up); } .irectab td.warn { color:var(--warn); } .irectab td.bad { color:var(--down); font-weight:600; } .irectab td.na { color:var(--muted); }
+  .irectab td span { color:var(--fg); font-weight:400; margin-left:4px; }
   .warn.good { border-color:var(--ok); }
   h2.sec { font-size:15px; margin:22px 0 4px; border-bottom:1px solid var(--line); padding-bottom:4px; }
   table { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; }
@@ -133,6 +136,7 @@
     <div class="row" id="metrics"></div>
     <div class="chartbox"><div id="plot" style="position:absolute;inset:10px"></div><div class="empty" id="empty" hidden></div></div>
     <p class="legend" id="chartnote"></p>
+    <div class="irec" id="irec"></div>
     <h2 class="sec">Apogee by launch condition</h2>
     <div class="tablewrap"><table id="weather"></table></div>
     <p class="legend" id="weathernote"></p>
@@ -650,16 +654,47 @@ function warnings() {
     out.push(['', 'The OpenRocket results (from the History tab) use the motor ' + DATA.openrocketMotor + ', but Jarvis uses ' + DATA.files.motor + ', so they are not directly comparable. To compare them, set default_motor in aero_modeling/sim_config.json to ' + DATA.files.motor + '.']);
   }
   const mf = DATA.motorFile;
-  if (first && first.source === 'file' && mf && mf.propKg && (Math.abs(mf.propKg - mf.savedPropKg) > 0.5 || Math.abs(mf.totalKg - mf.savedTotalKg) > 1.0)) {
-    // name the number that differs: the propellant, the total motor mass, or both
-    const what = [];
-    if (Math.abs(mf.propKg - mf.savedPropKg) > 0.5) what.push('propellant ' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' in the motor file, ' + fmt(mf.savedPropKg * M.f, 1) + ' ' + M.u + ' in OpenRocket');
-    if (Math.abs(mf.totalKg - mf.savedTotalKg) > 1.0) what.push('total motor mass ' + fmt(mf.totalKg * M.f, 1) + ' ' + M.u + ' in the motor file, ' + fmt(mf.savedTotalKg * M.f, 1) + ' ' + M.u + ' in OpenRocket');
-    out.push(['', 'Jarvis uses the motor in ' + DATA.files.motor + ', but the OpenRocket results saved in the design file used a different motor (' + what.join('; ') + '). Re-run the OpenRocket simulations with ' + DATA.files.motor + ' to compare like for like.']);
+  if (mf && mf.propKg && mf.savedPropKg && (Math.abs(mf.propKg - mf.savedPropKg) > 0.5 || Math.abs(mf.totalKg - mf.savedTotalKg) > 1.0)) {
+    // Jarvis flies the .ork's motor masses; say so when the motor file lists different ones
+    out.push(['', 'The motor file ' + DATA.files.motor + ' lists ' + fmt(mf.totalKg * M.f, 1) + ' ' + M.u + ' total (' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' propellant), but the OpenRocket design flies ' + fmt(mf.savedTotalKg * M.f, 1) + ' ' + M.u + ' (' + fmt(mf.savedPropKg * M.f, 1) + ' ' + M.u + ' propellant). Jarvis uses the OpenRocket masses, so its starting mass matches OpenRocket; only the thrust curve comes from the motor file.']);
   }
   return out;
 }
+/* ---------- IREC checks (Design, Test & Evaluation Guide) ---------- */
+const escIrec = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const IREC = { stab: 1.5, stabMax: 4.0, stabDynMax: 6.0, railRec: 30.48, railMin: 15.24, drogueLo: 20, drogueHi: 40, mainLand: 11.0, mainAlt: 457.2 };
+function irecRows(sim) {
+  const s = sixOf(sim), L = s.landing || {}, V = U.vel(), A = U.alt(), rows = [];
+  const sp = (v) => fmt(v * V.f, 0) + ' ' + V.u, al = (v) => fmt(v * A.f, 0) + ' ' + A.u;
+  const row = (name, value, need, ok, warn) => rows.push({ name, value, need, st: ok === null ? 'na' : ok ? 'ok' : warn ? 'warn' : 'bad' });
+  row('Stability at rail exit', s.marginRail === null ? '–' : fmt(s.marginRail, 2) + ' cal', 'at least 1.5 cal', s.marginRail === null ? null : s.marginRail >= IREC.stab);
+  row('Lowest stability, rail exit to apogee', s.marginLo === null ? '–' : fmt(s.marginLo, 2) + ' cal', 'at least 1.5 cal', s.marginLo === null ? null : s.marginLo >= IREC.stab);
+  row('Static stability at rail exit', s.marginRail === null ? '–' : fmt(s.marginRail, 2) + ' cal', 'at most 4 cal', s.marginRail === null ? null : s.marginRail <= IREC.stabMax, true);
+  row('Highest stability in flight', s.marginHi === null ? '–' : fmt(s.marginHi, 2) + ' cal', 'at most 6 cal', s.marginHi === null ? null : s.marginHi <= IREC.stabDynMax, true);
+  row('Rail exit speed', s.railV === null ? '–' : sp(s.railV), 'at least ' + sp(IREC.railRec) + ' (' + sp(IREC.railMin) + ' minimum)', s.railV === null ? null : s.railV >= IREC.railRec, s.railV !== null && s.railV >= IREC.railMin);
+  const d = L.drogueV;
+  row('Drogue descent rate', d == null ? 'no drogue' : sp(d), sp(IREC.drogueLo) + ' to ' + sp(IREC.drogueHi), d == null ? null : d >= IREC.drogueLo && d <= IREC.drogueHi, true);
+  row('Main deployment altitude', L.mainAlt == null ? '–' : al(L.mainAlt), 'at most ' + al(IREC.mainAlt) + ' above the pad', L.mainAlt == null ? null : L.mainAlt <= IREC.mainAlt, true);
+  row('Landing speed under main', L.vVert == null ? '–' : sp(L.vVert), 'under ' + sp(IREC.mainLand), L.vVert == null ? null : L.vVert < IREC.mainLand);
+  return rows;
+}
+function drawIrec() {
+  const sims = ticked(), box = $('irec');
+  if (!sims.length) { box.innerHTML = ''; return; }
+  const mark = { ok: '✓ Pass', warn: '⚠ Check', bad: '✗ Fails', na: '– n/a' };
+  const per = sims.map(irecRows), bad = per.flat().filter((r) => r.st === 'bad').length, warn = per.flat().filter((r) => r.st === 'warn').length;
+  let h = '<h3>IREC checks</h3><p class="legend">Jarvis\'s flight against the IREC Design, Test &amp; Evaluation Guide. ' +
+    (bad ? '<b>' + bad + ' check' + (bad > 1 ? 's' : '') + ' fail.</b> ' : warn ? '' : 'Every check passes. ') +
+    (warn ? warn + ' need' + (warn > 1 ? '' : 's') + ' a look. ' : '') +
+    (base.recovery ? 'Descent checks use the placeholder recovery system (' + base.recovery.label.replace(/^Sol Invictus recovery \(placeholder\): /, '') + ').' : '') + '</p>';
+  h += '<div class="tablewrap"><table class="irectab"><thead><tr><th>Check</th><th>IREC expects</th>' + sims.map((s) => '<th>' + escIrec(s) + '</th>').join('') + '</tr></thead><tbody>';
+  per[0].forEach((r, i) => {
+    h += '<tr><td>' + r.name + '</td><td>' + r.need + '</td>' + per.map((p) => '<td class="' + p[i].st + '">' + mark[p[i].st] + ' <span>' + p[i].value + '</span></td>').join('') + '</tr>';
+  });
+  box.innerHTML = h + '</tbody></table></div>';
+}
 function drawNotes() {
+  drawIrec();
   const box = $('warnings'); box.innerHTML = '';
   for (const [cls, text] of warnings()) {
     const el = document.createElement('div'); el.className = 'warn ' + cls; el.textContent = text;

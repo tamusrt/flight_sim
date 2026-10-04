@@ -28,6 +28,7 @@ from typing import ClassVar
 
 import numpy as np
 
+from flight_sim import tumble
 from flight_sim.canopy_swing import CanopySwing
 from flight_sim.descent import (
     DescentResult,
@@ -53,6 +54,7 @@ from flight_sim.recovery_motion import (
     Separation,
 )
 from flight_sim.vehicle.mass_properties import MassPropertiesSI
+from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.visualize import RecoveryFrame
 
 _KG_PER_LB = 0.45359237
@@ -162,6 +164,7 @@ class RecoveryScheme(ABC):
         flight: list[Sample],
         config: IntegrationConfiguration,
         apogee_mass: MassPropertiesSI,
+        properties: RocketProperties | None = None,
     ) -> RecoveryPlan:
         """Fly the descent with the events where this scheme puts them.
 
@@ -170,6 +173,9 @@ class RecoveryScheme(ABC):
             config (IntegrationConfiguration): Atmosphere and gravity.
             apogee_mass (MassPropertiesSI): The rocket's mass properties after
                 the burn, which stay the same through the descent.
+            properties (RocketProperties | None): When given, the rocket is
+                flown with the 6-DOF model from apogee to the first line
+                stretch, so it can tumble (``tumble``).
         """
 
     @abstractmethod
@@ -234,6 +240,7 @@ class SingleSeparation(RecoveryScheme):
         flight: list[Sample],
         config: IntegrationConfiguration,
         apogee_mass: MassPropertiesSI,
+        properties: RocketProperties | None = None,
     ) -> RecoveryPlan:
         """Fly the descent as ``plan_recovery`` does, with this scheme's parts."""
         assert self.apogee_charge is not None
@@ -245,6 +252,7 @@ class SingleSeparation(RecoveryScheme):
             self.apogee_charge,
             mass_kg=apogee_mass.mass,
             swing=self.swing(-float(apogee_mass.cg_location[0])),
+            properties=properties,
         )
 
     def frames(self, plan: RecoveryPlan) -> Iterator[tuple[float, RecoveryFrame]]:
@@ -253,8 +261,12 @@ class SingleSeparation(RecoveryScheme):
         if swing is None:
             raise ValueError("The plan was not flown with the swing model")
         times = descent.times_s
-        stretch = int(np.searchsorted(times, plan.line_stretch_s))
         lines = np.array(swing.line_directions)
+        # the first sample with a line (the tumble's last, at line stretch, has none)
+        has_line = np.linalg.norm(lines, axis=1) > 0.0
+        stretch = int(np.searchsorted(times, plan.line_stretch_s))
+        while stretch < len(times) - 1 and not has_line[stretch]:
+            stretch += 1
         nose = NoseSwing(
             length_m=self.cord_to_nose_m + self.lines_m + self.nose_harness_to_cg_m
         )
@@ -376,6 +388,7 @@ class _MainSeparation(RecoveryScheme):
         flight: list[Sample],
         config: IntegrationConfiguration,
         apogee_mass: MassPropertiesSI,
+        properties: RocketProperties | None = None,
     ) -> RecoveryPlan:
         """Fly the descent: apogee event, then the main on its own separation."""
         assert self.main_charge is not None
@@ -399,10 +412,34 @@ class _MainSeparation(RecoveryScheme):
             coasting, config, detected, mass_kg
         )
 
+        # free fall until the first line stretch: the 6-DOF model, so it can tumble
+        start_time, start_state = apogee_time, apogee_state
+        tumbled = None
+        if properties is not None:
+            charge = self.apogee_charge
+            tumbled = tumble.resample(
+                tumble.fly(
+                    apogee_time,
+                    apogee_state,
+                    properties,
+                    config,
+                    until_s=min(stretch, apogee_time + tumble.MAX_TUMBLE_S),
+                    fire_s=fire if separation.separated else None,
+                    separation_speed_m_s=separation.speed_m_s,
+                    nose_share=(charge.nose_mass_kg / mass_kg) if charge else 0.0,
+                )
+            )
+            start_time, start_state = tumbled[-1]
+
         def fly(release_altitude_m: float) -> tuple[RecoverySystem, DescentResult]:
-            recovery = self._canopies_at(stretch - apogee_time, release_altitude_m)
-            return recovery, simulate_descent(
-                apogee_time, apogee_state, config, recovery, mass_kg=mass_kg
+            recovery = self._canopies_at(
+                max(stretch - start_time, 0.0), release_altitude_m
+            )
+            descent = simulate_descent(
+                start_time, start_state, config, recovery, mass_kg=mass_kg
+            )
+            return recovery, descent if tumbled is None else tumble.join(
+                tumbled, descent
             )
 
         _, held = fly(_NEVER_M)

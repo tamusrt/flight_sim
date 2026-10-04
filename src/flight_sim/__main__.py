@@ -32,7 +32,7 @@ from flight_sim.descent import (
 )
 from flight_sim.environment.atmosphere import LaunchSiteAtmosphere
 from flight_sim.environment.launch_rail import LaunchRail
-from flight_sim.environment.wind import UniformWind
+from flight_sim.environment.wind import LayeredWind, WindModel
 from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
 from flight_sim.flight_computer import FlightComputer
 from flight_sim.flight_event import FlightEvent
@@ -54,7 +54,11 @@ from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.engine import PropellantGrain, solid_engine_from_csv
 from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.mass_table import MassPropertiesTable
-from flight_sim.vehicle.rocket_properties import RocketProperties, TrapezoidFinSet
+from flight_sim.vehicle.rocket_properties import (
+    PitchDamping,
+    RocketProperties,
+    TrapezoidFinSet,
+)
 from flight_sim.vehicle.rocket_state import RocketState
 
 # Mass properties at ignition and burnout. The propellant mass is the one in
@@ -75,9 +79,13 @@ PAD_TEMPERATURE_K = 303.15
 PAD_PRESSURE_PA = 91432.755
 LAUNCH_LATITUDE_DEG = 31.0311
 
-# Steady wind of 3.57632 m/s blowing toward +Y, which is east, so it comes
-# from the west (azimuth 270 degrees)
-WIND = UniformWind(speed=scalar(3.57632, "m/s"), from_azimuth=scalar(270.0, "deg"))
+# Wind of 3.57632 m/s on the pad blowing toward +Y, which is east, so it comes
+# from the west (azimuth 270 degrees); it varies with height (LayeredWind)
+WIND = LayeredWind(
+    speed=scalar(3.57632, "m/s"),
+    from_azimuth=scalar(270.0, "deg"),
+    ground_m=PAD_ELEVATION_M,
+)
 
 # 10 m rail tilted 4 degrees from vertical into the wind, so leaning west
 LAUNCH_RAIL = LaunchRail(
@@ -148,10 +156,12 @@ class RocketProfile:  # pylint: disable=too-many-instance-attributes
     # Logged flight to compare against in the viewer, if there is one
     flight_data: str | None = None
     # The day's conditions; Sol Invictus's by default
-    wind: UniformWind = field(default_factory=lambda: WIND)
+    wind: WindModel = field(default_factory=lambda: WIND)
     pad_temperature_k: float = PAD_TEMPERATURE_K
     pad_elevation_m: float = PAD_ELEVATION_M
     pad_pressure_pa: float = PAD_PRESSURE_PA
+    # The air resisting pitch and yaw; estimated from the aero table when None
+    damping: PitchDamping | None = None
 
     @property
     def recovery(self) -> RecoverySystem:
@@ -287,8 +297,10 @@ MORPHEUS = RocketProfile(
         main_delay_s=1.0,
     ),
     flight_data=MORPHEUS_FLIGHT_DATA,
-    wind=UniformWind(
-        speed=scalar(12.0 * 0.44704, "m/s"), from_azimuth=scalar(270.0, "deg")
+    wind=LayeredWind(
+        speed=scalar(12.0 * 0.44704, "m/s"),
+        from_azimuth=scalar(270.0, "deg"),
+        ground_m=PAD_ELEVATION_M,
     ),
     pad_temperature_k=(91.0 - 32.0) / 1.8 + 273.15,
 )
@@ -363,7 +375,7 @@ def get_profile_properties(
         aero_file (str | None): Aero CSV to use in place of the profile's own.
     """
     dry, casing, grain = profile.mass_properties.parts(profile.motor_diameter_m)
-    return RocketProperties(
+    properties = RocketProperties(
         aero_table=aero_table_from_csv(
             aero_file or profile.aero_file,
             reference_area=scalar(profile.reference_area_m2, "m**2"),
@@ -373,7 +385,13 @@ def get_profile_properties(
         engine=solid_engine_from_csv(profile.motor_file, grain, casing),
         dry_mass_properties=dry,
         fins=profile.fins,
+        damping=profile.damping,
     )
+    if properties.damping is None:
+        properties.damping = PitchDamping.estimate(
+            properties.aero_table, profile.reference_length_m
+        )
+    return properties
 
 
 def get_default_config(profile: RocketProfile = INVICTUS) -> IntegrationConfiguration:

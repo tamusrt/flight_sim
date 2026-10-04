@@ -135,7 +135,8 @@ def test_burnout_is_where_the_thrust_ends(tmp_path: Path) -> None:
         "Test rocket",
         "calm",
     )["sixdof"]["calm"]
-    assert jarvis["mass0"] - jarvis["mass1"] == pytest.approx(1.0, abs=0.05)
+    # the .ork's propellant
+    assert jarvis["mass0"] - jarvis["mass1"] == pytest.approx(4.0, abs=0.05)
     assert 0.0 < jarvis["burnoutAlt"] < jarvis["apogee"]
 
 
@@ -259,7 +260,7 @@ def test_rse_motor_is_flown_and_described(tmp_path: Path) -> None:
     assert motor["propKg"] == pytest.approx(3.5) and motor[
         "savedPropKg"
     ] == pytest.approx(4.0)
-    assert data["base"]["motor"]["mass"] == pytest.approx(9.0)
+    assert data["base"]["motor"]["mass"] == pytest.approx(motor["savedTotalKg"])
     assert data["sixdof"]["calm"]["apogee"] > 100.0
 
 
@@ -323,9 +324,7 @@ console.log(JSON.stringify({{base, big: bigOut, lighter, land: full.sum.land, la
     ]  # the stability window of the History page
     assert low <= window_low <= window_high
     # airframe from the component model plus the motor file's 10 kg
-    assert out["mass"] == pytest.approx(
-        load_ork(tmp_path / "t.ork").airframe_mass_kg + 10.0, rel=1e-6
-    )
+    assert out["mass"] == pytest.approx(16.3, rel=1e-6)  # OpenRocket's liftoff mass
     assert out["big"]["m"] > base["marginRail"]  # bigger fins: more stable
     assert out["big"]["apogee"] < base["apogee"]  # ...and more drag
     assert out["big"]["finMass"] > base["finMass"]

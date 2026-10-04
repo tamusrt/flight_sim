@@ -62,8 +62,10 @@ class CanopySwing:
             still gives, streaming behind on its lines. With none at all the
             rocket and canopy would fall together and nothing would swing
             the canopy back into the flow.
-        turbulence (float): Gust standard deviation as a share of the wind.
-            This is a gusty day: it swings the rocket up to about 20 degrees
+        turbulence (float): Random gust standard deviation as a share of the
+            wind. Off (0) by default: the wind's own changes with height
+            (``LayeredWind``) swing the canopy instead, the same on every run.
+            1.5 is a gusty day, swinging the rocket up to about 20 degrees
             under the open main, the size NASA's parachute tests report.
         gust_time_s (float): Correlation time of the gusts, a few swing
             periods so the canopy keeps being pushed.
@@ -76,7 +78,7 @@ class CanopySwing:
     full_drag_deg: float = 20.0
     no_drag_deg: float = 75.0
     collapsed_drag_fraction: float = 0.03
-    turbulence: float = 1.5
+    turbulence: float = 0.0
     gust_time_s: float = 8.0
     seed: int = 11
 

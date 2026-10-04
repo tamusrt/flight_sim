@@ -85,7 +85,16 @@ class TelemetryLog:
         self._config = config
         columns: tuple[str, ...] = ("t", "pos", "vel", "quat", "thrust", "mass", "mach")
         columns += ("q", "p", "mdot")
-        columns += ("cg", "cp", "nose_dir", "nose_sep", "line", "swing", "drag")
+        columns += (
+            "cg",
+            "cp",
+            "nose_dir",
+            "nose_sep",
+            "line",
+            "swing",
+            "drag",
+            "wind_at",
+        )
         self.rows: dict[str, list[Any]] = {k: [] for k in columns}
         self.wind = [0.0, 0.0, 0.0]
         self.events: list[dict[str, Any]] = []
@@ -111,6 +120,7 @@ class TelemetryLog:
         air, wind = air_at(self._config, pos[0])
         if not self.rows["t"]:
             self.wind = [float(x) for x in wind]
+        self.rows["wind_at"].append([round(float(x), 3) for x in wind])
         airspeed = math.dist(velocity, [float(x) for x in wind])
         mach = airspeed / air.speed_of_sound
         q = state.orientation

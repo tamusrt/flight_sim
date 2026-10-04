@@ -2,12 +2,14 @@
 
 The geometry, masses and launch conditions come from the ``.ork``; the
 aerodynamics come from the RASAero CSV the team made for the same geometry; the
-motor is the ``.eng`` or ``.rse`` given (its thrust curve and its propellant
-and total mass, so a motor change needs no new ``.ork``). Pass the same ``.ork``
+motor is the ``.eng`` or ``.rse`` given for its thrust curve, with the motor's
+total and propellant mass from the ``.ork``'s saved simulation, so the starting
+mass matches OpenRocket exactly. Pass the same ``.ork``
 that the CSV was made from: the sim cannot tell whether the two still agree.
 
-The saved OpenRocket simulation named ``sim`` supplies the launch rod, wind
-and site, since those are not part of the rocket itself.
+The saved OpenRocket simulation named ``sim`` supplies the launch rod, the
+average wind (flown as ``LayeredWind``, uneven with height but repeatable) and
+the site, since those are not part of the rocket itself.
 
 An ``.ork`` that carries no parachutes gets the original descent: the recovery
 Sol Invictus flies (a reefed 120 in main on one separation), with the body
@@ -26,9 +28,10 @@ from pathlib import Path
 
 from flight_sim.__main__ import RECOVERY, RocketProfile
 from flight_sim.environment.launch_rail import LaunchRail
-from flight_sim.environment.wind import UniformWind
+from flight_sim.environment.wind import LayeredWind
 from flight_sim.motor_file import MotorFile, eng_for_sim, load_motor
 from flight_sim.ork import (
+    Fins,
     Motor,
     OrkRocket,
     load_ork,
@@ -39,7 +42,7 @@ from flight_sim.recovery_extension import EJECTION_CHARGE, FLIGHT_COMPUTER
 from flight_sim.recovery_systems import ReefedSingleSeparation
 from flight_sim.units import scalar
 from flight_sim.vehicle.mass_table import MassPropertiesTable
-from flight_sim.vehicle.rocket_properties import TrapezoidFinSet
+from flight_sim.vehicle.rocket_properties import PitchDamping, TrapezoidFinSet
 
 _LAPSE_K_PER_M = 0.0065
 # Drag coefficient of the rocket falling roughly nose-first, as in __main__
@@ -81,15 +84,30 @@ def table_from(ork: OrkRocket, motor: Motor, roll_ratio: float) -> MassPropertie
 
 
 def motor_with_file(saved: Motor, motor_file: MotorFile) -> Motor:
-    """The motor a thrust-curve file describes, where OpenRocket had the saved one.
+    """The motor to fly: thrust curve from the file, masses from the ``.ork``.
 
-    The file's propellant and total mass win over the ones inferred from the
-    saved simulation, so a newer motor file is flown with its own masses.
+    The total and propellant mass are the ones OpenRocket flew in the saved
+    simulation (liftoff mass less the airframe, and the drop to burnout), so the
+    starting and burnout masses match OpenRocket exactly. The motor file's own
+    masses are used only when the saved simulation gives none.
     """
     return replace(
         saved,
-        mass_kg=motor_file.total_kg or saved.mass_kg,
-        propellant_kg=motor_file.propellant_kg or saved.propellant_kg,
+        mass_kg=saved.mass_kg if saved.mass_kg > 0 else motor_file.total_kg,
+        propellant_kg=(
+            saved.propellant_kg if saved.propellant_kg > 0 else motor_file.propellant_kg
+        ),
+    )
+
+
+def _fin_centre_m(fins: Fins) -> float:
+    """Centre of one fin's area, metres aft of the nose tip."""
+    root, tip, sweep = fins.root_chord_m, fins.tip_chord_m, fins.sweep_m
+    leading = fins.root_trailing_edge_x_m - root
+    if root + tip <= 0:
+        return leading
+    return leading + (sweep * (root + 2 * tip) + root**2 + root * tip + tip**2) / (
+        3 * (root + tip)
     )
 
 
@@ -136,8 +154,8 @@ def profile_from_ork(  # pylint: disable=too-many-locals
             the first one in the file when None.
         name (str | None): Name for the viewer; the design's own when None.
         fin_misalignment_deg (float): Assumed fin twist that spins the rocket.
-        motor (Motor | None): The motor's masses; from the motor file when
-            None (the saved simulation's where the file gives none).
+        motor (Motor | None): The motor's masses; from the saved simulation
+            in the ``.ork`` when None (the motor file's where it gives none).
 
     Returns:
         RocketProfile: Ready to fly, down to the ground under the original descent.
@@ -176,9 +194,15 @@ def profile_from_ork(  # pylint: disable=too-many-locals
             azimuth=scalar(cond["launchroddirection"], "deg"),
         ),
         scheme=original_descent(ork.reference_area_m2),
-        wind=UniformWind(
+        damping=PitchDamping(
+            body_length_m=ork.length_m,
+            body_diameter_m=ork.reference_diameter_m,
+            fin_station_m=_fin_centre_m(fins),
+        ),
+        wind=LayeredWind(
             speed=scalar(cond["windaverage"], "m/s"),
             from_azimuth=scalar(math.degrees(cond["winddirection"]), "deg"),
+            ground_m=cond["launchaltitude"],
         ),
         pad_temperature_k=pad_k,
         pad_elevation_m=cond["launchaltitude"],
