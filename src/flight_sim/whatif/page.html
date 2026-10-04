@@ -149,7 +149,7 @@
     <p class="legend" id="weathernote"></p>
     <h2 class="sec">Ascent</h2>
     <div class="tablewrap"><table id="climb"></table></div>
-    <p class="legend">The grey <b>difference</b> rows compare Jarvis with OpenRocket: a percentage for apogee, speed, Mach and Max-Q, and the difference in stability margin for the three stability columns.</p>
+    <p class="legend">The grey <b>difference</b> rows compare Jarvis with OpenRocket (and with RASAero II, where it was run for that condition): a percentage for apogee, speed, Mach and Max-Q, and the difference in stability margin for the three stability columns. RASAero II's Flight window gives only the apogee and the top speed.</p>
     <h2 class="sec">Descent</h2>
     <div class="tablewrap"><table id="descent"></table></div>
     <p class="legend" id="descentnote"></p>
@@ -161,10 +161,10 @@
       <div class="tablewrap"><table id="geometry"></table></div>
     </details>
     <details><summary class="big">About these predictions</summary>
-      <p class="legend"><b>Jarvis</b> is the team's flight simulator, part of the <code>flight_sim</code> repository. It simulates the whole flight of the OpenRocket design in six degrees of freedom, from the launch rail to landing, using the aerodynamic table from RASAero II. <b>VISION</b> replays the same simulated flight in 3D. The <b>OpenRocket</b> lines are OpenRocket's own simulation of the same design, for comparison. If the two disagree by a lot, find out why before relying on either.</p>
+      <p class="legend"><b>Jarvis</b> is the team's flight simulator, part of the <code>flight_sim</code> repository. It simulates the whole flight of the OpenRocket design in six degrees of freedom, from the launch rail to landing, using the aerodynamic table from RASAero II. <b>VISION</b> replays the same simulated flight in 3D. The <b>OpenRocket</b> lines are OpenRocket's own simulation of the same design, for comparison. <b>RASAero II</b>'s own flight results, typed in from its Flight window, are shown for the launch conditions they were run for (the apogee table, the climb table and a diamond on the altitude chart). If they disagree by a lot, find out why before relying on any of them.</p>
       <ul class="legend">
-        <li><b>Motor:</b> the newest thrust curve (<code>.eng</code> or <code>.rse</code>) in the rocket's thrust-curve folder.</li>
-        <li><b>Descent:</b> the OpenRocket design has no parachutes yet, so Jarvis uses the Sol Invictus recovery system as a placeholder. OpenRocket's descent results are not shown for the same reason.</li>
+        <li><b>Motor:</b> the thrust curve the History tab flies (<code>default_motor</code> in <code>aero_modeling/sim_config.json</code>), otherwise the newest <code>.eng</code> or <code>.rse</code> in the rocket's thrust-curve folder. The masses come from the OpenRocket design.</li>
+        <li><b>Descent:</b> the OpenRocket design has no parachutes yet, so Jarvis uses the Sol Invictus recovery system as a placeholder. OpenRocket's descent results are not shown for the same reason. The descent is the full model VISION replays (flight computer, ejection, tumble, shock cord and swing under the canopy), so the descent table matches the flight in VISION.</li>
         <li><b>Not modeled:</b> fin flutter, structural loads on the fins and rail buttons, and roll.</li>
         <li><b>When to regenerate the RASAero table:</b> after a large shape change, such as a fin dimension changing by about 25% or more, a different number of fins, a new nose shape or body diameter, or adding a boat tail.</li>
       </ul>
@@ -274,6 +274,9 @@ const MARGIN = (cal, geo) => (cal === null || cal === undefined ? null : state.s
 const marginUnit = () => (state.stab === 'pct' ? '% L' : 'cal');
 const marginDec = () => (state.stab === 'pct' ? 1 : 2);
 const orOf = (sim) => DATA.openrocket[sim];
+// RASAero II's own results (typed in from its Flight window), for the launch condition they match
+const RAS = (DATA.rasaero && DATA.rasaero.runs) || [];
+const rasOf = (sim) => RAS.find((r) => r.sim === sim) || null;
 
 /* ---------- the three lines ---------- */
 const LINES = [
@@ -363,6 +366,16 @@ function drawChart() {
       traces.push({ type: 'scatter', mode: 'lines', name: (multi ? sim + ' · ' : '') + L.name, x: p.x, y,
                     line: { color: lineColor(L.key, sim), width: L.width, dash: L.dash },
                     hovertemplate: `${multi ? sim + ' · ' : ''}${L.name}: %{y:.${U1.d + (diff ? 1 : 0)}f}${U1.u ? ' ' + U1.u : ''}<extra></extra>` });
+    }
+  }
+  if (!diff && M.key === 'alt' && state.lines.j) {   // RASAero II's apogee, where it was run for this condition
+    for (const sim of sims) {
+      const r = rasOf(sim);
+      if (!r || !r.apogeeT) continue;
+      const f = U.alt().f;
+      traces.push({ type: 'scatter', mode: 'markers', name: (multi ? sim + ' · ' : '') + 'RASAero II apogee', x: [r.apogeeT], y: [r.apogee * f],
+                    marker: { symbol: 'diamond', size: 11, color: css('--fg'), line: { color: lineColor('j', sim), width: 2 } },
+                    hovertemplate: 'RASAero II apogee (' + r.label + '): %{y:.0f} ' + U.alt().u + ' at %{x:.1f} s<extra></extra>' });
     }
   }
   $('chartnote').textContent = note.length ? note.join(', ') + (note.length > 1 ? ' have' : ' has') + ' no ' + M.label.toLowerCase() + ' data, so ' + (note.length > 1 ? 'they are' : 'it is') + ' not shown.' : '';
@@ -523,17 +536,25 @@ function drawClimb() {
     h += row('j', 'Jarvis', jv);
     if (ov) h += row('or', 'OpenRocket', ov);
     if (ov) h += diff('Jarvis against OpenRocket', ov);
+    const ras = rasOf(sim);
+    if (ras) {   // RASAero gives only the apogee and the top speed
+      const rv = [ras.apogee * A.f, ras.vmax === null ? null : ras.vmax * V.f, null, null, null, null, null];
+      h += '<tr><td><span class="sw" style="background:' + css('--fg') + '"></span>' + sim + ' · RASAero II (' + ras.label + ')</td>' + cols.map((c, i) => '<td>' + fmt(rv[i], c[2]) + '</td>').join('') + '</tr>';
+      h += diff('Jarvis against RASAero II', rv);
+    }
   }
   $('climb').innerHTML = h + '</tbody>';
 }
 function drawWeather() {
   const A = U.alt(), ref = ticked()[0] || DATA.defaultSim;
-  const rows = SIMS.map((sim) => ({ sim, j: sixOf(sim).apogee, o: orOf(sim) ? orOf(sim).m.apogee : null }));
+  const rows = SIMS.map((sim) => ({ sim, j: sixOf(sim).apogee, o: orOf(sim) ? orOf(sim).m.apogee : null, r: rasOf(sim) ? rasOf(sim).apogee : null }));
   const hasOr = rows.some((r) => r.o !== null && r.o !== undefined);
+  const hasRas = rows.some((r) => r.r !== null);
   const top = Math.max(...rows.map((r) => Math.max(r.j, r.o || 0)));
   const refJ = rows.find((r) => r.sim === ref).j;
   let h = '<thead><tr><th>Launch condition</th><th>Jarvis apogee (' + A.u + ')</th><th></th><th>Relative to ' + ref + ' (' + A.u + ')</th>' +
     (hasOr ? '<th>OpenRocket apogee (' + A.u + ')</th><th>Jarvis vs OpenRocket</th>' : '') +
+    (hasRas ? '<th>RASAero II apogee (' + A.u + ')</th><th>Jarvis vs RASAero II</th>' : '') +
     '</tr></thead><tbody>';
   for (const r of rows) {
     const colour = state.sel.has(r.sim) ? lineColor('j', r.sim) : css('--flat');
@@ -541,11 +562,14 @@ function drawWeather() {
     const vs = r.sim === ref ? 'reference' : signed((r.j - refJ) * A.f, 0) + '<span class="d">' + signed((r.j / refJ - 1) * 100, 1) + '%</span>';
     h += '<tr class="' + (r.sim === ref ? 'refrow' : '') + '" title="' + windText(r.sim) + '"><td>' + sw + r.sim + '</td><td>' + fmt(r.j * A.f, 0) + '</td>' +
       '<td class="barcell"><div class="apbar"><i style="width:' + (r.j / top * 100).toFixed(1) + '%;background:' + colour + '"></i></div></td><td>' + vs + '</td>' +
-      (hasOr ? '<td>' + (r.o ? fmt(r.o * A.f, 0) : '–') + '</td><td>' + (r.o ? signed((r.j / r.o - 1) * 100, 1) + '%' : '–') + '</td>' : '') + '</tr>';
+      (hasOr ? '<td>' + (r.o ? fmt(r.o * A.f, 0) : '–') + '</td><td>' + (r.o ? signed((r.j / r.o - 1) * 100, 1) + '%' : '–') + '</td>' : '') +
+      (hasRas ? '<td>' + (r.r ? fmt(r.r * A.f, 0) : '–') + '</td><td>' + (r.r ? signed((r.j / r.r - 1) * 100, 1) + '%' : '–') + '</td>' : '') + '</tr>';
   }
   $('weather').innerHTML = h + '</tbody>';
-  $('weathernote').textContent = 'Predicted apogee for each saved launch condition, from Jarvis and from OpenRocket. The bars share one scale. ' +
-    'The first condition selected on the left is the reference. Hover over a row to see its wind and launch rail.';
+  const unmatched = RAS.filter((r) => !r.sim);
+  $('weathernote').textContent = 'Predicted apogee for each saved launch condition, from Jarvis and from OpenRocket' + (RAS.length ? ', with RASAero II\'s own result where it was run for the same condition (from ' + DATA.rasaero.file + ')' : '') + '. The bars share one scale. ' +
+    'The first condition selected on the left is the reference. Hover over a row to see its wind and launch rail.' +
+    unmatched.map((r) => ' RASAero II, ' + r.label + ': ' + fmt(r.apogee * A.f, 0) + ' ' + A.u + (r.apogeeT ? ' at ' + fmt(r.apogeeT, 1) + ' s' : '') + '. The design has no launch condition to match it' + (r.simAsked ? ' (looked for "' + r.simAsked + '")' : '') + '; add one in OpenRocket to compare Jarvis with it.').join('');
 }
 function drawDescent() {
   const sims = ticked(), A = U.alt(), V = U.vel();
@@ -670,11 +694,13 @@ function warnings() {
 }
 /* ---------- IREC checks (Design, Test & Evaluation Guide) ---------- */
 const escIrec = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const IREC = { stab: 1.5, stabMax: 4.0, stabDynMax: 6.0, railRec: 30.48, railMin: 15.24, drogueLo: 20, drogueHi: 40, mainLand: 11.0, mainAlt: 457.2 };
+const IREC = { stab: 1.5, stabMax: 4.0, stabDynMax: 6.0, railRec: 30.48, railMin: 15.24, drogueLo: 20, drogueHi: 40, mainLand: 11.0, mainAlt: 457.2,
+               apogeeLo: 6400.8, apogeeHi: 11887.2 };   // apogee 21,000 to 39,000 ft above the pad, or the flight is disqualified
 function irecRows(sim) {
   const s = sixOf(sim), L = s.landing || {}, V = U.vel(), A = U.alt(), rows = [];
   const sp = (v) => fmt(v * V.f, 0) + ' ' + V.u, al = (v) => fmt(v * A.f, 0) + ' ' + A.u;
   const row = (name, value, need, ok, warn) => rows.push({ name, value, need, st: ok === null ? 'na' : ok ? 'ok' : warn ? 'warn' : 'bad' });
+  row('Apogee above the pad', al(s.apogee), al(IREC.apogeeLo) + ' to ' + al(IREC.apogeeHi) + (A.u === 'ft' ? '' : ' (21,000 to 39,000 ft)') + '; outside it the flight is disqualified', s.apogee >= IREC.apogeeLo && s.apogee <= IREC.apogeeHi);
   row('Stability at rail exit', s.marginRail === null ? '–' : fmt(s.marginRail, 2) + ' cal', 'at least 1.5 cal', s.marginRail === null ? null : s.marginRail >= IREC.stab);
   row('Lowest stability, rail exit to apogee', s.marginLo === null ? '–' : fmt(s.marginLo, 2) + ' cal', 'at least 1.5 cal', s.marginLo === null ? null : s.marginLo >= IREC.stab);
   row('Static stability at rail exit', s.marginRail === null ? '–' : fmt(s.marginRail, 2) + ' cal', 'at most 4 cal', s.marginRail === null ? null : s.marginRail <= IREC.stabMax, true);

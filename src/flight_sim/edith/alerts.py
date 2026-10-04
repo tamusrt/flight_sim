@@ -31,6 +31,10 @@ APOGEE_AMBER = 0.40
 
 # What each check means, in plain words (shown under the check's name)
 WHY: dict[str, str] = {
+    "apogee_window": (
+        "The rocket peaks below 21,000 ft or above 39,000 ft above the pad, "
+        "which disqualifies the flight."
+    ),
     "rail_exit_floor": (
         "The rocket leaves the launch rail too slowly to fly straight "
         "(IREC minimum 15.24 m/s, 50 ft/s)."

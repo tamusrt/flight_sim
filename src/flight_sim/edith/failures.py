@@ -7,6 +7,8 @@ the same split: a *failure* is red, a *warning* is amber. On top of those, a
 run also fails for the things that would end an IREC flight or lose major
 points whatever the guide's numbers say:
 
+* the apogee is outside 21,000 to 39,000 ft above the pad (the flight is
+  disqualified);
 * the apogee charge did not separate the rocket (nothing comes out);
 * a canopy never opened (the descent is ballistic);
 * a canopy was opened harder than it is rated for (it tears);
@@ -31,6 +33,8 @@ STABILITY_DYNAMIC_MAX_CAL = 6.0
 DROGUE_RANGE_M_S = (20.0, 40.0)
 MAIN_ALTITUDE_MAX_M = 457.2
 MAIN_LANDING_MAX_M_S = 11.0
+# Apogee above the pad outside this range disqualifies the flight (21,000 to 39,000 ft)
+APOGEE_WINDOW_M = (21000 * 0.3048, 39000 * 0.3048)
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,15 @@ class Check:
 
 
 CHECKS: tuple[Check, ...] = (
+    Check(
+        "apogee_window",
+        "Apogee 21,000 to 39,000 ft above the pad",
+        "fail",
+        "apogee_m",
+        low=APOGEE_WINDOW_M[0],
+        high=APOGEE_WINDOW_M[1],
+        tolerance=30.0,
+    ),
     Check(
         "rail_exit_floor",
         f"Rail exit speed at least {RAIL_MINIMUM_M_S:g} m/s",

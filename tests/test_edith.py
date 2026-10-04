@@ -175,6 +175,7 @@ def test_the_inputs_are_all_described() -> None:
 
 def _good() -> dict[str, object]:
     return {
+        "apogee_m": 9000.0,
         "rail_v": 40.0,
         "rail_margin": 2.5,
         "margin_lo": 2.0,
@@ -203,6 +204,8 @@ def test_a_good_run_triggers_nothing() -> None:
     ("key", "value", "check"),
     [
         ("rail_v", 14.0, "rail_exit_floor"),
+        ("apogee_m", 6300.0, "apogee_window"),
+        ("apogee_m", 11950.0, "apogee_window"),
         ("rail_margin", 1.2, "stability_rail"),
         ("margin_lo", 1.4, "stability_lowest"),
         ("land_v_vert", 11.0, "landing_speed"),

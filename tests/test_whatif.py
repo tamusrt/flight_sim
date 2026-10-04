@@ -363,3 +363,84 @@ def test_rasaero_fin_position_is_read_from_the_base_of_the_tube(tmp_path: Path) 
     assert "finFromBase" not in read_rasaero_geometry(
         write_cdx(tmp_path / "u.CDX1"), ork
     )
+
+
+def _write_ras(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "label": "no wind, 5° rail",
+                        "sim": "calm",
+                        "apogee_ft": 10000,
+                        "max_velocity_ft_s": 1000.0,
+                        "time_to_apogee_s": 20.5,
+                    },
+                    {"label": "no wind, 2° rail", "sim": None, "apogee_ft": 11000},
+                    {
+                        "label": "a condition the design lacks",
+                        "sim": "windy",
+                        "apogee_ft": 9000,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_rasaero_results_are_read_in_metres(tmp_path: Path) -> None:
+    """RASAero's typed-in results are in metres, matched to the design's conditions."""
+    runs = build.read_rasaero_results(_write_ras(tmp_path / "r.json"), ["calm"])
+    assert [r["sim"] for r in runs] == ["calm", None, None]
+    assert runs[0]["apogee"] == pytest.approx(3048.0) and runs[0][
+        "vmax"
+    ] == pytest.approx(304.8)
+    assert runs[0]["apogeeT"] == 20.5 and runs[1]["vmax"] is None
+    assert runs[2]["simAsked"] == "windy", (
+        "the page can say which condition it looked for"
+    )
+
+
+def test_jarvis_descent_is_the_full_model_vision_flies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page's descent comes from the recovery model VISION replays, unchanged.
+
+    VISION (``visual_run``) flies the descent with
+    ``recovery_extension.plan_full_recovery``; Jarvis must use the same function
+    on the same climb, so the descent table and VISION show the same flight.
+    """
+    real = build.recovery_extension.plan_full_recovery
+    plans: list[Any] = []
+
+    def spy(flight: list[Any], *args: Any, **kwargs: Any) -> Any:
+        plan = real(flight, *args, **kwargs)
+        plans.append((flight, plan))
+        return plan
+
+    monkeypatch.setattr(build.recovery_extension, "plan_full_recovery", spy)
+    data = build_data(
+        write_ork(tmp_path / "t.ork"),
+        write_aero_csv(tmp_path / "t.csv"),
+        write_eng(tmp_path / "t.eng"),
+        "Test rocket",
+        "calm",
+        rasaero_results=_write_ras(tmp_path / "r.json"),
+    )
+    assert (
+        data["rasaero"]["file"] == "r.json"
+        and data["rasaero"]["runs"][0]["sim"] == "calm"
+    )
+    assert len(plans) == 1, "one descent per launch condition, from the full model"
+    flight, plan = plans[0]
+    assert len(flight) > 100, "the climb is passed step by step, as in VISION"
+    assert flight[-1][0] == pytest.approx(data["sixdof"]["calm"]["apogeeT"], abs=0.06)
+    landing = data["sixdof"]["calm"]["landing"]
+    last = plan.descent.states[-1].position.m_as("m")
+    assert landing["t"] == pytest.approx(plan.descent.times_s[-1], abs=0.06)
+    assert landing["drift"] == pytest.approx(
+        (last[1] ** 2 + last[2] ** 2) ** 0.5, abs=0.06
+    )

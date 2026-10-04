@@ -31,15 +31,14 @@ from xml.etree import ElementTree as ET
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
-from flight_sim import tumble
+from flight_sim import recovery_extension
 from flight_sim.__main__ import (
     get_default_config,
     get_launch_state,
     get_profile_properties,
 )
-from flight_sim.descent import DescentResult, ReefedParachute, air_at, simulate_descent
-from flight_sim.events import APOGEE
-from flight_sim.flight_computer import _eject, _retime
+from flight_sim.descent import DescentResult, ReefedParachute, air_at
+from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
 from flight_sim.integration import adaptive_step
 from flight_sim.motor_file import load_motor
 from flight_sim.ork import OrkRocket, SavedSim, load_ork, saved_motor
@@ -387,15 +386,25 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
     """Fly the 6-DOF sim to apogee, then down under the descent.
 
     This is Jarvis: every number and line the page shows for it comes from this flight.
+    The flight is the one VISION replays: the same climb (every step kept, the same
+    events) and the same full recovery model (``recovery_extension``: the flight
+    computer, the ejection, the tumble, the shock cord and the swing under the canopy),
+    so the page's descent numbers are the numbers of the flight in VISION.
     """
     properties = get_profile_properties(profile)
     state = get_launch_state(profile)
     config = get_default_config(profile)
     climb = _Climb(properties, config)
+    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
+    flight: list[tuple[float, Any]] = []
     dt = scalar(0.01, "s")
     time = 0.0
     next_sample = 0.0
+    hit = None
     while True:
+        flight.append((time, state))
+        if hit is APOGEE or hit is IMPACT:
+            break
         if time >= next_sample - 1e-9:
             climb.add(time, state)
             while next_sample <= time + 1e-9:  # one row per 0.1 s, however big the step
@@ -403,7 +412,7 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
         if time > 400:
             break
         state, taken, dt, hit = adaptive_step(
-            time, state, properties, config, dt, events=(APOGEE,)
+            time, state, properties, config, dt, events=events
         )
         time += float(taken.m_as("s"))
         if hit is not None and hit.name == "rail exit":
@@ -411,20 +420,21 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
             climb.rail_margin = climb.margin(state, time)
         if hit is APOGEE:
             climb.add(time, state)
-            break
     result: dict[str, Any] = climb.figures()
     series = climb.series()
     if profile.scheme is not None and hit is APOGEE:
         mass = properties.mass_properties(time).mass
-        descent = _tumble_then_descend(profile, properties, config, time, state, mass)
-        # one sample a second of the way down (the descent is sampled every 0.1 s)
-        down = [
-            _row(t, s)
-            for i, (t, s) in enumerate(
-                zip(descent.times_s, descent.states, strict=True)
-            )
-            if i % 10 == 9 or i == len(descent.times_s) - 1
-        ]
+        plan = recovery_extension.plan_full_recovery(
+            flight, config, profile.scheme, properties.mass_properties(time), properties
+        )
+        descent = plan.descent
+        # about one sample a second of the way down, and the last one
+        down = []
+        next_t = float(descent.times_s[0]) + 1.0
+        for i, (t, s) in enumerate(zip(descent.times_s, descent.states, strict=True)):
+            if t >= next_t or i == len(descent.times_s) - 1:
+                down.append(_row(t, s))
+                next_t = float(t) + 1.0
         result["landing"] = _landing(descent, mass)
         series["t"] += [round(float(r[0]), 2) for r in down]
         series["alt"] += [round(float(r[1]), 1) for r in down]
@@ -437,48 +447,6 @@ def _six_dof(profile: Any) -> dict[str, Any]:  # pylint: disable=too-many-locals
             series[key] += [None] * len(down)
     result.update(series)
     return result
-
-
-def _tumble_then_descend(  # pylint: disable=too-many-arguments
-    profile: Any,
-    properties: Any,
-    config: Any,
-    apogee_s: float,
-    state: Any,
-    mass_kg: float,
-) -> DescentResult:
-    """From apogee: tumble (6-DOF) until line stretch, then the point-mass descent.
-
-    The separation charge fires the flight computer's delay after apogee and the
-    canopy starts to open at line stretch, as in VISION; until then the rocket
-    is free to turn over (``flight_sim.tumble``). Then the cheaper point-mass
-    descent takes over from where the tumble left the rocket.
-    """
-    scheme = profile.scheme
-    charge = getattr(scheme, "apogee_charge", None)
-    if charge is None:
-        return simulate_descent(
-            apogee_s, state, config, profile.recovery, mass_kg=mass_kg
-        )
-    fire = apogee_s + scheme.computer.apogee_delay_s
-    before = tumble.fly(apogee_s, state, properties, config, until_s=fire)
-    separation = _eject(before[-1][1], config, charge, mass_kg)
-    stretch = fire + separation.line_stretch_s if separation.separated else fire
-    after = tumble.fly(
-        fire,
-        before[-1][1],
-        properties,
-        config,
-        until_s=stretch,
-        fire_s=fire if separation.separated else None,
-        separation_speed_m_s=separation.speed_m_s,
-        nose_share=charge.nose_mass_kg / mass_kg,
-    )
-    tumbled = tumble.resample(before + after[1:], 0.1)
-    start_s, start = tumbled[-1]
-    recovery = _retime(profile.recovery, 0.0, None)
-    descent = simulate_descent(start_s, start, config, recovery, mass_kg=mass_kg)
-    return tumble.join(tumbled, descent)
 
 
 def _recovery_data(profile: Any) -> dict[str, Any] | None:
@@ -536,6 +504,41 @@ def viewer_paths(sims: list[str]) -> dict[str, str]:
     return paths
 
 
+_FT = 0.3048
+
+
+def read_rasaero_results(path: Path, sims: list[str]) -> list[dict[str, Any]]:
+    """RASAero II's own flight results, typed in from its Flight window.
+
+    The file (JSON) has a ``runs`` list; each run has a ``label``, the ``sim`` it
+    matches in the OpenRocket design (or null), and ``apogee_ft``,
+    ``max_velocity_ft_s`` and ``time_to_apogee_s`` as RASAero shows them. They are
+    returned in metres and seconds, with ``sim`` set to None when the design has no
+    launch condition of that name.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    runs = []
+    for run in data.get("runs", []):
+        sim = run.get("sim")
+        runs.append(
+            {
+                "label": str(run.get("label", "")),
+                "sim": sim if sim in sims else None,
+                "simAsked": sim,
+                "apogee": run["apogee_ft"] * _FT,
+                "vmax": (
+                    None
+                    if run.get("max_velocity_ft_s") is None
+                    else run["max_velocity_ft_s"] * _FT
+                ),
+                "apogeeT": run.get("time_to_apogee_s"),
+                "railDeg": run.get("rail_deg"),
+                "windMph": run.get("wind_mph"),
+            }
+        )
+    return runs
+
+
 def build_data(  # pylint: disable=too-many-locals,too-many-arguments
     ork_path: Path,
     aero_csv: Path,
@@ -547,6 +550,7 @@ def build_data(  # pylint: disable=too-many-locals,too-many-arguments
     motor_note: str = "",
     history_site: Path | None = None,
     history_motor: str = "",
+    rasaero_results: Path | None = None,
 ) -> dict[str, Any]:
     """Everything the page needs, as one JSON-able dict.
 
@@ -603,6 +607,14 @@ def build_data(  # pylint: disable=too-many-locals,too-many-arguments
         "openrocketMotor": history_motor,
         "sixdof": six,
         "viewers": viewer_paths(list(ork.sims)),
+        "rasaero": (
+            None
+            if rasaero_results is None
+            else {
+                "file": rasaero_results.name,
+                "runs": read_rasaero_results(rasaero_results, list(ork.sims)),
+            }
+        ),
     }
 
 
@@ -639,6 +651,12 @@ def write_viewers(
     ``viewer/index.html`` is the default simulation's, as it always was;
     ``viewer/sims.json`` lists them for the History page.
     """
+    fly_viewers(args, out_dir, paths)
+    return finish_viewers(args, out_dir, paths, default)
+
+
+def fly_viewers(args: argparse.Namespace, out_dir: Path, paths: dict[str, str]) -> None:
+    """Fly every saved simulation and write its 3D viewer page (in parallel)."""
     names = list(paths)
     with ThreadPoolExecutor(max_workers=min(len(names), 4)) as pool:
         list(
@@ -646,6 +664,12 @@ def write_viewers(
                 lambda sim: _write_one_viewer(args, out_dir / paths[sim], sim), names
             )
         )
+
+
+def finish_viewers(
+    args: argparse.Namespace, out_dir: Path, paths: dict[str, str], default: str
+) -> Path:
+    """Copy the default simulation's viewer to ``viewer/index.html``; list them all."""
     first = out_dir / "viewer" / "index.html"
     shutil.copyfile(out_dir / paths[default], first)
     manifest = {
@@ -683,6 +707,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--no-viewer", action="store_true")
     parser.add_argument(
+        "--rasaero-results",
+        default=None,
+        help="RASAero II's flight results (JSON), shown next to Jarvis and OpenRocket",
+    )
+    parser.add_argument(
         "--rasaero",
         default=None,
         help="the RASAero .CDX1 the aero CSV was made from (default: same as the .ork)",
@@ -691,6 +720,16 @@ def main(argv: list[str] | None = None) -> None:
     if args.out is None:
         parser.error("--out is required")
     out = Path(args.out)
+    # VISION's flights run in their own processes while Jarvis flies the same flights
+    # here for the page, so the two share the computer's cores instead of taking turns
+    flying = ThreadPoolExecutor(max_workers=1)
+    viewers_done = (
+        None
+        if args.no_viewer
+        else flying.submit(
+            fly_viewers, args, out, viewer_paths(list(load_ork(args.ork).sims))
+        )
+    )
     data = build_data(
         Path(args.ork),
         Path(args.aero),
@@ -701,11 +740,16 @@ def main(argv: list[str] | None = None) -> None:
         motor_note=args.motor_note,
         history_site=None if args.history_site is None else Path(args.history_site),
         history_motor=args.history_motor,
+        rasaero_results=(
+            None if args.rasaero_results is None else Path(args.rasaero_results)
+        ),
     )
     print(f"predictions page: {write_page(data, out)}")
-    if not args.no_viewer:
-        shown = write_viewers(args, out, data["viewers"], data["defaultSim"])
+    if viewers_done is not None:
+        viewers_done.result()  # a viewer that failed stops the build here, as before
+        shown = finish_viewers(args, out, data["viewers"], data["defaultSim"])
         print(f"3D viewers: {shown.parent} ({len(data['viewers'])} flights)")
+    flying.shutdown()
 
 
 if __name__ == "__main__":
