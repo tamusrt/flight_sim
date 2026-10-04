@@ -208,7 +208,6 @@ def test_a_good_run_triggers_nothing() -> None:
         ("apogee_m", 11950.0, "apogee_window"),
         ("rail_margin", 1.2, "stability_rail"),
         ("margin_lo", 1.4, "stability_lowest"),
-        ("land_v_vert", 11.0, "landing_speed"),
         ("load_ratio", 1.2, "canopy_overload"),
         ("separated", False, "separation"),
         ("all_open", False, "canopies_open"),
@@ -259,9 +258,9 @@ def test_closeness_counts_in_tolerances() -> None:
     result = _good()
     far = failures.closeness(result)
     assert far > 1.0
-    result["land_v_vert"] = 10.9  # 0.1 m/s under the limit, tolerance 0.2
+    result["main_alt"] = 455.7  # 1.5 m under the limit, tolerance 3
     assert failures.closeness(result) == pytest.approx(0.5, abs=0.01)
-    wide = failures.closeness(result, {"land_v_vert": 1.0})
+    wide = failures.closeness(result, {"main_alt": 15.0})
     assert wide == pytest.approx(0.1, abs=0.01)
     extra = failures.closeness(_good(), None, (("margin_hi", 4.0, 1.0),))
     assert extra == pytest.approx(0.0, abs=1e-9)
@@ -381,7 +380,7 @@ def test_a_small_batch_reports_every_probability_with_an_interval() -> None:
         interval = report[key]
         assert 0.0 <= interval["low"] <= interval["estimate"] <= interval["high"] <= 1.0
         assert interval["confidence"] == 0.9
-    assert set(report["checks"]) >= {"rail_exit_floor", "landing_speed", "separation"}
+    assert set(report["checks"]) >= {"rail_exit_floor", "canopy_overload", "separation"}
     assert (
         report["apogee_m"]["p10"]["estimate"] <= report["apogee_m"]["p90"]["estimate"]
     )

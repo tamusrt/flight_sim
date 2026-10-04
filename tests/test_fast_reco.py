@@ -1,5 +1,6 @@
 """Tests for the RECO versions and FastRECO."""
 
+import dataclasses
 import math
 from itertools import pairwise
 
@@ -19,6 +20,7 @@ from flight_sim.recovery_systems import (
     Drogueless,
     DualDeploy,
     SingleDeploy,
+    SingleSeparation,
 )
 from flight_sim.units import scalar, vector
 from flight_sim.vehicle.mass_properties import MassPropertiesSI
@@ -58,7 +60,7 @@ def _dual() -> DualDeploy:
 def _compare(scheme: object) -> tuple[reco.RecoveryOutcome, reco.RecoveryOutcome]:
     request = _request()
     full = FullRECO(scheme).descend(request)  # type: ignore[arg-type]
-    fast = FastRECO(scheme).descend(request)  # type: ignore[arg-type]
+    fast = FastRECO(scheme, turbulence=0.0).descend(request)  # type: ignore[arg-type]
     return full, fast
 
 
@@ -120,8 +122,16 @@ def test_fast_reco_lands_where_the_full_one_does_with_the_same_loads() -> None:
     assert fast.drogue_rate_m_s() == pytest.approx(full.drogue_rate_m_s(), rel=0.03)
 
 
-def test_fast_reco_handles_a_single_canopy_and_a_drogueless_fall() -> None:
-    """The other schemes that have no pendulum-free equivalent still agree."""
+def test_fast_reco_handles_a_single_canopy_and_a_drogueless_fall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other schemes still agree (with the gusts off in both models)."""
+    swing = SingleSeparation.swing
+    monkeypatch.setattr(
+        SingleSeparation,
+        "swing",
+        lambda self, cg: dataclasses.replace(swing(self, cg), turbulence=0.0),
+    )
     single = SingleDeploy(
         RecoverySystem((Parachute("main", 3.0, 1.5),), body_drag_area_m2=0.01),
         _COMPUTER,
@@ -251,3 +261,18 @@ def test_the_module_registers_itself() -> None:
     assert fast_reco.FastRECO.name == "fast"
     assert isinstance(_APOGEE_MASS, MassPropertiesSI)
     assert isinstance(_COMPUTER, FlightComputer)
+
+
+def test_gusts_move_the_landing_and_repeat_for_the_same_flight() -> None:
+    """Gusts under the last canopy move the landing; the same flight lands the same."""
+    calm = FastRECO(_dual(), turbulence=0.0).descend(_request())
+    gusty = FastRECO(_dual()).descend(_request())
+    again = FastRECO(_dual()).descend(_request())
+    assert gusty.descent.landed
+    assert (
+        float(np.linalg.norm(gusty.landing_position_m - calm.landing_position_m)) > 1.0
+    )
+    assert np.allclose(gusty.landing_position_m, again.landing_position_m)
+    assert gusty.landing_velocity_m_s[0] == pytest.approx(
+        calm.landing_velocity_m_s[0], abs=0.5
+    )

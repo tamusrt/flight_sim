@@ -112,7 +112,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
     <div class="ttl"><h1>VISION</h1></div>
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
-      <div class="seg" id="look" title="Realistic: sky, sun, desert, mountains and shadows (only the look changes, the flight is the same). Engineering: the plain grid on black."><button data-l="real">Realistic</button><button data-l="eng">Engineering</button></div>
+      <div class="seg" id="look" title="Engineering: the plain grid on black. Realistic: sky, clouds, desert and shadows (only the look changes, the flight is the same)."><button data-l="eng">Engineering</button><button data-l="real">Realistic</button></div>
       <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket back in the middle of the view">Center</button></div>
       <label class="fld" title="Draw the rocket bigger than life size so it can be seen from far away. The flight path is not changed.">Rocket scale ×<input type="text" id="mult" value="1" inputmode="decimal" aria-label="Rocket size multiplier"></label>
       <label class="chip" title="Axes fixed to the ground at the launch pad"><input type="checkbox" data-k="world" checked>World axes</label>
@@ -350,7 +350,7 @@ function setGrid(camHeight,rocketLen,camDist){
 /* ---------- the realistic look: sky, sun, haze, distant mountains, a concrete pad and sun shadows ----------
    For the eye only: nothing here changes the flight. "Engineering" switches back to the plain grid on black.
    three.js axes here: x north, y up, z east (the sim's X up, Y east, Z north, turned by `root`). */
-var LOOK='real';
+var LOOK='eng';   /* opens in Engineering; the Realistic button is one click away and each browser remembers its choice */
 try{ var savedLook=localStorage.getItem('vision.look'); if(savedLook==='eng'||savedLook==='real') LOOK=savedLook; }catch(e){ /* no storage: the default */ }
 /* a mid-morning launch at Spaceport America: the sun 40 degrees up in the south-east */
 var SUN_EL=40*Math.PI/180, SUN_AZ=135*Math.PI/180;

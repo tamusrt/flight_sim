@@ -74,16 +74,8 @@
   .warnings:empty { display:none; }
   .warn { border:1px solid var(--warn); background:var(--warnbg); border-radius:8px; padding:6px 10px; font-size:13px; }
   .warn.bad { border-color:var(--down); }
-  .irec { margin:14px 0 4px; } .irec h3 { margin:0 0 4px; font-size:15px; }
-  .irectab td.ok { color:var(--up); } .irectab td.warn { color:var(--warn); } .irectab td.bad { color:var(--down); font-weight:600; } .irectab td.na { color:var(--muted); }
-  .irectab td span { color:var(--fg); font-weight:400; margin-left:4px; }
   .warn.good { border-color:var(--ok); }
-  .edithcard { border:1px solid var(--line); border-left-width:4px; border-radius:8px; padding:10px 14px; margin:0 0 12px; background:var(--card); }
-  .edithcard.red { border-left-color:var(--down); } .edithcard.amber { border-left-color:var(--warn); } .edithcard.green { border-left-color:var(--ok); }
-  .edithcard h3 { margin:0 0 2px; font-size:15px; } .edithcard .eh { color:var(--muted); font-size:12.5px; margin:0 0 8px; }
-  .edithcard .ef { display:flex; flex-wrap:wrap; gap:6px 24px; margin:6px 0; } .edithcard .ef div { min-width:140px; }
-  .edithcard .ef b { font-size:20px; font-variant-numeric:tabular-nums; } .edithcard .ef span { display:block; color:var(--muted); font-size:12px; }
-  .edithcard ul { margin:6px 0; padding-left:18px; } .edithcard li.red::marker { color:var(--down); } .edithcard li.amber::marker { color:var(--warn); }
+  .sumline { margin:0 0 10px; font-size:14px; } .sumline b { font-variant-numeric:tabular-nums; } .sumline .lbl { margin-right:4px; }
   h2.sec { font-size:15px; margin:22px 0 4px; border-bottom:1px solid var(--line); padding-bottom:4px; }
   table { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; }
   th, td { text-align:right; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -138,18 +130,17 @@
   <nav id="nav"></nav>
   <main id="main">
    <section id="view-pred">
+    <p class="sumline" id="sumline"></p>
     <div class="warnings" id="warnings"></div>
     <div class="row" id="metrics"></div>
     <div class="chartbox"><div id="plot" style="position:absolute;inset:10px"></div><div class="empty" id="empty" hidden></div></div>
     <p class="legend" id="chartnote"></p>
-    <div class="edithcard" id="edithcard" style="margin-top:14px" hidden></div>
-    <div class="irec" id="irec"></div>
     <h2 class="sec">Apogee by launch condition</h2>
     <div class="tablewrap"><table id="weather"></table></div>
     <p class="legend" id="weathernote"></p>
     <h2 class="sec">Ascent</h2>
     <div class="tablewrap"><table id="climb"></table></div>
-    <p class="legend">The grey <b>difference</b> rows compare Jarvis with OpenRocket (and with RASAero II, where it was run for that condition): a percentage for apogee, speed, Mach and Max-Q, and the difference in stability margin for the three stability columns. RASAero II's Flight window gives only the apogee and the top speed.</p>
+    <p class="legend">The small grey number after OpenRocket's and RASAero II's values is how far Jarvis is from them (a percentage, or the difference in stability). RASAero II's Flight window gives only the apogee and the top speed.</p>
     <h2 class="sec">Descent</h2>
     <div class="tablewrap"><table id="descent"></table></div>
     <p class="legend" id="descentnote"></p>
@@ -219,7 +210,6 @@
 <script>
 "use strict";
 const DATA = /*DATA*/null;
-const EDITH = /*EDITHSUMMARY*/null;   // the EDITH summary, added after this page is built (only when EDITH is on)
 const W = WhatIf;
 const $ = (id) => document.getElementById(id);
 const FT = 0.3048, IN = 0.0254, LB = 0.45359237, G0 = 9.80665;
@@ -519,28 +509,33 @@ function climbVals(src, sim) {
 const swatch = (src, sim) => '<span class="sw" style="background:' + lineColor(src, sim) + '"></span>';
 function drawClimb() {
   const A = U.alt(), V = U.vel(), Q = U.q(), sims = ticked();
+  // stability: at the rail, then the lowest to highest in flight (often the rail value is the lowest)
   const cols = [['Apogee', A.u, 0], ['Top speed', V.u, 0], ['Max Mach', '', 2], ['Max-Q', Q.u, 1],
-                ['Off-the-rail stability', marginUnit(), marginDec()], ['Minimum stability', marginUnit(), marginDec()], ['Maximum stability', marginUnit(), marginDec()]];
+                ['Stability at the rail', marginUnit(), marginDec()], ['Stability in flight, lowest to highest', marginUnit(), marginDec()]];
   if (!sims.length) { $('climb').innerHTML = ''; return; }
-  let h = '<thead><tr><th>Condition and line</th>' + cols.map((c) => '<th>' + c[0] + (c[1] ? ' (' + c[1].replace(' ', '\u00a0') + ')' : '') + '</th>').join('') + '</tr></thead><tbody>';
+  const pack = (v) => (v ? [v[0], v[1], v[2], v[3], v[4], [v[5], v[6]]] : null);
+  const cellOf = (val, c, i, jv) => {
+    if (i === 5) {   // a range: lowest to highest
+      if (!val || val[0] === null || val[0] === undefined) return '–';
+      let t = fmt(val[0], c[2]) + ' to ' + fmt(val[1], c[2]);
+      if (jv && jv[5] && jv[5][0] !== null && val !== jv[5]) t += '<span class="d">' + signed(jv[5][0] - val[0], c[2]) + ' / ' + signed(jv[5][1] - val[1], c[2]) + '</span>';
+      return t;
+    }
+    if (val === null || val === undefined) return '–';
+    let t = fmt(val, c[2]);
+    if (jv && jv[i] !== null && jv[i] !== undefined && val !== jv[i]) t += '<span class="d">' + (i < 4 ? (val ? signed((jv[i] / val - 1) * 100, 1) + '%' : '') : signed(jv[i] - val, c[2])) + '</span>';
+    return t;
+  };
+  let h = '<thead><tr><th>Condition and line</th>' + cols.map((c) => '<th>' + c[0] + (c[1] ? ' (' + c[1].replace(' ', ' ') + ')' : '') + '</th>').join('') + '</tr></thead><tbody>';
   for (const sim of sims) {
-    const jv = climbVals('j', sim), ov = climbVals('or', sim);
-    const row = (src, label, vals) => '<tr><td>' + swatch(src, sim) + sim + ' · ' + label + '</td>' + cols.map((c, i) => '<td>' + fmt(vals[i], c[2]) + '</td>').join('') + '</tr>';
-    // Jarvis against another line: a percentage for the first four columns, the stability's own units after that
-    const diff = (label, other) => '<tr class="diffrow"><td>' + sim + ' · ' + label + '</td>' + cols.map((c, i) => {
-      if (jv[i] === null || other[i] === null || jv[i] === undefined || other[i] === undefined) return '<td>–</td>';
-      const d = i < 4 ? (other[i] ? (jv[i] / other[i] - 1) * 100 : null) : jv[i] - other[i];
-      if (d === null) return '<td>–</td>';
-      return '<td>' + signed(d, i < 4 ? 1 : c[2]) + (i < 4 ? '%' : '') + '</td>';
-    }).join('') + '</tr>';
-    h += row('j', 'Jarvis', jv);
-    if (ov) h += row('or', 'OpenRocket', ov);
-    if (ov) h += diff('Jarvis against OpenRocket', ov);
+    const jv = pack(climbVals('j', sim)), ov = pack(climbVals('or', sim));
+    const row = (sw, label, vals, cmp) => '<tr><td>' + sw + sim + ' · ' + label + '</td>' + cols.map((c, i) => '<td>' + cellOf(vals[i], c, i, cmp) + '</td>').join('') + '</tr>';
+    h += row(swatch('j', sim), 'Jarvis', jv, null);
+    if (ov) h += row(swatch('or', sim), 'OpenRocket', ov, jv);
     const ras = rasOf(sim);
     if (ras) {   // RASAero gives only the apogee and the top speed
-      const rv = [ras.apogee * A.f, ras.vmax === null ? null : ras.vmax * V.f, null, null, null, null, null];
-      h += '<tr><td><span class="sw" style="background:' + css('--fg') + '"></span>' + sim + ' · RASAero II (' + ras.label + ')</td>' + cols.map((c, i) => '<td>' + fmt(rv[i], c[2]) + '</td>').join('') + '</tr>';
-      h += diff('Jarvis against RASAero II', rv);
+      const rv = [ras.apogee * A.f, ras.vmax === null ? null : ras.vmax * V.f, null, null, null, null];
+      h += row('<span class="sw" style="background:' + css('--fg') + '"></span>', 'RASAero II (' + ras.label + ')', rv, jv);
     }
   }
   $('climb').innerHTML = h + '</tbody>';
@@ -668,14 +663,7 @@ function tableCheck() {
 }
 const stem = (name) => String(name || '').replace(/\.[^.]*$/, '');
 function warnings() {
-  const out = [], sims = ticked(), multi = sims.length > 1, M = U.mass();
-  for (const sim of sims) {
-    const s = sixOf(sim), pre = multi ? sim + ': ' : '';
-    if (s.marginLo !== null && s.marginLo < 1.0) out.push(['bad', pre + 'Stability margin drops to ' + fmt(s.marginLo, 2) + ' calibers during ascent (team minimum: 1.0).']);
-    else if (s.marginRail !== null && s.marginRail < 1.5) out.push(['bad', pre + 'Stability margin at rail exit is ' + fmt(s.marginRail, 2) + ' calibers (team minimum: 1.5).']);
-    if (s.marginLo !== null && s.marginLo > 6) out.push(['', pre + 'Stability margin is above 6 calibers, so the rocket may weathercock (turn into the wind) strongly.']);
-    if (s.railV !== null && s.railV < 15.24) out.push(['bad', pre + 'Rail exit speed is ' + fmt(s.railV / FT, 0) + ' ft/s (team minimum: 50 ft/s).']);
-  }
+  const out = [], M = U.mass();
   const diffs = refDiffs();
   if (diffs.length) out.push(['', 'The RASAero table is out of date: the OpenRocket design has changed since the table was made (' + diffs.join('; ') + '). Jarvis is using the current masses with the old aerodynamics. Run Update CSV at the bottom of this page.']);
   const chk = tableCheck();
@@ -692,43 +680,7 @@ function warnings() {
   }
   return out;
 }
-/* ---------- IREC checks (Design, Test & Evaluation Guide) ---------- */
-const escIrec = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const IREC = { stab: 1.5, stabMax: 4.0, stabDynMax: 6.0, railRec: 30.48, railMin: 15.24, drogueLo: 20, drogueHi: 40, mainLand: 11.0, mainAlt: 457.2,
-               apogeeLo: 6400.8, apogeeHi: 11887.2 };   // apogee 21,000 to 39,000 ft above the pad, or the flight is disqualified
-function irecRows(sim) {
-  const s = sixOf(sim), L = s.landing || {}, V = U.vel(), A = U.alt(), rows = [];
-  const sp = (v) => fmt(v * V.f, 0) + ' ' + V.u, al = (v) => fmt(v * A.f, 0) + ' ' + A.u;
-  const row = (name, value, need, ok, warn) => rows.push({ name, value, need, st: ok === null ? 'na' : ok ? 'ok' : warn ? 'warn' : 'bad' });
-  row('Apogee above the pad', al(s.apogee), al(IREC.apogeeLo) + ' to ' + al(IREC.apogeeHi) + (A.u === 'ft' ? '' : ' (21,000 to 39,000 ft)') + '; outside it the flight is disqualified', s.apogee >= IREC.apogeeLo && s.apogee <= IREC.apogeeHi);
-  row('Stability at rail exit', s.marginRail === null ? '–' : fmt(s.marginRail, 2) + ' cal', 'at least 1.5 cal', s.marginRail === null ? null : s.marginRail >= IREC.stab);
-  row('Lowest stability, rail exit to apogee', s.marginLo === null ? '–' : fmt(s.marginLo, 2) + ' cal', 'at least 1.5 cal', s.marginLo === null ? null : s.marginLo >= IREC.stab);
-  row('Static stability at rail exit', s.marginRail === null ? '–' : fmt(s.marginRail, 2) + ' cal', 'at most 4 cal', s.marginRail === null ? null : s.marginRail <= IREC.stabMax, true);
-  row('Highest stability in flight', s.marginHi === null ? '–' : fmt(s.marginHi, 2) + ' cal', 'at most 6 cal', s.marginHi === null ? null : s.marginHi <= IREC.stabDynMax, true);
-  row('Rail exit speed', s.railV === null ? '–' : sp(s.railV), 'at least ' + sp(IREC.railRec) + ' (' + sp(IREC.railMin) + ' minimum)', s.railV === null ? null : s.railV >= IREC.railRec, s.railV !== null && s.railV >= IREC.railMin);
-  const d = L.drogueV;
-  row('Drogue descent rate', d == null ? 'no drogue' : sp(d), sp(IREC.drogueLo) + ' to ' + sp(IREC.drogueHi), d == null ? null : d >= IREC.drogueLo && d <= IREC.drogueHi, true);
-  row('Main deployment altitude', L.mainAlt == null ? '–' : al(L.mainAlt), 'at most ' + al(IREC.mainAlt) + ' above the pad', L.mainAlt == null ? null : L.mainAlt <= IREC.mainAlt, true);
-  row('Landing speed under main', L.vVert == null ? '–' : sp(L.vVert), 'under ' + sp(IREC.mainLand), L.vVert == null ? null : L.vVert < IREC.mainLand);
-  return rows;
-}
-function drawIrec() {
-  const sims = ticked(), box = $('irec');
-  if (!sims.length) { box.innerHTML = ''; return; }
-  const mark = { ok: '✓ Pass', warn: '⚠ Check', bad: '✗ Fails', na: '– n/a' };
-  const per = sims.map(irecRows), bad = per.flat().filter((r) => r.st === 'bad').length, warn = per.flat().filter((r) => r.st === 'warn').length;
-  let h = '<h3>IREC checks</h3><p class="legend">Jarvis\'s flight against the IREC Design, Test &amp; Evaluation Guide. ' +
-    (bad ? '<b>' + bad + ' check' + (bad > 1 ? 's' : '') + ' fail.</b> ' : warn ? '' : 'Every check passes. ') +
-    (warn ? warn + ' need' + (warn > 1 ? '' : 's') + ' a look. ' : '') +
-    (base.recovery ? 'Descent checks use the placeholder recovery system (' + base.recovery.label.replace(/^Sol Invictus recovery \(placeholder\): /, '') + ').' : '') + '</p>';
-  h += '<div class="tablewrap"><table class="irectab"><thead><tr><th>Check</th><th>IREC expects</th>' + sims.map((s) => '<th>' + escIrec(s) + '</th>').join('') + '</tr></thead><tbody>';
-  per[0].forEach((r, i) => {
-    h += '<tr><td>' + r.name + '</td><td>' + r.need + '</td>' + per.map((p) => '<td class="' + p[i].st + '">' + mark[p[i].st] + ' <span>' + p[i].value + '</span></td>').join('') + '</tr>';
-  });
-  box.innerHTML = h + '</tbody></table></div>';
-}
 function drawNotes() {
-  drawIrec();
   const box = $('warnings'); box.innerHTML = '';
   for (const [cls, text] of warnings()) {
     const el = document.createElement('div'); el.className = 'warn ' + cls; el.textContent = text;
@@ -904,22 +856,17 @@ function tellParent(type) {
 }
 function shareSel() { tellParent('jarvis-sel'); }
 
-/* ---------- the EDITH card: the chances from the many-flight simulation, when it has been run ---------- */
-function drawEdithCard() {
-  const box = $('edithcard'); if (!EDITH) { box.hidden = true; return; }
-  const pct = (x) => { const v = x * 100; return v === 0 ? '0%' : v < 0.1 ? '<0.1%' : v < 10 ? v.toFixed(1) + '%' : Math.round(v) + '%'; };
-  const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  const chance = (c) => (c.estimate === 0 ? 'under ' + pct(c.high) : pct(c.estimate));
-  const range = (c) => (c.estimate === 0 ? 'none seen in ' + EDITH.runs + ' flights' : 'likely ' + pct(c.low) + ' to ' + pct(c.high));
-  box.hidden = false; box.className = 'edithcard ' + EDITH.headline.level;
-  box.innerHTML = '<h3>EDITH: ' + EDITH.runs + ' simulated flights</h3>' +
-    '<p class="eh">EDITH is the team\'s Monte Carlo simulation: it flies this rocket many times with the wind, weather and motor varied a little each time, and counts what happens. The conditions are assumed, not measured.</p>' +
-    '<div class="ef"><div><b>' + chance(EDITH.any_failure.chance) + '</b><span>chance of any IREC failure (' + range(EDITH.any_failure.chance) + ')</span></div>' +
-    '<div><b>' + chance(EDITH.apogee.chance) + '</b><span>chance the apogee is within range of the target (' + range(EDITH.apogee.chance) + ')</span></div></div>' +
-    '<p style="margin:4px 0"><b>' + esc(EDITH.headline.text) + '</b></p>' +
-    (EDITH.top.length ? '<ul>' + EDITH.top.map((a) => '<li class="' + a.level + '">' + esc(a.title) + (a.chance ? ': ' + chance(a.chance) : '') + '</li>').join('') + '</ul>' : '') +
-    '<a id="edithlink" href="' + EDITH.link + '">See every chance, the climb over time and every flight path →</a>';
-  if (embedded) $('edithlink').onclick = (ev) => { ev.preventDefault(); try { window.top.location.hash = '#tab=edith'; } catch (e) { location.href = EDITH.link; } };
+/* ---------- the line at the top: the main numbers of the first condition ticked ---------- */
+function drawSummary() {
+  const sim = ticked()[0], box = $('sumline');
+  if (!sim) { box.innerHTML = ''; return; }
+  const z = sixOf(sim), A = U.alt(), V = U.vel(), g = base.geometry, L = z.landing;
+  const part = (label, value) => '<span class="lbl">' + label + '</span><b>' + value + '</b>';
+  const bits = [part('Apogee', fmt(z.apogee * A.f, 0) + ' ' + A.u), part('Top speed', fmt(z.vmax * V.f, 0) + ' ' + V.u + ' (Mach ' + fmt(z.machMax, 2) + ')'),
+                part('Rail exit', z.railV === null ? '–' : fmt(z.railV * V.f, 0) + ' ' + V.u),
+                part('Stability', fmt(MARGIN(z.marginLo, g), marginDec()) + ' to ' + fmt(MARGIN(z.marginHi, g), marginDec()) + ' ' + marginUnit())];
+  if (L) bits.push(part('Lands', fmt(L.drift * A.f, 0) + ' ' + A.u + ' from the pad'));
+  box.innerHTML = '<span class="lbl">' + sim.replace(/[&<>]/g, '') + ':</span> ' + bits.join(' · ');
 }
 
 /* ---------- drawing everything ---------- */
@@ -927,7 +874,7 @@ function update() {
   $('units').value = state.units; $('stab').value = state.stab;
   assignColors(); writeHash();
   if (!showTab()) return;
-  drawEdithCard(); refreshNav(); buildMetrics(); drawChart(); drawWeather(); drawClimb(); drawDescent(); drawMore(); geometryTable(); drawNotes();
+  drawSummary(); refreshNav(); buildMetrics(); drawChart(); drawWeather(); drawClimb(); drawDescent(); drawMore(); geometryTable(); drawNotes();
   if (plotDiv.data && Plotly.Plots) requestAnimationFrame(() => Plotly.Plots.resize(plotDiv));
 }
 

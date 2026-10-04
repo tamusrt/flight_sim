@@ -43,8 +43,8 @@ def _report(**over: Any) -> dict[str, Any]:
             "within": _interval(0.9, 0.88, 0.92),
         },
         "checks": {
-            "landing_speed": {
-                "label": "Landing speed under the main below 11 m/s",
+            "stability_rail": {
+                "label": "Stability at rail exit at least 1.5 cal",
                 "severity": "fail",
                 "probability": _interval(0.0, 0.0, 0.004),
             },
@@ -123,7 +123,7 @@ def test_a_clean_report_has_only_green_alerts() -> None:
 
 def test_every_check_has_a_plain_explanation_and_the_alerts_are_sorted() -> None:
     report = _report()
-    report["checks"]["landing_speed"]["probability"] = _interval(0.2, 0.15, 0.25)
+    report["checks"]["stability_rail"]["probability"] = _interval(0.2, 0.15, 0.25)
     report["probability_any_failure"] = _interval(0.2, 0.15, 0.25)
     report["checks"]["main_altitude"]["probability"] = _interval(0.5, 0.45, 0.55)
     built = alerts.build(report)
@@ -131,7 +131,7 @@ def test_every_check_has_a_plain_explanation_and_the_alerts_are_sorted() -> None
     ranks = [order[a["level"]] for a in built["alerts"]]
     assert ranks == sorted(ranks), "red first, then amber, then green"
     levels = _levels(report)
-    assert levels["landing_speed"] == "red" and levels["main_altitude"] == "amber"
+    assert levels["stability_rail"] == "red" and levels["main_altitude"] == "amber"
     assert (
         built["headline"]["level"] == "red" and "red alert" in built["headline"]["text"]
     )
@@ -323,25 +323,11 @@ def test_the_page_data_is_plain_json_and_the_ellipse_closes_round_the_mean(
     assert edith_site.ellipse({"footprint": None}) == []
 
 
-def test_the_summary_has_what_the_card_shows(small_report: dict[str, Any]) -> None:
-    data = edith_site.page_data(small_report, "Morpheus", "average", cached=True)
-    card = edith_site.summary(data)
-    assert card["link"] == "edith/index.html" and card["runs"] == small_report["runs"]
-    assert (
-        card["any_failure"]["id"] == "any_failure"
-        and card["apogee"]["id"] == "apogee_range"
-    )
-    assert len(card["top"]) <= 4 and all(a["level"] != "green" for a in card["top"])
-    assert card["headline"]["level"] in ("red", "amber", "green")
-
-
 def _site(tmp_path: Path) -> Path:
-    """A predictions folder as flight_sim.whatif.build leaves it, with the two markers."""
+    """A predictions folder as flight_sim.whatif.build leaves it, with the VISION markers."""
     out = tmp_path / "predictions"
     (out / "viewer" / "average").mkdir(parents=True)
-    (out / "index.html").write_text(
-        "<script>const EDITH = /*EDITHSUMMARY*/null;</script>", encoding="utf-8"
-    )
+    (out / "index.html").write_text("<p>JARVIS</p>", encoding="utf-8")
     (out / "viewer" / "index.html").write_text(
         "<body><!--EDITH--></body>", encoding="utf-8"
     )
@@ -362,25 +348,6 @@ def _site(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return out
-
-
-def test_the_jarvis_page_gets_the_summary_card(
-    tmp_path: Path, small_report: dict[str, Any]
-) -> None:
-    out = _site(tmp_path)
-    card = edith_site.summary(
-        edith_site.page_data(small_report, "Morpheus", "average", False)
-    )
-    assert edith_site.patch_jarvis(out, card) is True
-    text = (out / "index.html").read_text(encoding="utf-8")
-    assert (
-        "/*EDITHSUMMARY*/" not in text
-        and json.dumps(card, separators=(",", ":")) in text
-    )
-    assert edith_site.patch_jarvis(out, card) is False, (
-        "a page already patched is left alone"
-    )
-    assert edith_site.patch_jarvis(tmp_path / "nowhere", card) is False
 
 
 def test_only_the_default_launch_condition_gets_the_flights_in_vision(
@@ -522,3 +489,14 @@ def test_main_stops_before_doing_anything_when_the_page_is_not_built(
             ]
         )
     assert "build the JARVIS predictions page first" in str(stop.value)
+
+
+def test_the_kept_result_depends_only_on_the_code_edith_runs() -> None:
+    """Pages and VISION's viewer are not in the fingerprint; the descent EDITH flies is."""
+    names = {
+        p.relative_to(Path(edith_site.__file__).parents[1]).as_posix()
+        for p in edith_site.physics_files()
+    }
+    assert {"fast_reco.py", "edith/batch.py", "edith/failures.py"} <= names
+    assert not any(n.startswith("whatif/") for n in names)
+    assert "visual_run.py" not in names

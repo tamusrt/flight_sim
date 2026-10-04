@@ -1,8 +1,8 @@
 """What counts as a failure, or as a warning, in one EDITH run.
 
 The numbers are the ones on the JARVIS predictions page's IREC checks (the
-IREC Design, Test & Evaluation Guide): the page marks the stability and
-landing-speed rows and the rail exit floor red, and the rest amber. EDITH uses
+IREC Design, Test & Evaluation Guide): the stability rows and the rail exit
+floor are red, and the rest amber. EDITH uses
 the same split: a *failure* is red, a *warning* is amber. On top of those, a
 run also fails for the things that would end an IREC flight or lose major
 points whatever the guide's numbers say:
@@ -16,7 +16,8 @@ points whatever the guide's numbers say:
 * the simulation itself failed on that run.
 
 There is no landing zone here: where the rocket comes down is reported as a
-footprint, not judged.
+footprint, not judged. Nor is the landing speed: EDITH's quick descent model gave a
+different one from the full model, so the JARVIS page's number is the one to use.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ STABILITY_STATIC_MAX_CAL = 4.0
 STABILITY_DYNAMIC_MAX_CAL = 6.0
 DROGUE_RANGE_M_S = (20.0, 40.0)
 MAIN_ALTITUDE_MAX_M = 457.2
-MAIN_LANDING_MAX_M_S = 11.0
 # Apogee above the pad outside this range disqualifies the flight (21,000 to 39,000 ft)
 APOGEE_WINDOW_M = (21000 * 0.3048, 39000 * 0.3048)
 
@@ -137,15 +137,6 @@ CHECKS: tuple[Check, ...] = (
         "main_alt",
         high=MAIN_ALTITUDE_MAX_M,
         tolerance=3.0,
-    ),
-    Check(
-        "landing_speed",
-        "Landing speed under the main below 11 m/s",
-        "fail",
-        "land_v_vert",
-        high=MAIN_LANDING_MAX_M_S,
-        strict_high=True,
-        tolerance=0.2,
     ),
     Check(
         "canopy_overload",

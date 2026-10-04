@@ -70,7 +70,6 @@ def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals,
     lines += ["", "Descent"]
     lines += _spread("Drogue rate", r["drogue_rate_m_s"], "m/s")
     lines += _spread("Main deployment altitude", r["main_deploy_altitude_m"], "m", 0)
-    lines += _spread("Landing speed (vertical)", r["landing_speed_m_s"], "m/s", 2)
     lines += _spread("Peak opening load", r["peak_opening_load_g"], "g", 2)
     lines += _spread("Time from apogee to landing", r["descent_time_s"], "s", 0)
     foot = r.get("footprint")

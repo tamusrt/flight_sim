@@ -5,15 +5,16 @@
 This runs after the JARVIS predictions page and VISION are built (``flight_sim.whatif.build``)
 and adds to them:
 
-* ``<out>/edith/index.html``: the EDITH page, with every chance and picture;
-* a summary card on ``<out>/index.html`` (the JARVIS predictions page);
+* ``<out>/edith/index.html``: the EDITH page, with every chance and picture
+  (EDITH's results are only on its own page, not on the JARVIS page);
 * the cloud of simulated flights in the VISION page of the default launch condition,
   with a switch to show where the flights peaked or came down.
 
 EDITH is the team's Monte Carlo simulation: it flies the rocket many times with the wind,
 weather and motor strength varied a little each time, and counts what happens. It takes a
 few minutes, so the result is kept (``--cache``) and reused until the design, the aero
-table, the motor, the site settings or the simulator code change. Whatever goes wrong here
+table, the motor, the site settings or the simulator code EDITH runs change (a change to
+a page or to VISION alone does not run it again). Whatever goes wrong here
 leaves the JARVIS pages as they were: this program exits with an error and changes nothing.
 """
 
@@ -22,6 +23,7 @@ leaves the JARVIS pages as they were: this program exits with an error and chang
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import math
@@ -39,24 +41,67 @@ from flight_sim.edith.run import RocketSpec
 from flight_sim.ork import load_ork
 
 _HERE = Path(__file__).parent
-_SUMMARY_MARK = "/*EDITHSUMMARY*/null"
 _CLOUD_MARK = "<!--EDITH-->"
 _ELLIPSE_POINTS = 72
-_TOP_ALERTS = 4
 # The landing circles VISION draws: the share of landings inside each
 CIRCLE_SHARES = (0.25, 0.50, 0.75, 0.90)
 
-# The code whose change changes the results; the pages and this file do not
-_SKIP_DIRS = {"whatif", "__pycache__"}
+# Where EDITH's flights start: the code they run is these modules and everything they import
+_ENTRY = ("flight_sim.edith.batch", "flight_sim.edith.run", "flight_sim.fast_reco")
+
+
+def _module_file(root: Path, name: str) -> Path | None:
+    """The file of a ``flight_sim`` module (a package's ``__init__.py``), or None."""
+    parts = name.split(".")[1:]
+    path = root.joinpath(*parts)
+    if path.with_suffix(".py").is_file():
+        return path.with_suffix(".py")
+    if (path / "__init__.py").is_file():
+        return path / "__init__.py"
+    return None
+
+
+def _imports(path: Path) -> set[str]:
+    """Every ``flight_sim`` module a file imports, anywhere in it (also inside functions)."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            found.update(a.name for a in node.names if a.name.startswith("flight_sim"))
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+            "flight_sim"
+        ):
+            found.add(node.module or "")
+            found.update(f"{node.module}.{a.name}" for a in node.names)  # a submodule
+    return found
+
+
+def physics_files() -> list[Path]:
+    """The simulator files EDITH's flights run: its entry modules and all they import."""
+    root = Path(flight_sim.__file__).parent
+    todo, seen = list(_ENTRY), set()
+    files: set[Path] = set()
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        path = _module_file(root, name)
+        if path is None:
+            continue
+        files.add(path)
+        todo.extend(_imports(path) - seen)
+    return sorted(files)
 
 
 def code_digest() -> str:
-    """A short fingerprint of the simulator code, so a code change reruns EDITH."""
+    """A short fingerprint of the simulator code EDITH runs, so changing it reruns EDITH.
+
+    Only the modules EDITH's flights import count: changing the pages, VISION or anything
+    else EDITH does not use keeps the kept result.
+    """
     root = Path(flight_sim.__file__).parent
     digest = hashlib.sha256()
-    for path in sorted(root.rglob("*.py")):
-        if _SKIP_DIRS & set(path.relative_to(root).parts):
-            continue
+    for path in physics_files():
         digest.update(path.relative_to(root).as_posix().encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()
@@ -105,9 +150,17 @@ def ellipse(report: dict[str, Any]) -> list[list[float]]:
 
 
 def page_data(
-    report: dict[str, Any], name: str, sim: str, cached: bool
+    report: dict[str, Any],
+    name: str,
+    sim: str,
+    cached: bool,
+    accepted: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Everything the EDITH page needs, as one JSON-able dict."""
+    """Everything the EDITH page needs, as one JSON-able dict.
+
+    ``accepted``: IREC recommendations the team has looked at and accepted (check ids,
+    such as ``stability_static_max``); the page shows them greyed, marked accepted.
+    """
     shown = {k: v for k, v in report.items() if k != "footprint"}
     foot = dict(report["footprint"] or {})
     foot.pop("points_east_north_m", None)  # the cloud has the landing points
@@ -120,22 +173,7 @@ def page_data(
         "report": shown,
         "alerts": alerts.build(report),
         "ellipse": ellipse(report),
-    }
-
-
-def summary(data: dict[str, Any]) -> dict[str, Any]:
-    """The small version of the result for the card on the JARVIS page."""
-    report, built = data["report"], data["alerts"]
-    first = [a for a in built["alerts"] if a["level"] != "green"][:_TOP_ALERTS]
-    return {
-        "headline": built["headline"],
-        "top": first,
-        "any_failure": next(a for a in built["alerts"] if a["id"] == "any_failure"),
-        "apogee": next(a for a in built["alerts"] if a["id"] == "apogee_range"),
-        "runs": report["runs"],
-        "sim": data["sim"],
-        "link": "edith/index.html",
-        "generated": data["generated"],
+        "accepted": list(accepted),
     }
 
 
@@ -147,21 +185,6 @@ def write_page(data: dict[str, Any], out_dir: Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page, encoding="utf-8")
     return target
-
-
-def patch_jarvis(out_dir: Path, card: dict[str, Any]) -> bool:
-    """Put the summary card's data into the JARVIS predictions page."""
-    page = out_dir / "index.html"
-    if not page.is_file():
-        return False
-    text = page.read_text(encoding="utf-8")
-    if _SUMMARY_MARK not in text:
-        return False
-    page.write_text(
-        text.replace(_SUMMARY_MARK, json.dumps(card, separators=(",", ":"))),
-        encoding="utf-8",
-    )
-    return True
 
 
 def _viewer_files(out_dir: Path) -> list[Path]:
@@ -301,6 +324,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--round-size", type=int, default=64)
     parser.add_argument("--max-rounds", type=int, default=8)
     parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument(
+        "--accepted",
+        default="",
+        help="IREC recommendations the team accepts, as check ids separated by commas "
+        "(shown greyed on the page; does not rerun EDITH)",
+    )
     args = parser.parse_args(argv)
     out = Path(args.out)
     if not (out / "index.html").is_file():
@@ -311,13 +340,12 @@ def main(argv: list[str] | None = None) -> None:
     sims = load_ork(args.ork).sims
     args.sim = args.sim if args.sim in sims else next(iter(sims))
     result = run(args)
-    data = page_data(result["report"], args.name, args.sim, result["cached"])
+    accepted = tuple(a.strip() for a in args.accepted.split(",") if a.strip())
+    data = page_data(result["report"], args.name, args.sim, result["cached"], accepted)
     page = write_page(data, out)
-    carded = patch_jarvis(out, summary(data))
     viewers = patch_viewers(out, cloud_data(data))
     print(
-        f"EDITH page: {page} (summary on the JARVIS page: {'yes' if carded else 'no'}, "
-        f"VISION pages with the flights: {viewers})",
+        f"EDITH page: {page} (VISION pages with the flights: {viewers})",
         flush=True,
     )
 

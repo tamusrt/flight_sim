@@ -548,7 +548,6 @@ def summarize(  # pylint: disable=too-many-locals,too-many-positional-arguments
         "checks": checks,
         "apogee_m": _spread(apogee, rng, confidence),
         "footprint": _footprint(samples, rng, confidence),
-        "landing_speed_m_s": _spread(_numbers(samples, "land_v_vert"), rng, confidence),
         "drogue_rate_m_s": _spread(_numbers(samples, "drogue_v"), rng, confidence),
         "main_deploy_altitude_m": _spread(
             _numbers(samples, "main_alt"), rng, confidence

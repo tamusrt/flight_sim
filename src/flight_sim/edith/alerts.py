@@ -5,7 +5,8 @@ Every alert has a colour:
 * ``red``: a chance of failing the IREC rules (or of missing the target
   apogee) that the team should act on;
 * ``amber``: worth a look: a smaller chance, a warning against the IREC
-  recommendations, or too few flights to rule out a red;
+  recommendations, or too few flights to rule out a red. Amber is shown
+  next to its check on the page but is not an alert;
 * ``green``: nothing to do.
 
 The cut-offs are the team's to change; they are the numbers at the top of this
@@ -67,10 +68,6 @@ WHY: dict[str, str] = {
     "main_altitude": (
         "The main parachute opens higher than IREC recommends (457 m, 1,500 "
         "ft, above the pad), so the wind carries the rocket further."
-    ),
-    "landing_speed": (
-        "The rocket lands faster than the IREC limit under the main "
-        "parachute (11 m/s, 36 ft/s)."
     ),
     "canopy_overload": (
         "A parachute opens harder than it is assumed to be built for, so it could tear."
@@ -156,17 +153,6 @@ def build(report: dict[str, Any]) -> dict[str, Any]:
                 "chance": chance,
             }
         )
-    chance = _chance(report["probability_any_warning"])
-    alerts.append(
-        {
-            "id": "any_warning",
-            "level": warning_level(chance),
-            "kind": "warning",
-            "title": "Any IREC warning",
-            "text": "At least one flight misses an IREC recommendation (the amber checks below).",
-            "chance": chance,
-        }
-    )
     alerts.extend(_quality(report))
     order = {"red": 0, "amber": 1, "green": 2}
     alerts.sort(key=lambda a: order[a["level"]])
@@ -241,21 +227,12 @@ def _quality(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _headline(alerts: list[dict[str, Any]]) -> dict[str, Any]:
-    """One sentence for the top of the page."""
-    red = [a for a in alerts if a["level"] == "red"]
-    amber = [a for a in alerts if a["level"] == "amber"]
+    """One sentence for the top of the page: only red counts as an alert."""
+    red = [a for a in alerts if a["level"] == "red" and a["id"] != "any_failure"]
     if red:
-        level, text = (
-            "red",
-            f"{len(red)} red alert{'s' if len(red) != 1 else ''}: "
+        return {
+            "level": "red",
+            "text": f"{len(red)} red alert{'s' if len(red) != 1 else ''}: "
             + "; ".join(a["title"] for a in red[:3]),
-        )
-    elif amber:
-        level, text = (
-            "amber",
-            f"No red alerts. {len(amber)} to look at: "
-            + "; ".join(a["title"] for a in amber[:3]),
-        )
-    else:
-        level, text = "green", "No alerts. Every chance is inside the levels below."
-    return {"level": level, "text": text}
+        }
+    return {"level": "green", "text": "No red alerts."}

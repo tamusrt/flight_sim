@@ -27,6 +27,12 @@ ways, each chosen so that the landing point and the loads stay close:
    reading the flight computer would use, without flying the descent twice.
    The filtered pressure's noise (under a pascal) is left out.
 
+Under the last canopy the wind gusts, as in the full model: a random gust
+(``CanopySwing``'s strength and correlation time) is added to the wind, stepped
+exactly however long the step, one draw per step. Each descent gets its own
+gusts, seeded from where and when the last canopy opened, so a batch's flights
+differ and a repeated flight is the same. ``turbulence=0`` turns them off.
+
 What is not simulated is the pendulum swing of the rocket under the canopy and
 the bounce of the shock cord, and the nose section leaving the rocket. See
 ``tests/test_fast_reco.py`` for how close the landing point and loads are to
@@ -36,12 +42,14 @@ the bounce of the shock cord, and the nose section leaving the rocket. See
 from __future__ import annotations
 
 import math
+import zlib
 from dataclasses import dataclass, replace
 from typing import ClassVar, NamedTuple
 
 import numpy as np
 
 from flight_sim import tumble
+from flight_sim.canopy_swing import CanopySwing
 from flight_sim.descent import (
     LOAD_WINDOW_S,
     SETTLING_SPAN,
@@ -93,6 +101,9 @@ class FastRECO(RECO):
         coast_s (float): How long past the charge the apogee votes are looked
             for before the search is widened.
         tumble_output_s (float): Spacing of the tumble's samples.
+        turbulence (float): Gust strength under the last canopy, as a share of
+            the ground wind speed (as ``CanopySwing.turbulence``); 0 for none.
+        gust_time_s (float): Correlation time of the gusts.
     """
 
     name: ClassVar[str] = "fast"
@@ -105,6 +116,8 @@ class FastRECO(RECO):
     settled_tolerance: float = 0.05
     coast_s: float = 10.0
     tumble_output_s: float = 0.25
+    turbulence: float = CanopySwing.turbulence
+    gust_time_s: float = CanopySwing.gust_time_s
 
     def descend(self, request: RecoveryRequest) -> RecoveryOutcome:
         """Fly the descent; same request and outcome as every RECO version."""
@@ -604,6 +617,7 @@ class _Fast:  # pylint: disable=too-many-instance-attributes
         """After the last canopy: fall at the local drag law, drift with the wind."""
         reco = self.reco
         y = y.copy()
+        gust = self._gusts(t, y)
         while len(self.times) < _MAX_STEPS:
             height = float(y[0])
             air, _ = air_at(self.config, height)
@@ -628,6 +642,7 @@ class _Fast:  # pylint: disable=too-many-instance-attributes
                 drop = _fall(down, terminal, gravity, h)
                 mid = max(height - 0.5 * drop[1], 0.0)
                 air_mid, wind_mid = air_at(self.config, mid)
+            wind_mid = wind_mid + gust(h)
             speed_through = math.hypot(
                 0.5 * (down + drop[0]), *(y[4:6] - wind_mid[1:3])
             )
@@ -648,6 +663,32 @@ class _Fast:  # pylint: disable=too-many-instance-attributes
             if landed:
                 return t, y, True
         return t, y, False
+
+    def _gusts(self, t: float, y: np.ndarray):  # type: ignore[no-untyped-def]
+        """A function giving the gust over the next step of ``h`` seconds.
+
+        Ornstein-Uhlenbeck, as ``canopy_swing.Gusts``, stepped exactly: one
+        normal draw per step, right for any step length.
+        """
+        reco = self.reco
+        ground = float(np.linalg.norm(air_at(self.config, 0.0)[1][1:3]))
+        sigma = reco.turbulence * max(ground, 1.0)
+        value = np.zeros(3)
+        if sigma <= 0.0 or reco.gust_time_s <= 0.0:
+            return lambda h: value
+        seed = zlib.crc32(np.round(np.append(y, t), 6).tobytes())
+        rng = np.random.default_rng(seed)
+        # start from a gust of the right size, as the wind is already gusting
+        value[1:3] = rng.normal(0.0, sigma, 2)
+
+        def advance(h: float) -> np.ndarray:
+            decay = math.exp(-h / reco.gust_time_s)
+            value[1:3] = value[1:3] * decay + rng.normal(
+                0.0, sigma * math.sqrt(1.0 - decay * decay), 2
+            )
+            return value
+
+        return advance
 
 
 def _fall(
