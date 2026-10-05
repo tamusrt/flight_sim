@@ -91,10 +91,10 @@ def test_the_rocket_comes_down_under_the_original_descent(
     assert original_descent(0.02).recovery.body_drag_area_m2 == pytest.approx(0.011)
 
 
-def test_pad_pressure_falls_with_elevation() -> None:
-    """Pad pressure falls with elevation."""
-    assert pad_pressure_pa(101325.0, 288.15, 0.0) == pytest.approx(101325.0)
-    assert pad_pressure_pa(101325.0, 288.15, 1000.0) < 91000.0
+def test_pad_pressure_is_the_one_given_for_the_launch_site() -> None:
+    """The saved pressure is already the pad's: a higher pad does not lower it again."""
+    assert pad_pressure_pa(91669.55, 303.15, 0.0) == pytest.approx(91669.55)
+    assert pad_pressure_pa(86000.0, 300.0, 1400.0) == pytest.approx(86000.0)
 
 
 def test_profile_takes_conditions_from_the_saved_sim(

@@ -1,5 +1,7 @@
 """Tests for converting RASP .eng motor files."""
 
+# ruff: noqa: E501
+
 from pathlib import Path
 
 import numpy as np
@@ -78,3 +80,32 @@ def test_bad_eng_files_are_rejected(tmp_path: Path, body: str) -> None:
     source.write_text(body, encoding="utf-8")
     with pytest.raises(ValueError, match=r"bad\.eng"):
         eng_to_csv(str(source))
+
+
+def test_a_converted_csv_is_not_rewritten(tmp_path: Path) -> None:
+    """A second call leaves the CSV beside the .eng file untouched (same bytes, same time)."""
+    source = tmp_path / "motor.eng"
+    source.write_text(_ENG, encoding="utf-8")
+    first = Path(eng_to_csv(str(source)))
+    before = first.stat().st_mtime_ns
+    assert Path(eng_to_csv(str(source))) == first
+    assert first.stat().st_mtime_ns == before
+    assert not list(tmp_path.glob(".*.tmp")), "no temporary files are left behind"
+
+
+def test_a_hand_made_csv_beside_the_eng_file_is_never_overwritten(
+    tmp_path: Path,
+) -> None:
+    """A different CSV already there stays as it is; the converted data is used from elsewhere."""
+    source = tmp_path / "motor.eng"
+    source.write_text(_ENG, encoding="utf-8")
+    mine = tmp_path / "motor.csv"
+    mine.write_text("Time,Thrust\n0,0\n2,50\n", encoding="utf-8")
+
+    used = Path(eng_to_csv(str(source)))
+
+    assert mine.read_text(encoding="utf-8") == "Time,Thrust\n0,0\n2,50\n"
+    assert used != mine
+    data = np.genfromtxt(used, delimiter=",", names=True)
+    assert data["Thrust"] == pytest.approx([0.0, 100.0, 120.0, 0.0])
+    assert Path(eng_to_csv(str(source))) == used, "the same copy is found again"

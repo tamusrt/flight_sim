@@ -46,6 +46,7 @@ from flight_sim.ork_profile import motor_with_file, pad_pressure_pa, profile_fro
 from flight_sim.units import scalar
 from flight_sim.utilities.dcm import aero_angles, body_to_world
 from flight_sim.visualize import TelemetryLog, static_centre_of_pressure
+from flight_sim.whatif import script_json
 from flight_sim.whatif.history import from_history, from_saved, load_history
 
 _HERE = Path(__file__).parent
@@ -623,7 +624,7 @@ def write_page(data: dict[str, Any], out_dir: Path) -> Path:
     template = (_HERE / "page.html").read_text(encoding="utf-8")
     engine = (_HERE / "engine.js").read_text(encoding="utf-8")
     page = template.replace("/*ENGINE*/", engine).replace(
-        "/*DATA*/null", json.dumps(data, separators=(",", ":"))
+        "/*DATA*/null", script_json(data)
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / "index.html"

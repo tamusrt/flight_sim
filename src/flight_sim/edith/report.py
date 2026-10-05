@@ -7,6 +7,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from flight_sim.edith import stats as ci
+
+
+def _pct(share: float) -> str:
+    """A share of 1 as a percentage that keeps a small one readable (0.54%, not 0.5%)."""
+    value = 100.0 * share
+    return f"{value:.2f}%" if value < 1.0 else f"{value:.1f}%"
+
 
 def _percent(item: dict[str, Any]) -> str:
     return (
@@ -14,6 +22,14 @@ def _percent(item: dict[str, Any]) -> str:
         f"({100 * item['confidence']:.0f}% interval {100 * item['low']:.1f}"
         f"-{100 * item['high']:.1f}%)"
     )
+
+
+def _f(values: dict[str, Any] | None, key: str, digits: int) -> str:
+    """A number from a dict of numbers, or "n/a" when it is not there (never an error)."""
+    value = (values or {}).get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{value:.{digits}f}"
 
 
 def _number(item: dict[str, Any], unit: str, digits: int = 1) -> str:
@@ -36,13 +52,18 @@ def _spread(
     ]
 
 
-def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals,too-many-branches
-    """The report, as lines of text. Every interval is 90% unless it says otherwise."""
+def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    """The report, as lines of text. Every interval has the batch's confidence (90% by default)."""
+    confidence = r.get("settings", {}).get("confidence", ci.CONFIDENCE)
+    sure_below = ci.one_sided(confidence)
     lines = [
         f"EDITH Monte Carlo: {r['rocket']} at {r['site']}",
         f"{r['runs']} flights in {r['rounds']} rounds, {r['seconds']:.0f} s on "
         f"{r['workers']} core(s); stopped because {r['stopped_because']}.",
-        "Intervals are 90% confidence, under the assumed input distributions "
+        "The batch stops when the two chances it watches (any IREC failure, and apogee at "
+        f"least the target) are each within +/-{100 * r.get('settings', {}).get('target_half_width', 0.04):.1f}%; "
+        "the other chances are not watched and can be wider.",
+        f"Intervals are {100 * confidence:.0f}% confidence, under the assumed input distributions "
         "(they do not cover errors in the assumptions themselves).",
         "",
         "Headline probabilities",
@@ -55,14 +76,14 @@ def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals,
     ]
     for check in r["checks"].values():
         p = check["probability"]
-        if p["high"] > 0.0005 or p["estimate"] > 0:
+        if p["estimate"] > 0:
             lines.append(f"  [{check['severity']}] {check['label']}: {_percent(p)}")
-    quiet = [
-        c["label"] for c in r["checks"].values() if c["probability"]["high"] <= 0.0005
-    ]
+    quiet = [c for c in r["checks"].values() if c["probability"]["estimate"] == 0]
     if quiet:
+        worst = max(c["probability"]["high"] for c in quiet)
         lines.append(
-            f"  Never triggered (upper bound under 0.05%): {len(quiet)} checks"
+            f"  Never triggered in {r['runs']} flights: {len(quiet)} checks "
+            f"({100 * sure_below:.0f}% sure each is below {_pct(worst)})"
         )
     lines += ["", "Apogee and flight"]
     lines += _spread("Apogee above the pad", r["apogee_m"], "m", 0)
@@ -105,8 +126,8 @@ def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals,
         scale = audit["error_scale"]
         lines.append(
             f"  Surrogate error scale (from {audit['re_flown_pairs']} re-flown runs): "
-            f"apogee {scale['apogee_m']:.1f} m, rail exit speed {scale['rail_v']:.2f} m/s, "
-            f"main altitude {scale['main_alt']:.1f} m, landing speed {scale['land_v_vert']:.2f} m/s; "
+            f"apogee {_f(scale, 'apogee_m', 1)} m, rail exit speed {_f(scale, 'rail_v', 2)} m/s, "
+            f"main altitude {_f(scale, 'main_alt', 1)} m; "
             f"this adds {100 * audit['extra_width_any_failure']:.2f} points of width to "
             f"the failure probability."
         )
@@ -122,24 +143,47 @@ def format_report(r: dict[str, Any]) -> str:  # pylint: disable=too-many-locals,
     err = r["surrogate_error"]
     if err:
         lines.append(
-            f"  Surrogate held-out error: apogee {err['apogee_m']:.1f} m, "
-            f"rail exit speed {err['rail_v']:.2f} m/s, stability {err['rail_margin']:.3f} cal."
+            f"  Surrogate held-out error: apogee {_f(err, 'apogee_m', 1)} m, "
+            f"rail exit speed {_f(err, 'rail_v', 2)} m/s, stability {_f(err, 'rail_margin', 3)} cal."
         )
     check = r.get("fast_reco_check")
-    if check:
+    if check and check.get("runs"):
         lines.append(
-            f"  FastRECO against the full RECO on {check['runs']} climbs: landing within "
+            f"  FastRECO against the full RECO (a spot check of {check['pairs']} flights, "
+            f"typical ones and the closest to a limit, gusts off in both; not a guarantee "
+            f"for every flight): landing within "
             f"{check['largest_landing_offset_m']:.0f} m "
             f"({100 * check['largest_offset_share_of_drift']:.1f}% of the drift), "
             f"landing speed within {check['largest_landing_speed_diff_m_s']:.2f} m/s, "
             f"peak load within {check['largest_peak_load_diff_percent']:.1f}%, "
             f"main altitude within {check['largest_main_altitude_diff_m']:.0f} m; "
-            f"same pass/fail: {'yes' if check['same_pass_fail'] else 'NO'}; "
+            f"same pass/fail (rules and recommendations): "
+            f"{'yes' if check['same_pass_fail'] else 'NO, on ' + str(check['disagreements']) + ' flights'}; "
             f"{check['fast_seconds_per_run']:.1f} s against {check['full_seconds_per_run']:.1f} s per run."
         )
-    if r["simulation_errors"]:
+    elif check:
         lines.append(
-            f"  {r['simulation_errors']} runs failed to simulate (counted as failures)."
+            f"  FastRECO against the full RECO: none of the {check['pairs']} check flights "
+            f"could be compared in detail; same pass/fail: "
+            f"{'yes' if check['same_pass_fail'] else 'NO, on ' + str(check['disagreements']) + ' flights'}."
+        )
+    if check and check.get("skipped") and check.get("runs"):
+        lines.append(
+            f"  {check['skipped']} of the {check['pairs']} FastRECO check flights could "
+            f"not be compared in detail (a flight did not land or stopped with an error)."
+        )
+    if r["simulation_errors"]:
+        first = r.get("first_simulation_error")
+        lines.append(
+            f"  {r['simulation_errors']} runs failed to simulate (counted as failures)"
+            + (f"; the first error: {first}." if first else ".")
+        )
+    missing = r.get("missing_numbers") or {}
+    if missing.get("flights"):
+        names = ", ".join(f"{k}: {v}" for k, v in missing["by_value"].items())
+        lines.append(
+            f"  {missing['flights']} flights had missing numbers ({names}); a missing "
+            f"number a check needs counts as a failed check."
         )
     lines += ["", "Inputs (assumed unless you replaced them)"]
     for row in r["inputs"]:

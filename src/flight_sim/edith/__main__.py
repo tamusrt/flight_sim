@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from flight_sim.edith.batch import Settings, run_batch
+from flight_sim.edith.batch import TARGET_HALF_WIDTH, Settings, run_batch
 from flight_sim.edith.inputs import SiteConfig
 from flight_sim.edith.report import format_report
 from flight_sim.edith.run import RocketSpec
@@ -36,8 +36,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--target",
         type=float,
-        default=0.03,
-        help="stop at this +/- on the headline probabilities",
+        default=TARGET_HALF_WIDTH,
+        help="stop when the two watched chances (any IREC failure, apogee at least "
+        "the target) are each within this +/- (0.04 is plus or minus 4%%)",
     )
     parser.add_argument("--time-limit", type=float, default=None, help="seconds")
     parser.add_argument("--workers", type=int, default=None)

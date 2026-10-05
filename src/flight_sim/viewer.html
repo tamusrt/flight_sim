@@ -39,6 +39,11 @@ h1,h2{margin:0;font-weight:500}
 .chip{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
 .chip input{accent-color:var(--accent);margin:0}
 .fld{display:inline-flex;align-items:center;gap:6px}
+.fld select{font:400 12px var(--mono);padding:4px 6px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:0}
+.qwrap{display:inline-flex;align-items:center;gap:8px}
+.qtext,.perf{font:400 11px var(--mono);color:var(--muted)}
+.perf{display:none;min-width:12ch}
+.perf.on,.qwrap:hover .perf,.qwrap:focus-within .perf{display:inline}
 .fld input{font:400 12px var(--mono);width:56px;padding:4px 6px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:0}
 .stagewrap{grid-area:stage;display:flex;flex-direction:column;gap:6px;min-width:0}
 .stage{position:relative;height:min(64vh,600px);min-height:320px;overflow:hidden;border:1px solid var(--line);background:#000}
@@ -49,6 +54,13 @@ h1,h2{margin:0;font-weight:500}
 .banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:500 13px var(--mono);letter-spacing:.08em;padding:6px 14px;background:#d6d6d3;color:#101010;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
 .banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}.banner[data-kind="reco"]{background:#b9a0d0;color:#140b1d}.banner[data-kind="aero"]{background:#cf8aa0;color:#1d070c}.banner[data-kind="rail"]{background:#8fbf8f;color:#08160a}
 .nogl[hidden],.chip[hidden]{display:none}
+/* display rules such as .seg{display:flex} would otherwise win over the hidden attribute and show controls that should be off */
+.app [hidden]{display:none!important}
+.ttl{display:flex;align-items:baseline;flex-wrap:wrap}
+.dsname{font:400 11px var(--mono);color:var(--muted);margin-left:12px;letter-spacing:.04em}
+/* on a touch screen a finger that drags up or down scrolls the page instead of tilting the view (sideways drags still turn it,
+   and two fingers still pinch the zoom) */
+@media (pointer:coarse){ .stage canvas{touch-action:pan-y} }
 .nogl{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:#ddd;font:400 13px var(--mono)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font:400 11.5px var(--mono);color:var(--muted)}
 .lg{display:inline-flex;align-items:center;gap:6px}
@@ -65,7 +77,7 @@ h1,h2{margin:0;font-weight:500}
 .mk.burnout{color:var(--thrust)}.mk.burnout i{background:var(--thrust)}.mk.apogee{color:var(--alpha)}.mk.apogee i{background:var(--alpha)}.mk.impact{color:var(--warn)}.mk.impact i{background:var(--warn)}
 .mk.impact{transform:translateX(-100%);align-items:flex-end}
 .mk.rail{color:var(--ok)}.mk.rail i{background:var(--ok)}.mk.maxq,.mk.mach{color:var(--air)}.mk.maxq i,.mk.mach i{background:var(--air)}
-.mk.deploy,.mk.disreef{color:var(--phi)}.mk.deploy i,.mk.disreef i{background:var(--phi)}
+.mk.deploy,.mk.disreef,.mk.reco{color:var(--phi)}.mk.deploy i,.mk.disreef i,.mk.reco i{background:var(--phi)}
 .mk b{font-weight:400}.mk b.quiet{visibility:hidden}
 .mk.vote,.mk.fc{color:var(--vel)}.mk.vote i,.mk.fc i{background:var(--vel)}.mk.charge,.mk.stretch{color:var(--phi)}.mk.charge i,.mk.stretch i{background:var(--phi)}.mk.runout{color:var(--thrust)}.mk.runout i{background:var(--thrust)}
 input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;cursor:pointer;display:block}
@@ -109,10 +121,11 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 
 <div class="app">
   <header class="top">
-    <div class="ttl"><h1>VISION</h1></div>
+    <div class="ttl"><h1>VISION</h1><span class="dsname" id="dsName"></span></div>
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
       <div class="seg" id="look" title="Engineering: the plain grid on black. Realistic: sky, clouds, desert and shadows (only the look changes, the flight is the same)."><button data-l="eng">Engineering</button><button data-l="real">Realistic</button></div>
+      <div class="qwrap" id="qwrap"><label class="fld" title="How much of the Realistic look is drawn. Auto starts with everything and drops detail by itself if the page runs slowly (under about 30 frames a second). High is everything, Low is the lightest. Engineering is not affected.">Quality <select id="quality" aria-label="Quality of the Realistic look"><option value="auto">Auto</option><option value="high">High</option><option value="low">Low</option></select></label><span class="qtext" id="qtext" hidden></span><span class="perf" id="perf" aria-live="off"></span></div>
       <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket back in the middle of the view">Center</button></div>
       <label class="fld" title="Draw the rocket bigger than life size so it can be seen from far away. The flight path is not changed.">Rocket scale ×<input type="text" id="mult" value="1" inputmode="decimal" aria-label="Rocket size multiplier"></label>
       <label class="chip" title="Axes fixed to the ground at the launch pad"><input type="checkbox" data-k="world" checked>World axes</label>
@@ -134,12 +147,12 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 
   <section class="stagewrap">
     <div class="stage" id="stage">
-      <canvas id="cv"></canvas>
+      <canvas id="cv" role="img" aria-label="3D view of the rocket flight. Drag to rotate, scroll to zoom."></canvas>
       <div class="vignette" id="vignette" hidden></div>
       <div class="note" id="scaleNote"></div>
       <div class="note" id="edNote" style="bottom:22px;max-width:92%;white-space:normal" hidden></div>
       <div class="note" id="circKey" style="top:8px;bottom:auto;left:auto;right:8px;background:rgba(10,12,16,.72);padding:6px 9px;border-radius:6px;line-height:1.7" hidden></div>
-      <div class="banner" id="banner" hidden></div>
+      <div class="banner" id="banner" role="status" aria-live="polite" hidden></div>
       <div class="nogl" id="nogl" hidden>WebGL isn't available here, so the 3D view can't draw. The readouts on the right still work.</div>
     </div>
     <div class="legend">
@@ -194,6 +207,15 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
 (function(){
 'use strict';
 var $=function(id){return document.getElementById(id)};
+/* the 3D library comes from a CDN: without it nothing below can run, so say so instead of leaving a dead page */
+if(typeof THREE==='undefined'){
+  var noLib='The 3D library could not be loaded (no connection?). Reload the page.';
+  window.__visionLoadError=noLib; window.__viewer={usingDemo:false,loadError:noLib,frames:0};
+  var ng=$('nogl'); ng.textContent=noLib; ng.hidden=false; ng.setAttribute('role','alert');
+  return;
+}
+/* telemetry text (event and part names, file names) is data from outside this page: it only ever goes into the page as text */
+function esc(t){ return String(t).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 var C={x:0xb5504a,y:0x6b9b6b,z:0x5b86b8,vel:0x5ea0ad,air:0xb06b7b,thr:0xc4894f,alpha:0xc4a050,phi:0x9578b5,ym:0xb89a5a,zm:0x9578b5};
 var M2FT=3.28084, scaleMult=1, curLd=52;
 var V3=THREE.Vector3, DEG=180/Math.PI, TAU=Math.PI*2, DT=0.02, STRIDE=10;
@@ -210,8 +232,10 @@ scene.add(root);
 var ambient=new THREE.AmbientLight(0xffffff,0.7); scene.add(ambient);
 var hemi=new THREE.HemisphereLight(0xbcd3ec,0x9a8566,0); scene.add(hemi);
 var sun=new THREE.DirectionalLight(0xffffff,0.75); sun.position.set(0.6,1,0.8); scene.add(sun); scene.add(sun.target);
-if(renderer){ renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap; }
-sun.shadow.mapSize.set(2048,2048); sun.shadow.bias=-0.0004; sun.shadow.normalBias=0.02;
+/* the sun's shadow map is a 1024 px picture of the scene as the sun sees it, drawn again only every second frame and only when
+   the rocket is near the ground (see updateLook); plain PCF (percentage-closer filtering) keeps the edges soft enough */
+if(renderer){ renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFShadowMap; renderer.shadowMap.autoUpdate=false; }
+sun.shadow.mapSize.set(1024,1024); sun.shadow.bias=-0.0004; sun.shadow.normalBias=0.02;
 scene.fog=new THREE.Fog(0xcccccc,9000,42000);
 var tmpT=new V3();
 function s2t(v,out){ return (out||new V3()).set(v.z,v.x,v.y); }
@@ -263,7 +287,7 @@ function css(n){return getComputedStyle(document.documentElement).getPropertyVal
 var GRID_PER_HEIGHT=8, GRID_UNIT=0.01;   /* about 8 squares across the ground below the camera; sizes are 0.01, 0.1, 1 ... rocket lengths */
 var groundU={uCell:{value:1},uFrac:{value:0},uY:{value:0},uBase:{value:new THREE.Color(0x23272d)},uLine:{value:new THREE.Color(0x9aa6b4)},
   uFog:{value:new THREE.Color(0x000000)},uFogRange:{value:new THREE.Vector2(9000,42000)},
-  uReal:{value:0},uGridA:{value:1},uSun:{value:new THREE.Vector3(0.5,0.7,0.5)},uLight:{value:new THREE.Vector2(0.55,0.75)}};
+  uReal:{value:0},uQual:{value:2},uGridA:{value:1},uSun:{value:new THREE.Vector3(0.5,0.7,0.5)},uLight:{value:new THREE.Vector2(0.55,0.75)}};
 function ringGeometry(){
   var SEC=96, r=0.05, radii=[], pos=[0,0,0], idx=[], i, j;
   for(; r<300000; r*=1.3) radii.push(r);
@@ -284,8 +308,11 @@ var NOISE_GLSL=[
   'float tiled(vec2 p, float scale, float tile){ return fbm(mod(p, tile)*scale, floor(scale*tile+0.5)); }',
   'float fbm3(vec2 p, float P){ float a=0.5, s=0.0; for(int k=0;k<3;k++){ s+=a*vnoise(p,P); p=p*2.0+vec2(17.0,9.0); P*=2.0; a*=0.5; } return s/0.875; }',
   'float tiled3(vec2 p, float scale, float tile){ return fbm3(mod(p, tile)*scale, floor(scale*tile+0.5)); }',
+  /* the same with two layers of detail, for the clouds: the finer ones are lost in the haze */
+  'float fbm2(vec2 p, float P){ float a=0.5, s=0.0; for(int k=0;k<2;k++){ s+=a*vnoise(p,P); p=p*2.0+vec2(17.0,9.0); P*=2.0; a*=0.5; } return s/0.75; }',
+  'float tiled2(vec2 p, float scale, float tile){ return fbm2(mod(p, tile)*scale, floor(scale*tile+0.5)); }',
   /* fair-weather cumulus: how much cloud there is above a point of the ground (0 to 1) */
-  'float cloudD(vec2 p){ float c=0.97*tiled3(p,0.00025,80000.0)+0.3*(tiled3(p+vec2(900.0,300.0),0.0025,8000.0)-0.5);',
+  'float cloudD(vec2 p){ float c=0.97*tiled2(p,0.00025,80000.0)+0.3*(tiled2(p+vec2(900.0,300.0),0.0025,8000.0)-0.5);',
   '  return smoothstep(0.56,0.74,c); }'].join('\n');
 var CLOUD_H=4200;   /* cloud base, m above the pad */
 var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
@@ -296,18 +323,27 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     'void main(){ vOff=position.xz; vec3 w=vec3(cameraPosition.x+position.x,uY,cameraPosition.z+position.z);',
     '  gl_Position=projectionMatrix*viewMatrix*vec4(w,1.0); }'].join('\n'),
   fragmentShader:[
-    'uniform float uCell, uFrac, uY, uReal, uGridA, uCloudBox; uniform sampler2D uCloudMap; uniform vec3 uBase, uLine, uFog, uSun; uniform vec2 uFogRange, uLight; varying vec2 vOff;',
+    'uniform float uCell, uFrac, uY, uReal, uQual, uGridA, uCloudBox; uniform sampler2D uCloudMap; uniform vec3 uBase, uLine, uFog, uSun; uniform vec2 uFogRange, uLight; varying vec2 vOff;',
     NOISE_GLSL,
-    /* the desert floor: sand, darker gravel, dry grass, scattered creosote bushes and pebbles */
+    /* the desert floor: sand, darker gravel, dry grass, scattered creosote bushes and pebbles. Detail is only worked out where a
+       pixel is small enough to show it (fw = how many metres one screen pixel covers): far away only the two big layers are
+       computed, and the finer layers fade in as the ground comes closer. Each layer is a sum of noise "octaves" (the same noise
+       at doubling detail); the big and middle layers use three, which is plenty for features that large */
     'vec3 desert(vec2 p, float fw){',
-    '  float big=tiled(p,0.0009,40000.0), mid=tiled(p,0.012,4000.0), fine=tiled(p,0.35,400.0);',
+    '  float big=tiled3(p,0.0009,40000.0), mid=tiled3(p,0.012,4000.0);',
     '  vec3 sand=vec3(0.80,0.69,0.52), dust=vec3(0.70,0.60,0.45), grav=vec3(0.55,0.49,0.39), grass=vec3(0.60,0.56,0.36), bush=vec3(0.28,0.31,0.20);',
     '  vec3 c=mix(sand,dust,smoothstep(0.35,0.7,big));',
     '  c=mix(c,grav,0.55*smoothstep(0.55,0.8,mid));',
-    '  c=mix(c,grass,0.45*smoothstep(0.45,0.75,tiled(p+vec2(311.0,97.0),0.05,2000.0)));',
-    /* the bushes fade out where a pixel covers more than a couple of metres, so they never shimmer */
-    '  float b=smoothstep(0.72,0.8,tiled(p+vec2(53.0,11.0),0.55,400.0))*(1.0-smoothstep(0.6,2.5,fw));',
-    '  c=mix(c,bush,0.85*b);',
+    /* dry-grass patches: from far away a flat average of them is used instead (about what the patches add up to) */
+    '  float gm=0.27;',
+    '  if(uQual>0.5&&fw<8.0) gm=mix(smoothstep(0.45,0.75,tiled3(p+vec2(311.0,97.0),0.05,2000.0)),0.27,smoothstep(3.0,8.0,fw));',
+    '  c=mix(c,grass,0.45*gm);',
+    /* the bushes fade out where a pixel covers more than a couple of metres, so they never shimmer: past that they are not computed */
+    '  if(uQual>0.5&&fw<2.5){ float b=smoothstep(0.72,0.8,tiled(p+vec2(53.0,11.0),0.55,400.0))*(1.0-smoothstep(0.6,2.5,fw));',
+    '    c=mix(c,bush,0.85*b); }',
+    /* fine speckle: only close up, where it can be seen; further out it averages to a constant (0.5) */
+    '  float fine=0.5;',
+    '  if(uQual>0.5&&fw<1.5) fine=mix(tiled(p,0.35,400.0),0.5,smoothstep(0.5,1.5,fw));',
     '  return c*(0.86+0.28*fine);',
     '}',
     /* low swells and ripples in the ground, for the light only (the ground itself stays flat, as the simulation has it) */
@@ -324,7 +360,11 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     '  vec3 c=mix(uBase,uLine,0.42*a);',
     '  if(uReal>0.5){ float fw=length(fwidth(p));',
     /* the slope of the swells from the screen-space change of their height (bump mapping), turned into a normal */
-    '    float h=relief(p,fw); vec2 dpx=dFdx(p), dpy=dFdy(p); float dhx=dFdx(h), dhy=dFdy(h);',
+    /* the swells are only worked out within 8 m per pixel (past that the bump was already faded to nothing), and not at all on
+       the lowest quality levels. The height is set to 0 outside, then the screen-space change is taken in plain code, outside
+       the branch, so neighbouring pixels always agree on what they are differencing */
+    '    float h=0.0; if(uQual>1.5&&fw<8.0) h=relief(p,fw);',
+    '    vec2 dpx=dFdx(p), dpy=dFdy(p); float dhx=dFdx(h), dhy=dFdy(h);',
     '    float det=dpx.x*dpy.y-dpx.y*dpy.x; vec2 g=abs(det)>1e-9?vec2(dhx*dpy.y-dhy*dpx.y,dhy*dpx.x-dhx*dpy.x)/det:vec2(0.0);',
     '    g*=1.0-smoothstep(1.0,8.0,fw); vec3 n=normalize(vec3(-g.x,1.0,-g.y));',
     /* shadows of the clouds overhead, cast along the sun */
@@ -352,6 +392,60 @@ function setGrid(camHeight,rocketLen,camDist){
    three.js axes here: x north, y up, z east (the sim's X up, Y east, Z north, turned by `root`). */
 var LOOK='eng';   /* opens in Engineering; the Realistic button is one click away and each browser remembers its choice */
 try{ var savedLook=localStorage.getItem('vision.look'); if(savedLook==='eng'||savedLook==='real') LOOK=savedLook; }catch(e){ /* no storage: the default */ }
+
+/* ---------- quality: how much of the realistic look is drawn (the Engineering look is never affected) ----------
+   The realistic look is heavy for a laptop with integrated graphics, so it comes in four levels, from 4 (everything) down to
+   1 (the lightest). Each level keeps what the one above it removed switched off:
+     4  High   everything, drawn at up to 1.25 pixels per screen pixel
+     3         + no grass, bushes or stones near the camera
+     2         + no sun shadows, half the cloud puffs, drawn at 1 pixel per screen pixel
+     1  Low    + drawn at 0.75 pixel per screen pixel, no ground bumps or extra ground layers, reflections not refreshed
+   The choice "Auto" starts at 4 and steps down one level (never up again) when the page runs under about 30 frames a second.
+   The choice is kept in this browser under 'vision.quality'. */
+var QSEL='auto', qLevel=4, qShadow=true;   /* QSEL: 'auto', 'high' or 'low'; qLevel: the level in use now (1 to 4) */
+try{ var savedQ=localStorage.getItem('vision.quality'); if(savedQ==='auto'||savedQ==='high'||savedQ==='low') QSEL=savedQ; }catch(e){ /* no storage: Auto */ }
+if(QSEL==='low') qLevel=1;
+/* how many pixels are drawn per CSS pixel: Engineering keeps the old rule; Realistic caps it by the level (a screen that asks for
+   2 or 3 pixels per pixel is where an integrated GPU runs out of speed) */
+function pixelRatio(){
+  var dpr=window.devicePixelRatio||1;
+  if(LOOK!=='real') return Math.min(dpr,2);
+  return qLevel>=3?Math.min(dpr,1.25):qLevel===2?Math.min(dpr,1):0.75;
+}
+/* switch everything to the current level. The things that are checked every frame (clutter, shadows, reflections) read qLevel
+   and qShadow themselves; the rest is set here once */
+function applyQuality(){
+  qShadow=qLevel>=3;
+  groundU.uQual.value=qLevel>=2?2:0;   /* 2: everything; 0: no ground bumps or extra ground layers (the shader's own scale) */
+  puffs.setHalf(qLevel<=2);
+  if(sun.castShadow&&!qShadow){ sun.castShadow=false; shadowSheet.visible=false; }
+  resize();
+  var sel=$('quality'); if(sel) sel.value=QSEL;
+  var qt=$('qtext'); if(qt){ qt.hidden=!(QSEL==='auto'&&LOOK==='real'); qt.textContent='Quality: Auto (level '+qLevel+')'; }
+  govReset();
+}
+/* the Auto governor: it times the frames and, if the average over 45 of them is slower than 33 ms (under about 30 frames a
+   second), drops one level. It never goes back up in the same session (that would flicker between two looks). It leaves out
+   the first 30 frames after the page starts, after any change of look or quality (the graphics chip is busy compiling and
+   loading then) and after the tab has been hidden, and it only watches the Realistic look */
+var gSkip=30, gN=0, gSum=0;
+function govReset(){ gSkip=30; gN=0; gSum=0; }
+function govFrame(ms){
+  if(QSEL!=='auto'||LOOK!=='real'||document.hidden){ govReset(); return; }
+  if(gSkip>0){ gSkip--; return; }
+  gSum+=ms; gN++;
+  if(gN>=45){ var avg=gSum/gN; gN=0; gSum=0;
+    if(avg>33&&qLevel>1){ qLevel--; applyQuality(); } }
+}
+document.addEventListener('visibilitychange',govReset);
+/* the small frame-time readout (shown with ?perf in the address, or while the Quality control is pointed at or focused) */
+var perfEl=$('perf'), perfN=0, perfSum=0, perfT0=0, perfPrev=0;
+if(/[?&]perf\b/.test(location.search)) perfEl.classList.add('on');
+function perfFrame(now){
+  if(perfPrev) { var d=now-perfPrev; perfN++; perfSum+=d; }
+  perfPrev=now; if(!perfT0) perfT0=now;
+  if(now-perfT0>=500&&perfN){ perfEl.textContent=(perfSum/perfN).toFixed(1)+' ms · '+(1000*perfN/(now-perfT0)).toFixed(0)+' fps'; perfN=0; perfSum=0; perfT0=now; }
+}
 /* a mid-morning launch at Spaceport America: the sun 40 degrees up in the south-east */
 var SUN_EL=40*Math.PI/180, SUN_AZ=135*Math.PI/180;
 var SUN_DIR=new V3(Math.cos(SUN_EL)*Math.cos(SUN_AZ),Math.sin(SUN_EL),Math.cos(SUN_EL)*Math.sin(SUN_AZ)).normalize();
@@ -388,7 +482,7 @@ var skyEnv=(function(){
    the Fra Cristobal range to the north-west and low hills to the south. Two rings of ridges with real slopes (so they look
    like mountains from high up too, lit by the sun), their shapes made up, their bearings, distances and heights about right */
 var mountains=(function(){
-  var N=720, K=9, pos=[], col=[], idx=[], base=0;
+  var N=240, K=5, pos=[], col=[], idx=[], base=0;   /* points along each ring, points across each ridge */
   function bump(deg,c,w,h){ var d=((deg-c+540)%360)-180; return h*Math.exp(-d*d/(2*w*w)); }
   /* [bearing in degrees from north, spread in degrees, height above the basin in m] for each range */
   var NEAR=[[88,16,1250],[72,8,900],[262,13,950],[248,7,700],[335,9,850],[195,10,260],[128,9,420],[20,10,300]],
@@ -421,8 +515,10 @@ groundU.uCloudMap={value:cloudMap}; groundU.uCloudBox={value:CLOUD_BOX};
 var puffs=(function(){
   var seed=20270611; function rnd(){ seed=(seed+0x6D2B79F5)|0; var t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }
   var cx=cloudMapCanvas.getContext('2d'), list=[], R=CLOUD_BOX/2*0.95;
-  for(var c=0;c<330;c++){
-    var x=(rnd()*2-1)*R, z=(rnd()*2-1)*R, rc=500+rnd()*rnd()*1400, hc=rc*(0.6+0.5*rnd()), n=10+Math.round(rc/70);
+  /* about 130 heaps of about 9 puffs each (1,150 in all): fewer, bigger heaps than a dense sky would use, because every puff is
+     a see-through square the graphics chip has to blend over everything behind it */
+  for(var c=0;c<130;c++){
+    var x=(rnd()*2-1)*R, z=(rnd()*2-1)*R, rc=(500+rnd()*rnd()*1400)*1.5, hc=rc*(0.6+0.5*rnd()), n=6+Math.round(rc/250);
     if(Math.hypot(x,z)>R) continue;
     for(var k=0;k<n;k++){ var a=rnd()*TAU, r=Math.sqrt(rnd())*rc*0.85, up=Math.pow(rnd(),1.4)*(1-0.7*r/rc), size=(0.55+0.45*rnd())*rc*(1-0.4*up);
       var px=x+Math.cos(a)*r, pz=z+Math.sin(a)*r, y=CLOUD_H+size*0.28+up*hc;   /* nothing hangs below the flat base */
@@ -436,9 +532,9 @@ var puffs=(function(){
     for(var i=0;i<9;i++){ var a=i*0.7+rnd(), r=i?18+rnd()*14:0, x=64+Math.cos(a)*r, y=64+Math.sin(a)*r, rr=i?26+rnd()*12:44, gr=g.createRadialGradient(x,y,0,x,y,rr);
       gr.addColorStop(0,'rgba(255,255,255,0.38)'); gr.addColorStop(0.5,'rgba(255,255,255,0.2)'); gr.addColorStop(1,'rgba(255,255,255,0)'); g.fillStyle=gr; g.fillRect(0,0,128,128); }
     return new THREE.CanvasTexture(c); })();
-  var N=list.length, base=new THREE.PlaneGeometry(1,1), geo=new THREE.InstancedBufferGeometry();
+  var NALL=list.length, N=NALL, half=false, base=new THREE.PlaneGeometry(1,1), geo=new THREE.InstancedBufferGeometry();
   geo.index=base.index; geo.setAttribute('position',base.attributes.position); geo.setAttribute('uv',base.attributes.uv); geo.instanceCount=N;
-  var iPos=new THREE.InstancedBufferAttribute(new Float32Array(N*3),3), iData=new THREE.InstancedBufferAttribute(new Float32Array(N*3),3);
+  var iPos=new THREE.InstancedBufferAttribute(new Float32Array(NALL*3),3), iData=new THREE.InstancedBufferAttribute(new Float32Array(NALL*3),3);
   geo.setAttribute('iPos',iPos); geo.setAttribute('iData',iData);
   var U={uTex:{value:tex},uFog:{value:new THREE.Color()},uFogRange:{value:new THREE.Vector2(2500,95000)}};
   var mesh=new THREE.Mesh(geo,new THREE.ShaderMaterial({uniforms:U,transparent:true,depthWrite:false,fog:false,
@@ -453,13 +549,17 @@ var puffs=(function(){
       '  gl_FragColor=vec4(mix(c,uFog,vFog),a*vNear*(1.0-0.7*vFog)); }'].join('\n')}));
   mesh.frustumCulled=false; mesh.renderOrder=-40; scene.add(mesh);
   /* drawn far to near (re-sorted when the camera has moved 150 m), so near puffs cover the far ones */
-  var order=list.map(function(_,i){ return i; }), dist=new Float32Array(N), last=new V3(1e9,0,0);
+  var order=[], dist=new Float32Array(NALL), last=new V3(1e9,0,0);
+  /* every second puff is dropped (and the rest drawn 30% bigger) on the lower quality levels; the same puffs every time */
+  function pick(){ order=[]; for(var i=0;i<NALL;i++) if(!half||i%2===0) order.push(i); N=order.length; geo.instanceCount=N; last.set(1e9,0,0); }
+  pick();
   function sort(cam){ if(cam.distanceTo(last)<150) return; last.copy(cam);
-    for(var i=0;i<N;i++){ var q=list[i]; dist[i]=(q[0]-cam.x)*(q[0]-cam.x)+(q[1]-cam.y)*(q[1]-cam.y)+(q[2]-cam.z)*(q[2]-cam.z); }
+    for(var k=0;k<N;k++){ var i=order[k], q=list[i]; dist[i]=(q[0]-cam.x)*(q[0]-cam.x)+(q[1]-cam.y)*(q[1]-cam.y)+(q[2]-cam.z)*(q[2]-cam.z); }
     order.sort(function(a,b){ return dist[b]-dist[a]; });
-    for(var j=0;j<N;j++){ var p=list[order[j]]; iPos.setXYZ(j,p[0],p[1],p[2]); iData.setXYZ(j,p[3],p[4],(order[j]*2.399)%TAU); }
+    for(var j=0;j<N;j++){ var p=list[order[j]]; iPos.setXYZ(j,p[0],p[1],p[2]); iData.setXYZ(j,p[3]*(half?1.3:1),p[4],(order[j]*2.399)%TAU); }
     iPos.needsUpdate=true; iData.needsUpdate=true; }
-  return {mesh:mesh,U:U,sort:sort};
+  function setHalf(h){ if(h!==half){ half=h; pick(); } }
+  return {mesh:mesh,U:U,sort:sort,setHalf:setHalf,count:function(){ return N; }};
 })();
 var cloudU={uH:{value:CLOUD_H+300},uSun:{value:SUN_DIR.clone()},uFog:{value:new THREE.Color()},uFogRange:{value:new THREE.Vector2(2500,95000)},uBox:{value:CLOUD_BOX*0.42}};
 var clouds=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({uniforms:cloudU,transparent:true,depthWrite:false,side:THREE.DoubleSide,fog:false,
@@ -478,11 +578,14 @@ var clouds=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({uniforms:clou
     '}'].join('\n')}));
 clouds.frustumCulled=false; clouds.renderOrder=-50; scene.add(clouds);
 
-/* the ground close to the camera: tufts of dry grass that sway in the wind, creosote bushes and stones, each with a soft
-   dark patch under it. Placed from a fixed pattern on the ground, so the same plant is always in the same spot; only the
-   patch round where you are looking is filled, and nothing is put on the concrete pad */
+/* the ground close to the camera: tufts of dry grass, creosote bushes and stones, each with a soft dark patch under it.
+   Placed from a fixed pattern on the ground, so the same plant is always in the same spot; only the patch round where you
+   are looking is filled, and nothing is put on the concrete pad. Kept deliberately light (a few hundred small shapes, not
+   thousands): further out the ground shader already paints the bushes and gravel, so the eye does not miss them */
 var CLUTTER=(function(){
   var grp=new THREE.Group(); grp.visible=false; scene.add(grp);
+  /* the grass no longer sways (the vertex animation cost more than it showed); these two values are still set each frame
+     so the wind plumbing stays in place, but nothing reads them now */
   var sway={uTime:{value:0},uWind:{value:new V3()}};
   function h2(i,j,s){ var x=Math.sin(i*127.1+j*311.7+s*74.7)*43758.5453; return x-Math.floor(x); }
   /* the same random number for every copy of a corner (the triangles do not share corners), so lumps stay closed */
@@ -496,13 +599,14 @@ var CLUTTER=(function(){
         col.push(q.c[0]+(q.c2?q.c2[0]-q.c[0]:0)*t,q.c[1]+(q.c2?q.c2[1]-q.c[1]:0)*t,q.c[2]+(q.c2?q.c2[2]-q.c[2]:0)*t); } });
     var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
     g.setAttribute('color',new THREE.Float32BufferAttribute(col,3)); return g; }
-  /* a tuft: a dozen thin blades leaning out, darker at the root and pale straw at the tip; 1 unit tall */
-  var blades=[]; for(var k=0;k<12;k++){ var a=k*2.39996, lean=0.15+0.3*h2(k,1,3), hgt=0.55+0.45*h2(k,2,3), w=0.05;
+  /* a tuft: five thin blades leaning out, darker at the root and pale straw at the tip; 1 unit tall */
+  var blades=[]; for(var k=0;k<5;k++){ var a=k*2.39996, lean=0.15+0.3*h2(k,1,3), hgt=0.55+0.45*h2(k,2,3), w=0.08;
     var b=new THREE.BufferGeometry(), ca=Math.cos(a), sa=Math.sin(a), px=-sa*w, pz=ca*w;
     b.setAttribute('position',new THREE.Float32BufferAttribute([px,0,pz, -px,0,-pz, ca*lean,hgt,sa*lean],3)); blades.push({g:b,c:[0.5,0.46,0.3],c2:[0.92,0.85,0.62],ramp:true,up:true}); }
   var tuftGeo=fromParts(blades);
-  /* a creosote bush: a few rounded dark olive clumps straight off the ground, wider than tall; 1 unit tall */
-  var bparts=[], k2; for(k2=0;k2<4;k2++){ var g=new THREE.IcosahedronGeometry(1,1), an=k2*2.1, rr=k2?0.42:0, sz=k2?0.36:0.45;
+  /* a creosote bush: two rounded dark olive clumps straight off the ground, wider than tall; 1 unit tall. Each clump is a
+     plain 20-sided lump (icosahedron, detail 0): from more than a few metres away it reads as round all the same */
+  var bparts=[], k2; for(k2=0;k2<2;k2++){ var g=new THREE.IcosahedronGeometry(1,0), an=k2*2.1, rr=k2?0.35:0, sz=k2?0.42:0.5;
     g.scale(sz*1.2,sz*1.05,sz*1.2); g.translate(Math.cos(an)*rr,0.52+0.2*h2(k2,5,1)-(k2?0.14:0),Math.sin(an)*rr);
     var gp=g.attributes.position; for(var v=0;v<gp.count;v++){ var f=1+0.22*(vh(gp,v,k2)-0.5); gp.setXYZ(v,gp.getX(v)*f,gp.getY(v)*f,gp.getZ(v)*f); }
     bparts.push({g:g,c:[0.27,0.29,0.18],c2:[0.44,0.45,0.28],ramp:true}); }
@@ -515,19 +619,12 @@ var CLUTTER=(function(){
     gr.addColorStop(0,'rgba(0,0,0,0.55)'); gr.addColorStop(0.5,'rgba(0,0,0,0.3)'); gr.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=gr; x.fillRect(0,0,64,64); return new THREE.CanvasTexture(c); })();
   var blobGeo=new THREE.PlaneGeometry(1,1); blobGeo.rotateX(-Math.PI/2);
   var grassMat=new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide});
-  grassMat.onBeforeCompile=function(sh){ sh.uniforms.uTime=sway.uTime; sh.uniforms.uWind=sway.uWind;
-    sh.vertexShader='uniform float uTime; uniform vec3 uWind;\n'+sh.vertexShader.replace('#include <project_vertex>',[
-      'vec4 mvPosition=vec4(transformed,1.0);',
-      '#ifdef USE_INSTANCING',
-      'mvPosition=instanceMatrix*mvPosition;',
-      'float ph=instanceMatrix[3].x*0.37+instanceMatrix[3].z*0.53;',
-      'mvPosition.xz+=uWind.xz*position.y*position.y*(0.55+0.45*sin(uTime*2.1+ph))*length(instanceMatrix[1].xyz);',
-      '#endif',
-      'mvPosition=modelViewMatrix*mvPosition; gl_Position=projectionMatrix*mvPosition;'].join('\n')); };
   var kinds=[
-    {geo:tuftGeo,mat:grassMat,cell:0.8,R:45,p:0.5,size:[0.22,0.5],seed:1},
-    {geo:bushGeo,mat:new THREE.MeshLambertMaterial({vertexColors:true}),cell:5,R:100,p:0.3,size:[0.55,1.5],seed:2,shadow:true,blob:1.7},
-    {geo:rockGeo,mat:new THREE.MeshLambertMaterial({vertexColors:true}),cell:2.2,R:55,p:0.1,size:[0.06,0.35],seed:3,blob:1.5}];
+    /* cell = spacing of the plant grid in m, R = how far out they are drawn, p = chance a cell holds one. The bushes no longer
+       cast sun shadows (their dark blob on the ground does that job) */
+    {geo:tuftGeo,mat:grassMat,cell:1.1,R:30,p:0.5,size:[0.4,0.8],seed:1},
+    {geo:bushGeo,mat:new THREE.MeshLambertMaterial({vertexColors:true}),cell:5,R:80,p:0.3,size:[0.55,1.5],seed:2,blob:1.7},
+    {geo:rockGeo,mat:new THREE.MeshLambertMaterial({vertexColors:true}),cell:4,R:50,p:0.1,size:[0.06,0.35],seed:3,blob:1.5}];
   var nBlob=0;
   kinds.forEach(function(K){ var n=Math.ceil(Math.pow(2*K.R/K.cell+2,2)*0.8*K.p)+16;
     K.mesh=new THREE.InstancedMesh(K.geo,K.mat,n); K.mesh.count=0; K.mesh.frustumCulled=false; K.mesh.castShadow=!!K.shadow;
@@ -550,18 +647,22 @@ var CLUTTER=(function(){
       K.mesh.count=n; K.mesh.instanceMatrix.needsUpdate=true; if(K.mesh.instanceColor) K.mesh.instanceColor.needsUpdate=true; });
     blobs.count=nb; blobs.instanceMatrix.needsUpdate=true;
   }
-  /* each frame: fill the patch round (cx, cz) again when it has moved 10 m; hidden when the camera is high up */
+  /* each frame: fill the patch round (cx, cz) again when it has moved about 16 m (the patch is centred on a 16 m grid point, so
+     the camera is never more than about 11 m off-centre and the grass, which reaches 30 m, always covers what is in front of
+     it); hidden when the camera is high up */
+  var STEP=16;
   function update(on,cx,cz,clear,time,wind){
     grp.visible=on; if(!on) return;
     sway.uTime.value=time; sway.uWind.value.copy(wind);
-    var k=Math.round(cx/10)+','+Math.round(cz/10)+','+clear.toFixed(1);
-    if(k!==key){ key=k; fill(Math.round(cx/10)*10,Math.round(cz/10)*10,clear); }
+    var k=Math.round(cx/STEP)+','+Math.round(cz/STEP)+','+clear.toFixed(1);
+    if(k!==key){ key=k; fill(Math.round(cx/STEP)*STEP,Math.round(cz/STEP)*STEP,clear); }
   }
   return {group:grp,update:update};
 })();
-/* the sky, the desert and the clouds reflected in the rocket: a small cube camera at the rocket renders the world round it
-   every few frames (everything but the rocket, its labels and the tower) */
-var envRT=new THREE.WebGLCubeRenderTarget(128,{generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter}), envCam=new THREE.CubeCamera(0.5,120000,envRT), envTick=0, envReady=false;
+/* the sky, the desert and the clouds reflected in the rocket: a small (64 px per side) cube camera at the rocket renders the
+   world round it (everything but the rocket, its labels and the tower). The reflection hardly changes as the rocket moves, so
+   it is made when the look is switched on and again each time the rocket has climbed or dropped 500 m, not every few frames */
+var envRT=new THREE.WebGLCubeRenderTarget(64,{generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter}), envCam=new THREE.CubeCamera(0.5,120000,envRT), envAlt=0, envDirty=true, envReady=false;
 scene.add(envCam);
 function updateEnv(at){
   if(!renderer) return;
@@ -570,22 +671,29 @@ function updateEnv(at){
   var sv=shadowSheet.visible, cl=CLUTTER.group.visible, au=renderer.shadowMap.autoUpdate; shadowSheet.visible=false; CLUTTER.group.visible=false; renderer.shadowMap.autoUpdate=false;
   envCam.update(renderer,scene);
   renderer.shadowMap.autoUpdate=au; shadowSheet.visible=sv; CLUTTER.group.visible=cl; root.children.forEach(function(c,i){ c.visible=keep[i]; });
+  envAlt=at.y; envDirty=false;
   if(!envReady){ envReady=true; applyLook(); }
 }
 /* where the sun's shadows fall: an invisible sheet just above the ground that only darkens, kept under the rocket */
 var shadowSheet=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.ShadowMaterial({opacity:0.38,depthWrite:false}));
 shadowSheet.rotation.x=-Math.PI/2; shadowSheet.receiveShadow=true; shadowSheet.renderOrder=1; scene.add(shadowSheet);
 function castShadows(obj,on){ obj.traverse(function(o){ if(o.isMesh&&!o.material.transparent) o.castShadow=on; }); }
+var lastReal=false;
 function applyLook(){
   var real=LOOK==='real';
   document.querySelectorAll('#look button').forEach(function(b){ b.classList.toggle('on',b.dataset.l===LOOK); });
-  sky.visible=real; mountains.visible=real; clouds.visible=real; puffs.mesh.visible=real; shadowSheet.visible=real; if(!real) CLUTTER.group.visible=false;
-  /* a light film-style grade and a soft vignette, only for the realistic look */
-  cv.style.filter=real?'contrast(1.06) saturate(1.12)':''; var vg=$('vignette'); if(vg) vg.hidden=!real;
+  if(real&&!lastReal) envDirty=true; lastReal=real;   /* the reflection is out of date after a spell in Engineering */
+  sky.visible=real; mountains.visible=real; clouds.visible=real; puffs.mesh.visible=real; shadowSheet.visible=real&&shadowOn&&qShadow; if(!real) CLUTTER.group.visible=false;
+  /* a soft vignette (dark corners), only for the realistic look. (A colour grade on the canvas was dropped: the browser had
+     to redo it over the whole picture on every frame.) */
+  var vg=$('vignette'); if(vg) vg.hidden=!real;
+  var qt=$('qtext'); if(qt) qt.hidden=!(QSEL==='auto'&&real);
+  govReset();
+  resize();   /* the pixel count depends on the look */
   if(window.__padSlab) window.__padSlab.visible=real;
   groundU.uReal.value=real?1:0; groundU.uSun.value.copy(SUN_DIR);
   ambient.intensity=real?0.12:0.7; hemi.intensity=real?0.55:0;
-  sun.intensity=real?1.05:0.75; sun.color.set(real?0xfff0dc:0xffffff); sun.castShadow=real;
+  sun.intensity=real?1.05:0.75; sun.color.set(real?0xfff0dc:0xffffff); sun.castShadow=real&&shadowOn&&qShadow;
   if(!real) sun.position.set(0.6,1,0.8), sun.target.position.set(0,0,0);
   scene.fog.near=real?2500:9000; scene.fog.far=real?95000:42000; groundU.uFogRange.value.set(scene.fog.near,scene.fog.far);
   if(!real){ if(renderer) renderer.setClearColor(0x000000); scene.fog.color.set(0x000000); groundU.uFog.value.set(0x000000); groundU.uBase.value.set(0x23272d); }
@@ -602,6 +710,13 @@ function updateLook(target,Ld){
   var h=Math.max(target.y,0), box=Ld*1.6+h*1.1, far=Ld*40+h*3;
   sun.target.position.copy(target); sun.position.copy(target).addScaledVector(SUN_DIR,far*0.5);
   var sc2=sun.shadow.camera; sc2.left=-box; sc2.right=box; sc2.top=box; sc2.bottom=-box; sc2.near=0.1; sc2.far=far; sc2.updateProjectionMatrix();
+  /* sun shadows only while the rocket is within a few hundred metres of the ground (350 m going up, 500 m coming down, so it
+     cannot flicker at the edge); higher up its shadow is a speck on the ground far below. The shadow picture is redrawn every
+     second frame only: it is then a frame old, which at that size nobody can see */
+  shadowOn=shadowOn?target.y<500:target.y<350;
+  var shOn=shadowOn&&qShadow;
+  if(sun.castShadow!==shOn){ sun.castShadow=shOn; shadowTick=0; }
+  shadowSheet.visible=shOn;
   /* under the rocket, offset away from the sun to where its shadow lands */
   shadowSheet.position.set(target.x-SUN_DIR.x/Math.max(SUN_DIR.y,0.2)*h,0.004+0.0004*camera.position.distanceTo(target),target.z-SUN_DIR.z/Math.max(SUN_DIR.y,0.2)*h);
   var sz=Math.max(box*4,Ld*30); shadowSheet.scale.set(sz,sz,1);
@@ -609,10 +724,13 @@ function updateLook(target,Ld){
   var gx=target.y<350?target.x:camera.position.x, gz=target.y<350?target.z:camera.position.z;
   var near=Math.hypot(camera.position.x-gx,camera.position.y,camera.position.z-gz)<600;
   var slab=Math.max(8,ROCKET_LEN*scaleMult*1.6), wv=ds&&ds.wind?ds.wind:[0,0,0];
-  CLUTTER.update(near,gx,gz,slab*0.72+0.4,performance.now()/1000,windTmp.set(wv[2]||0,0,wv[1]||0).multiplyScalar(0.012).clampLength(0,0.2));
-  /* the rocket's reflections, made again every sixth frame */
-  if((envTick++)%6===0) updateEnv(target);
+  CLUTTER.update(near&&qLevel>=4,gx,gz,slab*0.72+0.4,performance.now()/1000,windTmp.set(wv[2]||0,0,wv[1]||0).multiplyScalar(0.012).clampLength(0,0.2));
+  /* the rocket's reflections: once when the look starts, then only when the height has changed a lot (and not at all on the
+     lowest quality level). This comes BEFORE the shadow picture is asked for, because drawing the reflection would use it up. */
+  if(envDirty||(qLevel>=2&&Math.abs(target.y-envAlt)>500)) updateEnv(target);
+  if(shOn&&renderer&&(shadowTick++&1)===0) renderer.shadowMap.needsUpdate=true;
 }
+var shadowOn=true, shadowTick=0;
 var windTmp=new V3();
 
 /* world frame at the pad */
@@ -664,8 +782,9 @@ function vehFromOrk(v){
   return {length:len, radius:R, sep:sep, nose:nose, shoulder:shoulder, tubes:tubes, finCan:finCan,
     tail:{x0:tail.x0, x1:tail.x1, r1:tail.r1, m:tail.m}, fins:v.fins, avBay:sep+0.3};
 }
+var VEH_GENERIC=true;   /* true while the rocket drawn is the built-in one, not the flight's own (the page then says "generic rocket drawn") */
 (function(){ var v=window.TELEMETRY&&window.TELEMETRY.vehicle;
-  if(v&&v.segments&&v.segments.length){ try{ VEH=vehFromOrk(v); }catch(err){ console.warn('VISION: drawing the built-in rocket: '+err.message); } } })();
+  if(v&&v.segments&&v.segments.length){ try{ VEH=vehFromOrk(v); VEH_GENERIC=false; }catch(err){ console.warn('VISION: drawing the built-in rocket: '+err.message); } } })();
 /* nose cone profile: radius at a distance x behind the tip, for OpenRocket's shapes */
 function noseR(x,L,R,shape,C){
   var u=clamp(x/L,0,1);
@@ -892,15 +1011,17 @@ var apoLb=makeLabel('APOGEE','#d9bd7a',G.trail), impLb=makeLabel('IMPACT','#d9a5
 var ds=null;
 var F={pos:new V3(),vel:new V3(),air:new V3(),xb:new V3(),yb:new V3(),zb:new V3(),thrust:0,mass:0,mach:0,q:0,cg:NaN,cp:NaN,p:NaN,mdot:0,noseDir:new V3(),noseSep:0,hang:new V3(1,0,0),line:new V3(),swing:0,drag:1};
 
-function rowsToDs(r,name,demo){
-  var N=r.thrust.length, d={name:name,demo:demo,N:N,
+function rowsToDs(r,name,demo,real){
+  var N=r.thrust.length, d={name:name,demo:demo,real:!!real,N:N,
     pos:Float32Array.from(r.pos),vel:Float32Array.from(r.vel),air:Float32Array.from(r.air),
     xb:Float32Array.from(r.xb),yb:Float32Array.from(r.yb),zb:Float32Array.from(r.zb),
     thrust:Float32Array.from(r.thrust),mass:Float32Array.from(r.mass),mach:Float32Array.from(r.mach),
     q:Float32Array.from(r.q||[]),cg:Float32Array.from(r.cg||[]),cp:Float32Array.from(r.cp||[]),p:Float32Array.from(r.p||[]),mdot:Float32Array.from(r.mdot||[]),
     ndir:Float32Array.from(r.ndir||[]),nsep:Float32Array.from(r.nsep||[]),ldir:Float32Array.from(r.ldir||[]),swing:Float32Array.from(r.swing||[]),drag:Float32Array.from(r.drag||[]),
-    wind:r.wind||[0,0,0], events:r.events||[], rail:r.rail||null, recovery:r.recovery||null};
-  if(d.q.length!==N) d.q=new Float32Array(N); if(d.p.length!==N) d.p=new Float32Array(N).fill(NaN); if(d.ndir.length!==3*N) d.ndir=new Float32Array(3*N); if(d.nsep.length!==N) d.nsep=new Float32Array(N); if(d.ldir.length!==3*N) d.ldir=new Float32Array(3*N); if(d.swing.length!==N) d.swing=new Float32Array(N); if(d.drag.length!==N) d.drag=new Float32Array(N).fill(1); if(d.cg.length!==N) d.cg=new Float32Array(N).fill(NaN); if(d.cp.length!==N) d.cp=new Float32Array(N).fill(NaN);
+    wind:r.wind||[0,0,0], events:r.events||[], rail:r.rail||null, recovery:r.recovery||null, warnings:r.warnings||[]};
+  /* a column the data does not have is "unknown" (NaN, drawn as a dash), never zero */
+  if(d.q.length!==N) d.q=new Float32Array(N).fill(NaN); if(d.p.length!==N) d.p=new Float32Array(N).fill(NaN); if(d.ndir.length!==3*N) d.ndir=new Float32Array(3*N); if(d.nsep.length!==N) d.nsep=new Float32Array(N); if(d.ldir.length!==3*N) d.ldir=new Float32Array(3*N); if(d.swing.length!==N) d.swing=new Float32Array(N); if(d.drag.length!==N) d.drag=new Float32Array(N).fill(1); if(d.cg.length!==N) d.cg=new Float32Array(N).fill(NaN); if(d.cp.length!==N) d.cp=new Float32Array(N).fill(NaN);
+  d.hasThrust=false; for(var i=0;i<N;i++) if(isFinite(d.thrust[i])){ d.hasThrust=true; break; }
   return d;
 }
 function genDemo(){
@@ -936,18 +1057,64 @@ function genDemo(){
 }
 function isaMach(alt,spd){ var h=Math.max(alt,0), T=288.15-0.0065*Math.min(h,11000); return spd/Math.sqrt(1.4*287.05*T); }
 var rawTel=null, simTel=null, realTel=null, showingReal=false;
-function fromTelemetry(j,conj,name){
+/* a flight longer than this many samples (or 1e5 s) is almost certainly times in milliseconds: it would freeze the page */
+var MAX_SAMPLES=200000, MAX_SECONDS=1e5;
+function isNum(x){ return typeof x==='number'&&isFinite(x); }
+function vec3ok(a){ return Array.isArray(a)&&a.length>=3&&isNum(a[0])&&isNum(a[1])&&isNum(a[2]); }
+/* the launch rail, when it is complete; otherwise null and a note */
+function cleanRail(r,warn){
+  if(r==null) return null;
+  var dir=r.direction;
+  if(!vec3ok(dir)||Math.hypot(dir[0],dir[1],dir[2])<1e-9||!isNum(r.length)||!(r.length>0)){ warn.push('The launch rail data is incomplete, so the rail is drawn with its default size.'); return null; }
+  return {length:r.length,direction:[dir[0],dir[1],dir[2]],tilt_deg:isNum(r.tilt_deg)?r.tilt_deg:0};
+}
+/* the parachute and cords: the diameter is needed, the rest has a sensible default */
+function cleanReco(r,warn){
+  if(r==null) return null;
+  if(!isNum(r.diameter)||!(r.diameter>0)){ warn.push('The recovery data has no parachute diameter, so a default parachute is drawn.'); return null; }
+  function num(v,dflt){ return isNum(v)&&v>=0?v:dflt; }
+  var D=r.diameter;
+  return {diameter:D,spill_hole:num(r.spill_hole,0.176*D),reefed_opening:num(r.reefed_opening,0.4*D),cord_to_nose:num(r.cord_to_nose,4.62),cord_to_body:num(r.cord_to_body,9.25),
+    nose_mass:isNum(r.nose_mass)?r.nose_mass:undefined,canopy_mass:isNum(r.canopy_mass)?r.canopy_mass:undefined};
+}
+/* the flight events, with the same time shift as the samples (the data may not start at t = 0); one that is not an object
+   or has no time is left out */
+function cleanEvents(list,T0,warn){
+  var out=[], bad=0;
+  (Array.isArray(list)?list:[]).forEach(function(e){
+    if(!e||typeof e!=='object'||typeof e.t!=='number'||!isFinite(e.t)){ bad++; return; }
+    var c={kind:String(e.kind==null?'':e.kind),name:e.name==null?'':String(e.name),t:e.t-T0};
+    ['speed','snatch','inflation','load','altitude'].forEach(function(k){ if(e[k]!==undefined) c[k]=isNum(e[k])?e[k]:0; });
+    out.push(c); });
+  if(bad) warn.push(bad+' flight event'+(bad>1?'s':'')+' without a time '+(bad>1?'were':'was')+' left out.');
+  return out;
+}
+function fromTelemetry(j,conj,name,real){
+  if(!j||typeof j!=='object') throw new Error('the data is not a telemetry object');
   var n=j.t&&j.t.length; if(!n||n<2) throw new Error('"t" needs at least 2 samples');
   ['pos','vel','quat'].forEach(function(k){ if(!j[k]||j[k].length!==n) throw new Error('"'+k+'" must have the same length as "t"'); });
-  var T0=j.t[0], N=Math.floor((j.t[n-1]-T0)/DT)+1, wind=j.wind||[0,0,0];
-  var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],q:[],cg:[],cp:[],p:[],mdot:[],ndir:[],nsep:[],ldir:[],swing:[],drag:[],wind:wind,events:j.events||[],rail:j.rail||null,recovery:j.recovery||null};
+  var T0=j.t[0], span0=j.t[n-1]-T0;
+  if(!isNum(T0)||!isNum(j.t[n-1])||!(span0>0)) throw new Error('"t" must be numbers (seconds) that increase');
+  var N=Math.floor(span0/DT)+1;
+  if(span0>MAX_SECONDS||N>MAX_SAMPLES) throw new Error('the flight would last '+fmt(span0,0)+' s ('+fmt(N,0)+' samples); the times look like milliseconds, they should be seconds');
+  for(var s0=0;s0<n;s0++){
+    if(!isNum(j.t[s0])) throw new Error('"t" has a value that is not a number at sample '+s0);
+    if(!vec3ok(j.pos[s0])) throw new Error('"pos" at sample '+s0+' is not three numbers');
+    if(!vec3ok(j.vel[s0])) throw new Error('"vel" at sample '+s0+' is not three numbers');
+    var qq=j.quat[s0]; if(!Array.isArray(qq)||qq.length<4||!isNum(qq[0])||!isNum(qq[1])||!isNum(qq[2])||!isNum(qq[3])) throw new Error('"quat" at sample '+s0+' is not four numbers');
+  }
+  var wind=vec3ok(j.wind)?j.wind:[0,0,0], warn=[];
+  var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],q:[],cg:[],cp:[],p:[],mdot:[],ndir:[],nsep:[],ldir:[],swing:[],drag:[],wind:wind,
+    events:cleanEvents(j.events,T0,warn),rail:cleanRail(j.rail,warn),recovery:cleanReco(j.recovery,warn),warnings:warn};
   function has(k){ return j[k]&&j[k].length===n; }
-  function Ln(a,b,u){ return (a===null||b===null)?NaN:a+(b-a)*u; }
+  /* a missing sample (null in the file) is "unknown" (NaN), not zero */
+  function Ln(a,b,u){ return (!isNum(a)||!isNum(b))?NaN:a+(b-a)*u; }
   var i=0, q=[0,0,0,0];
   for(var k=0;k<N;k++){
     var tt=T0+k*DT; while(i<n-2&&j.t[i+1]<tt) i++;
     var span=j.t[i+1]-j.t[i], u=span>0?clamp((tt-j.t[i])/span,0,1):0;
     function L(a,b){return a+(b-a)*u}
+    function col(key){ return has(key)?Ln(j[key][i],j[key][i+1],u):NaN; }
     var P=[0,1,2].map(function(c){return L(j.pos[i][c],j.pos[i+1][c])}), Vv=[0,1,2].map(function(c){return L(j.vel[i][c],j.vel[i+1][c])});
     var q0=j.quat[i], q1=j.quat[i+1], sg=(q0[0]*q1[0]+q0[1]*q1[1]+q0[2]*q1[2]+q0[3]*q1[3])<0?-1:1, nn=0;
     for(var c=0;c<4;c++){ q[c]=L(q0[c],sg*q1[c]); nn+=q[c]*q[c]; } nn=Math.sqrt(nn)||1;
@@ -957,21 +1124,20 @@ function fromTelemetry(j,conj,name){
     o.yb.push(2*(x*y-w*z), 1-2*(x*x+z*z), 2*(y*z+w*x));
     o.zb.push(2*(x*z+w*y), 2*(y*z-w*x), 1-2*(x*x+y*y));
     /* the wind where the rocket is (it changes with height), or the one ground wind of older files */
-    var wh=has('wind_at')?[0,1,2].map(function(c){return L(j.wind_at[i][c],j.wind_at[i+1][c])}):wind;
+    var wh=has('wind_at')&&vec3ok(j.wind_at[i])&&vec3ok(j.wind_at[i+1])?[0,1,2].map(function(c){return L(j.wind_at[i][c],j.wind_at[i+1][c])}):wind;
     var ar=[Vv[0]-wh[0],Vv[1]-wh[1],Vv[2]-wh[2]];
     o.pos.push(P[0],P[1],P[2]); o.vel.push(Vv[0],Vv[1],Vv[2]); o.air.push(ar[0],ar[1],ar[2]);
-    o.thrust.push(j.thrust&&j.thrust.length===n?L(j.thrust[i],j.thrust[i+1]):0);
-    o.mass.push(j.mass&&j.mass.length===n?L(j.mass[i],j.mass[i+1]):0);
-    o.mach.push(has('mach')?L(j.mach[i],j.mach[i+1]):isaMach(P[0],Math.hypot(ar[0],ar[1],ar[2])));
-    o.p.push(has('p')?L(j.p[i],j.p[i+1]):NaN); o.mdot.push(has('mdot')?L(j.mdot[i],j.mdot[i+1]):NaN); o.nsep.push(has('nose_sep')?L(j.nose_sep[i],j.nose_sep[i+1]):0);
-    if(has('nose_dir')){ var a0=j.nose_dir[i], a1=j.nose_dir[i+1]; if(a0[0]*a0[0]+a0[1]*a0[1]+a0[2]*a0[2]<0.5) a0=a1; if(a1[0]*a1[0]+a1[1]*a1[1]+a1[2]*a1[2]<0.5) a1=a0; o.ndir.push(L(a0[0],a1[0]),L(a0[1],a1[1]),L(a0[2],a1[2])); } else o.ndir.push(0,0,0);
+    o.thrust.push(col('thrust')); o.mass.push(col('mass'));
+    var mc=col('mach'); o.mach.push(isFinite(mc)?mc:isaMach(P[0],Math.hypot(ar[0],ar[1],ar[2])));
+    o.p.push(col('p')); o.mdot.push(col('mdot')); var ns=col('nose_sep'); o.nsep.push(isFinite(ns)?ns:0);
+    if(has('nose_dir')&&vec3ok(j.nose_dir[i])&&vec3ok(j.nose_dir[i+1])){ var a0=j.nose_dir[i], a1=j.nose_dir[i+1]; if(a0[0]*a0[0]+a0[1]*a0[1]+a0[2]*a0[2]<0.5) a0=a1; if(a1[0]*a1[0]+a1[1]*a1[1]+a1[2]*a1[2]<0.5) a1=a0; o.ndir.push(L(a0[0],a1[0]),L(a0[1],a1[1]),L(a0[2],a1[2])); } else o.ndir.push(0,0,0);
     /* the line from the canopy to the rocket; zero before there is a canopy, so each end borrows the other's */
-    if(has('line')){ var k0=j.line[i], k1=j.line[i+1], z0=k0[0]*k0[0]+k0[1]*k0[1]+k0[2]*k0[2]<0.5, z1=k1[0]*k1[0]+k1[1]*k1[1]+k1[2]*k1[2]<0.5;
+    if(has('line')&&vec3ok(j.line[i])&&vec3ok(j.line[i+1])){ var k0=j.line[i], k1=j.line[i+1], z0=k0[0]*k0[0]+k0[1]*k0[1]+k0[2]*k0[2]<0.5, z1=k1[0]*k1[0]+k1[1]*k1[1]+k1[2]*k1[2]<0.5;
       if(z0&&z1) o.ldir.push(0,0,0); else { if(z0) k0=k1; if(z1) k1=k0; o.ldir.push(L(k0[0],k1[0]),L(k0[1],k1[1]),L(k0[2],k1[2])); } } else o.ldir.push(0,0,0);
-    o.swing.push(has('swing')?L(j.swing[i],j.swing[i+1]):0); o.drag.push(has('drag')?L(j.drag[i],j.drag[i+1]):1);
-    o.q.push(has('q')?L(j.q[i],j.q[i+1]):0); o.cg.push(has('cg')?L(j.cg[i],j.cg[i+1]):NaN); o.cp.push(has('cp')?Ln(j.cp[i],j.cp[i+1],u):NaN);
+    var sw=col('swing'); o.swing.push(isFinite(sw)?sw:0); var dg=col('drag'); o.drag.push(isFinite(dg)?dg:1);
+    o.q.push(col('q')); o.cg.push(col('cg')); o.cp.push(col('cp'));
   }
-  return rowsToDs(o,name,false);
+  return rowsToDs(o,name,false,real);
 }
 function getFrame(tt){
   var f=clamp(tt/DT,0,ds.N-1), i=Math.floor(f), j=Math.min(i+1,ds.N-1), u=f-i;
@@ -995,25 +1161,27 @@ function recoPhase(t){ var st=null; events.forEach(function(e){ if(e.t>t) return
   if(st===null) return 'Free fall ↓'; if(st==='sep') return 'Separation ↓'; if(st==='open') return 'Under main ↓';
   return /reefed$/i.test(st.name||'')?'Under reefed main ↓':'Under '+(st.name||'canopy').toLowerCase()+' ↓'; }
 var events=[], bars=[], apoIdx=0, REC={dep:null,cut:null,rail:null}, POST=12, NOSE_MASS=4.0, CANOPY_MASS=0.71, CORD_VIS=0.35;
+var NOSE_M=NOSE_MASS, CAN_M=CANOPY_MASS, genericReco=false;   /* the nose section's and canopy's masses for the dataset on show (NOSE_MASS and CANOPY_MASS are the built-in figures) */
 var vis={world:true,body:true,missile:false,vec:false,trail:true,aero:true,pad:true};
 
 function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p; return (n<=1?1:n<=1.5?1.5:n<=2?2:n<=3?3:n<=5?5:10)*p; }
 function fmt(v,dp){ return v.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
 
-function setDataset(d){
-  ds=d; tMax=(d.N-1)*DT; var maxM=0,maxS=0,maxA=0,maxT=0;
-  apoIdx=0;
-  for(var i=0;i<d.N;i++){
-    var s=Math.hypot(d.vel[3*i],d.vel[3*i+1],d.vel[3*i+2]); maxM=Math.max(maxM,d.mach[i]); maxS=Math.max(maxS,s);
-    if(d.pos[3*i]>maxA){maxA=d.pos[3*i];apoIdx=i;} maxT=Math.max(maxT,d.thrust[i]);
-  }
-  plumeTmax=Math.max(maxT,1);
+/* Working out what a dataset sets up (events, rail, landing energy ...) happens here, into a new object and without touching the page:
+   if anything is wrong with the data this throws and the flight that was showing carries on. setDataset then puts the result in use. */
+var simRail=null;   /* the rail of the simulated flight: a real flight has none of its own, so it is drawn with this one */
+function prepareDataset(d){
+  var P={tMax:(d.N-1)*DT, maxA:0, apoIdx:0, plumeTmax:1, plumeMdMax:0, events:[], RECO:null, noseM:NOSE_MASS, canM:CANOPY_MASS,
+    REC:{dep:null,cut:null,rail:null,runout:null,charge:null,stretch:null,land:null,ke:null,pRef:NaN}}, REC=P.REC, i, maxT=0;
+  for(i=0;i<d.N;i++){ if(d.pos[3*i]>P.maxA){P.maxA=d.pos[3*i];P.apoIdx=i;} if(d.thrust[i]>maxT) maxT=d.thrust[i]; }
+  var maxA=P.maxA, apoIdx=P.apoIdx, tMax=P.tMax;
+  P.plumeTmax=Math.max(maxT,1);
   var maxMd=0; for(i=0;i<(d.mdot?d.mdot.length:0);i++) if(d.mdot[i]>maxMd) maxMd=d.mdot[i];
-  plumeMdMax=maxMd;
+  P.plumeMdMax=maxMd;
   var bo=-1; if(maxT>0){ for(var k=d.N-1;k>=0;k--){ if(d.thrust[k]>0.005*maxT){bo=k;break;} } }
   var lastAlt=d.pos[3*(d.N-1)], qi=0, mi=-1;
   for(i=0;i<d.N;i++){ if(d.q[i]>d.q[qi]) qi=i; if(mi<0&&d.mach[i]>=1) mi=i; }
-  events=[{k:'liftoff',label:'Liftoff',t:0,c:'--ok'}];
+  var events=[{k:'liftoff',label:'Liftoff',t:0,c:'--ok'}];
   (d.events||[]).forEach(function(e){ if(e.kind==='rail') events.push({k:'rail',label:'Rail exit',t:e.t,c:'--ok'}); });
   if(d.q[qi]>0) events.push({k:'maxq',label:'Max Q',t:qi*DT,c:'--air',q:d.q[qi]});
   if(mi>0) events.push({k:'mach',label:'Mach 1',t:mi*DT,c:'--air'});
@@ -1025,7 +1193,10 @@ function setDataset(d){
     if(e.kind==='charge') events.push({k:'charge',label:e.name||'Separation charge',name:e.name,t:e.t,c:'--phi',speed:e.speed});
     if(e.kind==='stretch') events.push({k:'stretch',label:e.name||'Line stretch',name:e.name,t:e.t,c:'--phi',snatch:e.snatch});
     if(e.kind==='deploy') events.push({k:'deploy',label:/reefed$/i.test(e.name||'')?'Reefed main inflates':(e.name||'Canopy')+' inflates',name:e.name,t:e.t,c:'--phi',fill:e.inflation||0,load:e.load});
-    if(e.kind==='disreef') events.push({k:'disreef',label:'Reef cut · main open',t:e.t,c:'--phi',fill:e.inflation||0,load:e.load,alt:e.altitude}); });
+    if(e.kind==='disreef') events.push({k:'disreef',label:'Reef cut · main open',t:e.t,c:'--phi',fill:e.inflation||0,load:e.load,alt:e.altitude});
+    /* a real flight's log has no thrust, so its burnout comes from the log's own event; its recovery-channel events are shown as they are named */
+    if(e.kind==='burnout'&&bo<=0) events.push({k:'burnout',label:e.name||'Burnout',t:e.t,c:'--thrust'});
+    if(e.kind==='reco') events.push({k:'reco',label:e.name||'Recovery event',name:e.name,t:e.t,c:'--phi'}); });
   /* hybrid tail-off: liquid N2O runs out where the thrust falls fastest after its peak (estimate) */
   var pk=0; for(i=1;i<d.N;i++) if(d.thrust[i]>d.thrust[pk]) pk=i;
   var win=Math.round(0.5/DT), best=0, bi=-1;
@@ -1037,18 +1208,39 @@ function setDataset(d){
   events.sort(function(a,b){return a.t-b.t});
   var tData=(d.N-1)*DT; REC.land=lastAlt<5?tData:null; if(REC.land!==null) tMax=tData+POST;
   events.push({k:'impact',label:lastAlt<5?'Landing':'End of data',t:tData,c:'--warn'});
-  REC.dep=null; REC.cut=null; REC.charge=null; REC.stretch=null;
-  events.forEach(function(e){ if(e.k==='deploy') REC.dep=e; if(e.k==='disreef') REC.cut=e; if(e.k==='rail') REC.rail=e; if(e.k==='charge') REC.charge=e; if(e.k==='stretch') REC.stretch=e; });
-  var mLand=d.mass[d.N-1]; REC.ke=null;
-  if(REC.land!==null){ var vl=Math.hypot(d.vel[3*(d.N-1)],d.vel[3*(d.N-1)+1],d.vel[3*(d.N-1)+2]); REC.ke={v:vl,body:0.5*(mLand-NOSE_MASS)*vl*vl*0.737562,nose:0.5*NOSE_MASS*vl*vl*0.737562}; }
-  RECO=d.recovery; if(!RECO&&REC.dep) RECO={diameter:3.048,spill_hole:0.536,reefed_opening:1.213,cord_to_nose:4.62,cord_to_body:9.25};
-  if(d.rail){ RAIL.length=d.rail.length; RAIL.dir.set(d.rail.direction[0],d.rail.direction[1],d.rail.direction[2]).normalize(); RAIL.tilt=d.rail.tilt_deg; }
-  else { RAIL.length=5.2; RAIL.dir.set(1,0,0); RAIL.tilt=0; }
-  if(!REC.rail){ REC.rail={t:0}; for(i=0;i<d.N;i++){ if(d.pos[3*i]*RAIL.dir.x+d.pos[3*i+1]*RAIL.dir.y+d.pos[3*i+2]*RAIL.dir.z>=RAIL.length){ REC.rail={t:i*DT}; break; } } }
+  events.forEach(function(e){ if(e.k==='deploy') REC.dep=e; if(e.k==='disreef') REC.cut=e; if(e.k==='charge') REC.charge=e; if(e.k==='stretch') REC.stretch=e; if(e.k==='rail') REC.rail=e; });
+  /* the recovery from the data; a flight that deploys a canopy but did not say which one gets a built-in parachute (and says so) */
+  P.RECO=d.recovery; P.recoGeneric=false;
+  if(!P.RECO&&REC.dep){ P.RECO={diameter:3.048,spill_hole:0.536,reefed_opening:1.213,cord_to_nose:4.62,cord_to_body:9.25}; P.recoGeneric=true; }
+  /* what the nose section and the canopy weigh: from the data when it has them, else the built-in figures, kept small for a light rocket */
+  var mLand=d.mass[d.N-1], mFin=mLand>0;
+  P.noseM=P.RECO&&isFinite(P.RECO.nose_mass)?P.RECO.nose_mass:(mFin?Math.min(NOSE_MASS,0.25*mLand):NOSE_MASS);
+  P.canM=P.RECO&&isFinite(P.RECO.canopy_mass)?P.RECO.canopy_mass:(mFin?Math.min(CANOPY_MASS,0.05*mLand):CANOPY_MASS);
+  /* the energy at touchdown needs the mass: when the data has none (a real flight's log) it is unknown, never a made-up or negative number */
+  if(REC.land!==null){ var vl=Math.hypot(d.vel[3*(d.N-1)],d.vel[3*(d.N-1)+1],d.vel[3*(d.N-1)+2]), bodyM=mLand-P.noseM;
+    REC.ke={v:vl,body:mFin&&bodyM>0?0.5*bodyM*vl*vl*0.737562:NaN,nose:mFin?0.5*P.noseM*vl*vl*0.737562:NaN}; }
+  /* the launch rail: the data's own; a real flight has none, so it keeps the rail of the simulated flight; otherwise a default */
+  var rl=5.2, rdir=new V3(1,0,0), rtilt=0;
+  if(d.rail){ rl=d.rail.length; rdir.set(d.rail.direction[0],d.rail.direction[1],d.rail.direction[2]).normalize(); rtilt=d.rail.tilt_deg; }
+  else if(d.real&&simRail){ rl=simRail.length; rdir.copy(simRail.dir); rtilt=simRail.tilt; }
+  if(!REC.rail){ REC.rail={t:0}; for(i=0;i<d.N;i++){ if(d.pos[3*i]*rdir.x+d.pos[3*i+1]*rdir.y+d.pos[3*i+2]*rdir.z>=rl){ REC.rail={t:i*DT}; break; } } }
   /* the rail sits on the rail-button side of the rocket as it stands on the pad */
+  var yb0=new V3(d.yb[0],d.yb[1],d.yb[2]);
   var bs=new V3(d.yb[0],d.yb[1],d.yb[2]).multiplyScalar(Math.cos(Math.PI/4)).addScaledVector(new V3(d.zb[0],d.zb[1],d.zb[2]),Math.sin(Math.PI/4)).normalize();
-  RAIL.side.copy(bs); RAIL.cg0=isFinite(d.cg[0])?d.cg[0]:VEH.length*0.6;
-  RAIL.y0.set(d.yb[0],d.yb[1],d.yb[2]).addScaledVector(RAIL.dir,-RAIL.dir.dot(new V3(d.yb[0],d.yb[1],d.yb[2]))).normalize(); RAIL.z0.crossVectors(RAIL.dir,RAIL.y0);
+  var y0=new V3().copy(yb0).addScaledVector(rdir,-rdir.dot(yb0)).normalize();
+  P.rail={length:rl,dir:rdir,tilt:rtilt,side:bs,cg0:isFinite(d.cg[0])?d.cg[0]:VEH.length*0.6,y0:y0,z0:new V3().crossVectors(rdir,y0),own:!!d.rail};
+  P.events=events; P.tMax=tMax;
+  return P;
+}
+function setDataset(d){
+  var P=prepareDataset(d);   /* may throw: nothing below has run yet, so the page keeps showing the previous flight */
+  ds=d; tMax=P.tMax; apoIdx=P.apoIdx; plumeTmax=P.plumeTmax; plumeMdMax=P.plumeMdMax; events=P.events; REC=P.REC; RECO=P.RECO; NOSE_M=P.noseM; CAN_M=P.canM;
+  var maxA=P.maxA;
+  RAIL.length=P.rail.length; RAIL.dir.copy(P.rail.dir); RAIL.tilt=P.rail.tilt; RAIL.side.copy(P.rail.side); RAIL.cg0=P.rail.cg0; RAIL.y0.copy(P.rail.y0); RAIL.z0.copy(P.rail.z0);
+  if(P.rail.own&&!d.real) simRail={length:P.rail.length,dir:P.rail.dir.clone(),tilt:P.rail.tilt};
+  /* the touchdown time and the note under the picture belong to one dataset (and one scale): start them afresh */
+  TD.sc=-1; TD.ds=null; TD.t=null; noteMult=-1; genericReco=!!P.recoGeneric;
+  $('dsName').textContent=d.name;
   /* side bars */
   var cfg=[{k:'mach',l:'Mach',max:2.5,dp:2,c:'var(--air)'},{k:'spd',l:'Speed m/s',max:600,dp:0,c:'var(--vel)'},{k:'alt',l:'Alt ft',max:40000,dp:0,c:'var(--alpha)'}];
   var host=$('bars'); host.innerHTML=''; bars=[];
@@ -1061,14 +1253,14 @@ function setDataset(d){
   /* events list + time markers */
   var ev=$('events'); ev.innerHTML='';
   events.forEach(function(e){ var li=document.createElement('li'); li.style.setProperty('--c','var('+e.c+')');
-    li.innerHTML='<i></i><span>'+e.label+'</span><b>'+fmt(e.t,1)+' s'+(e.alt!==undefined?' · '+fmt(e.alt*M2FT,0)+' ft':'')+'</b>'; ev.appendChild(li); e.li=li; });
+    li.innerHTML='<i></i><span>'+esc(e.label)+'</span><b>'+fmt(e.t,1)+' s'+(e.alt!==undefined?' · '+fmt(e.alt*M2FT,0)+' ft':'')+'</b>'; ev.appendChild(li); e.li=li; });
   var mk=$('mks'); mk.innerHTML='';
   var trackPx=Math.max(($('scrub').clientWidth||600)-16,100), lastPx=-1e9;
   events.forEach(function(e){ if(e.k==='liftoff') return; var s=document.createElement('span'); s.className='mk '+e.k;
     var p=(e.t-TMIN)/(tMax-TMIN), px=p*trackPx; s.style.left='calc(8px + (100% - 16px) * '+p+')';
     /* crowded markers keep their tick; the name stays in the tooltip and the events list */
     var room=e.k==='impact'||(px>=40&&px-lastPx>=78&&trackPx-px>=120);
-    s.innerHTML='<b'+(room?'':' class="quiet"')+'>'+e.label.split(' · ')[0].toUpperCase()+'</b><i></i>'; s.title=e.label+' · '+fmt(e.t,1)+' s';
+    s.innerHTML='<b'+(room?'':' class="quiet"')+'>'+esc(e.label.split(' · ')[0].toUpperCase())+'</b><i></i>'; s.title=e.label+' · '+fmt(e.t,1)+' s';
     if(room&&e.k!=='impact') lastPx=px; mk.appendChild(s); });
   var sc=$('scrub'); sc.min=TMIN; sc.max=tMax.toFixed(2);
   /* path dots */
@@ -1139,6 +1331,11 @@ function showBanner(kind,text,sticky){
 }
 function setPlaying(p){ playing=p; $('ico').innerHTML=p?'<path d="M3 1.5h3.5v13H3zM9.5 1.5H13v13H9.5z"/>':'<path d="M3 1.5v13l11-6.5z"/>'; $('play').setAttribute('aria-label',p?'Pause':'Play'); }
 $('play').onclick=function(){ if(!playing&&tNow>=tMax-1e-3){tNow=TMIN;prevT=TMIN;banner.hidden=true;} last=performance.now(); setPlaying(!playing); };
+/* the arrow keys step the time by 0.1 s, or by 1 s with Shift held (the slider's own step is a hundredth of a second) */
+$('scrub').addEventListener('keydown',function(e){
+  var dir=e.key==='ArrowRight'||e.key==='ArrowUp'?1:e.key==='ArrowLeft'||e.key==='ArrowDown'?-1:0; if(!dir) return;
+  e.preventDefault(); tNow=clamp(tNow+dir*(e.shiftKey?1:0.1),TMIN,tMax); prevT=tNow; if(tNow<tMax-1e-3&&banner.dataset.kind==='impact') banner.hidden=true;
+});
 $('scrub').oninput=function(){ tNow=parseFloat(this.value); prevT=tNow; if(tNow<tMax-1e-3&&banner.dataset.kind==='impact') banner.hidden=true; };
 $('mult').onchange=function(){ var v=parseFloat(this.value); if(!(v>0)) v=scaleMult; var was=scaleMult; scaleMult=clamp(v,0.1,1000); this.value=scaleMult;
   /* the zoom follows the scale only part of the way (see followDist), and keeps any zoom the person has made */
@@ -1146,9 +1343,11 @@ $('mult').onchange=function(){ var v=parseFloat(this.value); if(!(v>0)) v=scaleM
 $('rate').onchange=function(){rate=parseFloat(this.value)};
 document.querySelectorAll('#views button').forEach(function(b){b.onclick=function(){setView(b.dataset.v)}});
 /* ---------- EDITH: the cloud of simulated flights (only when the page was built with EDITH) ---------- */
+/* If the cloud data is malformed this block gives up with a visible note and removes what it had added: the flight itself keeps working. */
 (function(){
   var EC=window.EDITH_CLOUD; if(!EC||!EC.n) return;
   var grp=new THREE.Group(), apPts=null, lnPts=null, rings=null, mode='off';
+  try{
   root.add(grp);
   function pts(positions,colors,size){
     var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3)); g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
@@ -1204,7 +1403,7 @@ document.querySelectorAll('#views button').forEach(function(b){b.onclick=functio
     var dot=new THREE.Mesh(new THREE.CircleGeometry(Math.max(CI.rings[0].radius_m*0.05,4),24),new THREE.MeshBasicMaterial({color:0xffffff,side:THREE.DoubleSide,depthWrite:false}));
     dot.rotation.y=Math.PI/2; dot.position.set(1.2,CI.centre[0],CI.centre[1]); circ.add(dot);
     var hex=function(c){ return '#'+('00000'+c.toString(16)).slice(-6); };
-    $('circKey').innerHTML='EDITH landings ('+CI.landings+' flights)<br>'+CI.rings.map(function(r,i){ return '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid '+hex(CCOL[i%CCOL.length])+';vertical-align:-1px;margin-right:6px"></span>'+Math.round(r.share*100)+'% land within '+fmt(r.radius_m,0)+' m ('+fmt(r.radius_m*3.28084,0)+' ft) of the middle';
+    $('circKey').innerHTML='EDITH landings ('+esc(CI.landings)+' flights)<br>'+CI.rings.map(function(r,i){ return '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid '+hex(CCOL[i%CCOL.length])+';vertical-align:-1px;margin-right:6px"></span>'+Math.round(r.share*100)+'% land within '+fmt(r.radius_m,0)+' m ('+fmt(r.radius_m*3.28084,0)+' ft) of the middle';
     }).join('<br>')+'<br><span style="opacity:.8">centred on the average landing point; conditions assumed</span>';
     $('circ').checked=false;
     $('circ').onchange=function(){ circOn=this.checked; syncCircles(); };
@@ -1220,19 +1419,30 @@ document.querySelectorAll('#views button').forEach(function(b){b.onclick=functio
   var lk=$('edLink'); lk.hidden=false; lk.href=EC.link;
   if(window.top!==window.self) lk.onclick=function(e){ e.preventDefault(); try{ window.top.location.hash='#tab=edith'; }catch(err){ location.href=EC.link; } };
   window.__viewerSpread=setSpread;
+  }catch(err){
+    root.remove(grp); window.__edithFrame=null; window.__viewerSpread=null; spreadFrame=null;
+    ['spread','circWrap','circKey','edLink'].forEach(function(id){ $(id).hidden=true; });
+    var en=$('edNote'); en.hidden=false; en.textContent='The EDITH data in this page could not be drawn ('+(err&&err.message||err)+'). The flight itself is not affected.';
+    window.__edithError=String(err&&err.message||err); console.warn('EDITH: '+window.__edithError);
+  }
 })();
 document.querySelectorAll('input[data-k]').forEach(function(c){c.onchange=function(){ vis[c.dataset.k]=c.checked; G[c.dataset.k].visible=c.checked; }});
-$('conj').onchange=function(){ if(rawTel){ var keep=tNow; setDataset(fromTelemetry(rawTel.j,$('conj').checked,rawTel.name)); tNow=Math.min(keep,tMax); } };
+/* anything the data had wrong that was put right (a rail or event left out) is said once, in the banner */
+function noteWarnings(d){ if(d&&d.warnings&&d.warnings.length) showBanner('burnout',d.warnings.join(' '),false); }
+$('conj').onchange=function(){ if(!rawTel) return; var keep=tNow, box=this;
+  try{ var d=fromTelemetry(rawTel.j,box.checked,rawTel.name,ds&&ds.real); setDataset(d); tNow=Math.min(keep,tMax); }
+  catch(err){ box.checked=!box.checked; showBanner('burnout','Could not apply that: '+err.message,false); } };
 $('file').onchange=function(){
   var f=this.files&&this.files[0]; if(!f) return; var rd=new FileReader();
-  rd.onload=function(){ try{ var j=JSON.parse(rd.result); rawTel={j:j,name:f.name}; $('conj').checked=false;
-      setDataset(fromTelemetry(j,false,f.name)); tNow=TMIN;prevT=TMIN;setPlaying(false);banner.hidden=true; setView(view);
+  rd.onload=function(){ try{ var j=JSON.parse(rd.result), d=fromTelemetry(j,false,f.name,false);
+      setDataset(d); rawTel={j:j,name:f.name}; $('conj').checked=false; loadError=null;
+      tNow=TMIN;prevT=TMIN;setPlaying(false);banner.hidden=true; setView(view); noteWarnings(d);
     }catch(err){ showBanner('burnout','Could not read telemetry: '+err.message,false); } };
   rd.readAsText(f); this.value='';
 };
 var mq=window.matchMedia('(prefers-color-scheme: dark)'); if(mq.addEventListener) mq.addEventListener('change',applyTheme);
 new MutationObserver(applyTheme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-function resize(){ if(!renderer) return; var w=stage.clientWidth,h=stage.clientHeight; renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
+function resize(){ if(!renderer) return; var w=stage.clientWidth,h=stage.clientHeight; renderer.setPixelRatio(pixelRatio()); renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
 if(window.ResizeObserver) new ResizeObserver(resize).observe(stage); window.addEventListener('resize',resize);
 
 /* ---------- per-frame drawing ---------- */
@@ -1251,7 +1461,7 @@ var noteMult=-1, rA=$('rA'),rP=$('rP'),rV=$('rV'),rT=$('rT'),rM=$('rM'),rPh=$('r
 function smooth(x){ x=clamp(x,0,1); return x*x*(3-2*x); }
 var mS=new THREE.Matrix4(), mT=new THREE.Matrix4(), Pv=new V3(), off=new V3(), xn=new V3(), yn=new V3(), zn=new V3();
 var A=new V3(), Cc=new V3(), Nn=new V3(), Sk=new V3(), Tn=new V3(), w1=new V3(), w2=new V3(), w3=new V3(), w4=new V3(), upV=new V3(1,0,0);
-var BC=new V3(), bX=new V3(), bY=new V3(), bZ=new V3(), pivDir=new V3(), cAx=new V3(), cUp=new V3(), tailG=new V3(), TD={sc:-1,t:null};
+var BC=new V3(), bX=new V3(), bY=new V3(), bZ=new V3(), pivDir=new V3(), cAx=new V3(), cUp=new V3(), tailG=new V3(), TD={sc:-1,t:null,ds:null};   /* the drawn touchdown time, kept for one dataset at one rocket scale */
 var aimAft=0, wasSep=false, tmpQ=new THREE.Quaternion(), YAX=new V3(0,1,0), canKey='', canLbR=makeLabel('REEFED MAIN','#d9bd7a',G.reco), plumeTmax=1, plumeMdMax=0;
 /* group local: body axes with the nose tip at the origin; put body station `station` at world point `at` */
 function placeSection(group,at,xb,yb,zb,station){
@@ -1321,8 +1531,8 @@ function drawRecovery(sc,pos,cg,te,tq,land){
   if(wq<0.999){
     /* while the nose flies out the trajectory is the whole system's centre of mass: the nose and canopy pulling
        away move the body the other way (by m_nose / m_total of the separation, and so on) */
-    var mT_=Math.max(F.mass,NOSE_MASS+CANOPY_MASS+1), shift=w1.copy(Nn).addScaledVector(xn,VEH.sep*0.5*sc).sub(pos).multiplyScalar(-NOSE_MASS/mT_);
-    shift.addScaledVector(w3.copy(Sk).sub(pos),-CANOPY_MASS/mT_).multiplyScalar(1-wq);
+    var mT_=Math.max(F.mass>0?F.mass:0,NOSE_M+CAN_M+1), shift=w1.copy(Nn).addScaledVector(xn,VEH.sep*0.5*sc).sub(pos).multiplyScalar(-NOSE_M/mT_);
+    shift.addScaledVector(w3.copy(Sk).sub(pos),-CAN_M/mT_).multiplyScalar(1-wq);
     A.add(shift); Cc.add(shift); Nn.add(shift); Sk.add(shift); BC.add(shift);
   }
   cAx.copy(cDir); cUp.copy(ay);
@@ -1430,8 +1640,8 @@ function flatTime(th0,om0,d,k2){
 
 /* when the drawn body's tail reaches the ground: the drawing is scaled up, so this comes before the true touchdown */
 function touchdownT(sc){
-  if(TD.sc===sc) return TD.t;
-  TD.sc=sc; TD.t=null;
+  if(TD.sc===sc&&TD.ds===ds) return TD.t;
+  TD.sc=sc; TD.ds=ds; TD.t=null;
   if(REC.land===null) return null;
   var cgL=isFinite(ds.cg[ds.N-1])?ds.cg[ds.N-1]:RAIL.cg0, h=RECO&&(REC.charge||REC.dep)?(VEH.length-cgL)*sc:0;
   TD.t=REC.land;
@@ -1444,10 +1654,13 @@ function draw(dtReal){
   var sc=scaleMult, Ttd=touchdownT(sc), down=Ttd!==null&&tNow>=Ttd, tq=down?Ttd:tNow;
   getFrame(tq);
   var bx=F.air.dot(F.xb), by=F.air.dot(F.yb), bz=F.air.dot(F.zb), hh=Math.hypot(by,bz);
-  var alpha=Math.atan2(hh,bx), phiS=hh>1e-9?Math.atan2(-by,bz):0, phi=(phiS+TAU)%TAU;
+  var alpha=Math.atan2(hh,bx), phiS=hh>1e-9?Math.atan2(-by,bz):0;
+  /* phiS is the angle the drawn arc sweeps (from z_b towards -y_b); it only sets the picture. The NUMBER shown is the simulator's aerodynamic roll
+     angle, phi_a = atan2(v_y, v_z) in [0, 2 pi) with v the airspeed in body axes (dcm.aero_angles), which turns the other way round */
+  var phi=hh>1e-9?(Math.atan2(by,bz)+TAU)%TAU:0; if(phi>=TAU) phi=0;
   var spA=F.air.length(), spG=F.vel.length(), alt=F.pos.x;
   var Ld=ROCKET_LEN*sc; curLd=Ld; PADL=Ld*17;
-  if(noteMult!==sc){ noteMult=sc; $('scaleNote').textContent='Rocket drawn '+fmt(Ld,1)+' m long ('+fmt(VEH.length,2)+' m × '+sc+') · rail '+fmt(RAIL.length,0)+' m · parachutes to the same scale · shock cords drawn at '+Math.round(CORD_VIS*100)+'% of their length'; }
+  if(noteMult!==sc){ noteMult=sc; $('scaleNote').textContent='Rocket drawn '+fmt(Ld,1)+' m long ('+fmt(VEH.length,2)+' m × '+sc+') · rail '+fmt(RAIL.length,0)+' m · parachutes to the same scale · shock cords drawn at '+Math.round(CORD_VIS*100)+'% of their length'+(VEH_GENERIC?' · generic rocket drawn (the data has no vehicle description)':'')+(genericReco?' · generic parachute drawn':''); }
   var cg=isFinite(F.cg)?F.cg:RAIL.cg0, dep=REC.dep, sepEv=REC.charge||dep, sep=!!(sepEv&&RECO&&tq>=sepEv.t), te=sep?tq-sepEv.t:0;
   var landed=REC.land!==null&&tNow>REC.land, land=null;
 
@@ -1598,18 +1811,32 @@ function draw(dtReal){
   var votes=events.filter(function(e){return e.k==='vote'&&tNow>=e.t}).length;
   var fcTxt=!fcAp?'–':tNow<10?'Boost lockout':tNow<fcAp.t?'Armed · votes '+votes+'/3':firstCh&&tNow<firstCh.t?'Apogee · delay':cut&&tNow>=cut.t?'Main fired':'Charge fired';
   rA.textContent=sep?'–':fmt(alpha*DEG,1)+'°'; rP.textContent=sep?'–':fmt(phi*DEG,0)+'°'; rV.textContent=fmt(spA,1)+' m/s';
-  rT.textContent=F.thrust>1?fmt(F.thrust,0)+' N'+(isFinite(F.mdot)&&F.mdot>0?' · '+fmt(F.mdot,2)+' kg/s':''):'0 N'; rM.textContent=F.mass>0?fmt(F.mass,2)+' kg':'–'; rPh.textContent=phase;
-  rQ.textContent=fmt(F.q/1000,1)+' kPa'; rSM.textContent=showCP?fmt((F.cp-F.cg)/(2*VEH.radius),2)+' cal':'–';
+  rT.textContent=!ds.hasThrust?'–':F.thrust>1?fmt(F.thrust,0)+' N'+(isFinite(F.mdot)&&F.mdot>0?' · '+fmt(F.mdot,2)+' kg/s':''):'0 N'; rM.textContent=F.mass>0?fmt(F.mass,2)+' kg':'–'; rPh.textContent=phase;
+  rQ.textContent=isFinite(F.q)?fmt(F.q/1000,1)+' kPa':'–';
+  /* calibers: the distance in rocket diameters (2 x the radius of the rocket's vehicle data); with the built-in rocket the diameter is only its own, so ~ */
+  rSM.textContent=showCP?(VEH_GENERIC?'~':'')+fmt((F.cp-F.cg)/(2*VEH.radius),2)+' cal':'–';
   rFC.textContent=fcTxt; rCG.textContent=isFinite(F.cg)?fmt(F.cg,2)+(showCP?' / '+fmt(F.cp,2):'')+' m':'–'; rVz.textContent=fmt(F.vel.x,1)+' m/s'; rReco.textContent=recoTxt;
   rCan.textContent=sep&&!landed&&F.line.lengthSq()>0.5?fmt(F.swing,1)+'° · '+Math.round(F.drag*100)+'%':'–';
   var vals={mach:F.mach,spd:spG,alt:Math.max(alt,0)*M2FT};
   bars.forEach(function(b){ b.val.textContent=fmt(vals[b.k],b.dp); b.fill.style.height=clamp(vals[b.k]/b.max*100,0,100)+'%'; });
   events.forEach(function(e){ e.li.classList.toggle('on',tNow>=e.t-1e-6); });
   ttEl.innerHTML=(tNow<0?'−':'')+fmt(Math.abs(tNow),2)+' s<small>of '+fmt(tMax,1)+' s</small>';
-  scrub.value=tNow; scrub.style.setProperty('--p',((tNow-TMIN)/(tMax-TMIN)*100)+'%');
+  scrub.setAttribute('aria-valuetext',(tNow<0?'minus ':'')+fmt(Math.abs(tNow),1)+' seconds'); scrub.value=tNow; scrub.style.setProperty('--p',((tNow-TMIN)/(tMax-TMIN)*100)+'%');
 }
 
+/* The loop is always asked for again first, so nothing that goes wrong while drawing one frame can stop it. A problem is shown once. */
+function frameFailed(err){
+  var msg=String(err&&err.message||err);
+  if(window.__viewer.frameError!==msg){ window.__viewer.frameError=msg; console.error(err); showBanner('burnout','Display problem: '+msg,true); }
+}
 function tick(now){
+  requestAnimationFrame(tick);
+  window.__viewer.frames++;
+  try{ tickBody(now); }catch(err){ frameFailed(err); }
+}
+function tickBody(now){
+  if(perfPrev&&renderer) govFrame(now-perfPrev);
+  perfFrame(now);
   var dtReal=Math.min((now-last)/1000,0.1); last=now;
   if(playing){
     prevT=tNow; tNow=Math.min(tNow+dtReal*rate,tMax);
@@ -1627,32 +1854,45 @@ function tick(now){
         else if(e.k==='deploy') showBanner('reco',(/reefed$/i.test(e.name||'')?'REEFED MAIN':(e.name||'CANOPY').toUpperCase())+' INFLATING · PEAK '+fmt((e.load||0)/4.448222,0)+' lbf',false);
         else if(e.k==='disreef') showBanner('reco','REEF CUT AT '+fmt((e.alt||0)*M2FT,0)+' ft · MAIN OPEN · PEAK '+fmt((e.load||0)/4.448222,0)+' lbf',false);
         else if(e.k==='runout') showBanner('burnout','N₂O LIQUID RUNOUT (EST.) · VAPOUR BURN',false);
-        else if(e.k==='impact'&&REC.ke) showBanner('impact','LANDING · '+fmt(REC.ke.v,1)+' m/s · BODY '+fmt(REC.ke.body,0)+' ft·lbf · NOSE '+fmt(REC.ke.nose,0)+' ft·lbf',true);
+        else if(e.k==='impact'&&REC.ke) showBanner('impact','LANDING · '+fmt(REC.ke.v,1)+' m/s'+(isFinite(REC.ke.body)&&isFinite(REC.ke.nose)?' · BODY '+fmt(REC.ke.body,0)+' ft·lbf · NOSE '+fmt(REC.ke.nose,0)+' ft·lbf':' · ENERGY UNKNOWN (NO MASS IN THE DATA)'),true);
+        else if(e.k==='reco') showBanner('reco',e.label.toUpperCase()+' · t = '+fmt(e.t,1)+' s',false);
         else if(e.k==='vote') {}
         else { var sp=Math.hypot(F.vel.x,F.vel.y,F.vel.z); showBanner('impact',e.label.toUpperCase()+' · t = '+fmt(e.t,1)+' s · '+fmt(sp,0)+' m/s',true); }
       } });
     if(tNow>=tMax-1e-6) setPlaying(false);
   }
-  draw(dtReal); requestAnimationFrame(tick);
+  draw(dtReal);
 }
 
 /* ---------- start ---------- */
 castShadows(noseSec,true); castShadows(aftSec,true); castShadows(padHw,true); canopy.castShadow=true;
 document.querySelectorAll('#look button').forEach(function(b){ b.onclick=function(){ LOOK=b.dataset.l; try{ localStorage.setItem('vision.look',LOOK); }catch(e){ /* not kept */ } applyLook(); }; });
+$('quality').onchange=function(){
+  QSEL=this.value; qLevel=QSEL==='low'?1:4;   /* High and Auto both start from everything on */
+  try{ localStorage.setItem('vision.quality',QSEL); }catch(e){ /* not kept */ }
+  applyQuality(); };
+applyQuality();
 if(!renderer) $('nogl').hidden=false; else resize();
 document.fonts&&document.fonts.ready&&0;
 setDataset(genDemo());
-if(window.TELEMETRY){ try{ rawTel=simTel={j:window.TELEMETRY,name:window.TELEMETRY_NAME||'simulation'}; setDataset(fromTelemetry(rawTel.j,false,rawTel.name)); }catch(err){ console.error(err); } }
+/* the flight in this page: if it cannot be read the built-in demo flight stays on show, and the page says so (window.__viewer.usingDemo / loadError) */
+var loadError=null;
+if(window.TELEMETRY){ try{ var src0={j:window.TELEMETRY,name:window.TELEMETRY_NAME||'simulation'}, d0=fromTelemetry(src0.j,false,src0.name,false);
+    setDataset(d0); rawTel=simTel=src0; noteWarnings(d0); }
+  catch(err){ loadError=String(err&&err.message||err); console.error(err);
+    showBanner('burnout','The flight data in this page could not be read ('+loadError+'), so the built-in demo flight is shown.',true); } }
 /* real flight, when the run had its log: one button toggles between it and the simulation at the same moment of flight */
 if(window.REAL_TELEMETRY&&simTel){ realTel={j:window.REAL_TELEMETRY,name:window.REAL_TELEMETRY_NAME||'real flight'}; $('realBtn').hidden=false;
   $('realBtn').onclick=function(){ showingReal=!showingReal; var src=showingReal?realTel:simTel, keep=tNow;
-    try{ rawTel=src; $('conj').checked=false; setDataset(fromTelemetry(src.j,false,src.name)); tNow=Math.min(keep,tMax); prevT=tNow;
-      this.textContent=showingReal?'Showing real flight':'Showing simulation'; }catch(err){ showingReal=!showingReal; rawTel=showingReal?realTel:simTel; showBanner('burnout','Could not show the real flight: '+err.message,false); } }; }
+    try{ var dr=fromTelemetry(src.j,false,src.name,showingReal); setDataset(dr); rawTel=src; $('conj').checked=false; tNow=Math.min(keep,tMax); prevT=tNow;
+      this.textContent=showingReal?'Showing real flight':'Showing simulation'; noteWarnings(dr); }catch(err){ showingReal=!showingReal; showBanner('burnout','Could not show the '+(showingReal?'simulation':'real flight')+': '+err.message,false); } }; }
 Object.keys(vis).forEach(function(k){ G[k].visible=vis[k]; });
 tNow=-2; prevT=tNow; /* opens 2 s before launch */
 setView('follow'); cam.dist=cam.distT; /* and starts at its framing, with no zoom in from far away */
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
-window.__viewer={spread:function(m){ if(window.__viewerSpread) window.__viewerSpread(m); },set:function(t){tNow=t;prevT=t},view:setView,cam:cam,camera:camera,rocketLength:ROCKET_LEN,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
+window.__viewer={frames:0,frameError:null,get usingDemo(){ return !!(ds&&ds.demo); },get loadError(){ return loadError; },get name(){ return ds&&ds.name; },
+  get td(){ return {sc:TD.sc,t:TD.t}; },get rail(){ return {length:RAIL.length,tilt:RAIL.tilt,t:REC.rail&&REC.rail.t}; },get landed(){ return REC.land; },
+  quality:function(){ return {sel:QSEL,level:qLevel,pixelRatio:pixelRatio(),puffs:puffs.count(),text:$('qtext').textContent}; },spread:function(m){ if(window.__viewerSpread) window.__viewerSpread(m); },set:function(t){tNow=t;prevT=t},view:setView,cam:cam,camera:camera,rocketLength:ROCKET_LEN,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
 /* ---------- OpenRocket's flight path for the same launch condition ----------
    On the dynamics site the History tab keeps OpenRocket's newest run of every simulation (data.json lists them,
    flights/<id>.js holds the time series). Loading it here, rather than copying it in when this page is built,
@@ -1679,23 +1919,31 @@ window.__viewer={spread:function(m){ if(window.__viewerSpread) window.__viewerSp
     setText('Hide OpenRocket','OpenRocket path from '+src.ork+' · '+src.sim+(v.short?' (design commit '+v.short+')':'')+'. Click to hide.');
     $('orLegend').hidden=false;
   }
+  /* Every try gets a number and 15 seconds: if the data (or the script that carries it) never arrives, the try is given up with a message
+     and the button is reset, and a late answer to an old try is ignored. */
+  var tryNo=0, TIMEOUT_MS=15000;
   function load(){
     var root=siteRoot();
     if(!root) return fail('OpenRocket results are only available on the dynamics site, not in a local copy of this page.');
+    var me=++tryNo, el=null, timer=0;
+    function current(){ return me===tryNo; }
+    function done(){ clearTimeout(timer); window.__flight=function(){}; if(el&&el.parentNode) el.parentNode.removeChild(el); }
     state='loading'; setText('Loading OpenRocket…');
+    timer=setTimeout(function(){ if(!current()) return; tryNo++; done(); fail('Could not load OpenRocket: no answer after '+(TIMEOUT_MS/1000)+' s.'); },TIMEOUT_MS);
     fetch(root+'data.json',{cache:'no-store'}).then(function(r){ if(!r.ok) throw new Error('the History data is missing ('+r.status+')'); return r.json(); })
     .then(function(data){
+      if(!current()) throw new Error('cancelled');
       var design=Object.keys(data.designs||{}).filter(function(k){ return k.split('/').pop()===src.ork; })[0];
       var id=design&&(design+'|'+src.sim), script=id&&(data.flights||{})[id];
       if(!script) throw new Error('the History tab has no OpenRocket run of "'+src.sim+'" in '+src.ork);
       return new Promise(function(ok,bad){
-        window.__flight=function(fid,payload){ if(fid===id) ok(payload); };
-        var el=document.createElement('script'); el.src=root+script+'?v='+encodeURIComponent(data.generated||'');
+        window.__flight=function(fid,payload){ if(fid===id&&current()) ok(payload); };   /* only the answer for this run counts */
+        el=document.createElement('script'); el.src=root+script+'?v='+encodeURIComponent(data.generated||'');
         el.onerror=function(){ bad(new Error('could not load '+script)); }; document.head.appendChild(el);
       });
     })
-    .then(function(payload){ var v=payload&&payload.versions&&payload.versions[0]; if(!v) throw new Error('no OpenRocket flight data'); draw(v); })
-    .catch(function(e){ fail('Could not load OpenRocket: '+e.message+'.'); });
+    .then(function(payload){ if(!current()) return; var v=payload&&payload.versions&&payload.versions[0]; if(!v) throw new Error('no OpenRocket flight data'); done(); draw(v); })
+    .catch(function(e){ if(!current()) return; done(); fail('Could not load OpenRocket: '+e.message+'.'); });
   }
   btn.onclick=function(){
     if(state==='loading') return;

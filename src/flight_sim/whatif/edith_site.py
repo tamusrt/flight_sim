@@ -27,11 +27,19 @@ import ast
 import hashlib
 import json
 import math
+import os
+import platform
+import re
+import tempfile
 import time
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import numpy
+import pandas  # type: ignore
+import scipy  # type: ignore
 
 import flight_sim
 from flight_sim.edith import alerts
@@ -39,9 +47,11 @@ from flight_sim.edith.batch import Settings, run_batch
 from flight_sim.edith.inputs import SiteConfig
 from flight_sim.edith.run import RocketSpec
 from flight_sim.ork import load_ork
+from flight_sim.whatif import script_json
 
 _HERE = Path(__file__).parent
 _CLOUD_MARK = "<!--EDITH-->"
+_CLOUD_END_MARK = "<!--/EDITH-->"
 _ELLIPSE_POINTS = 72
 # The landing circles VISION draws: the share of landings inside each
 CIRCLE_SHARES = (0.25, 0.50, 0.75, 0.90)
@@ -121,7 +131,59 @@ def cache_key(args: argparse.Namespace, site: SiteConfig, settings: Settings) ->
     }
     digest.update(json.dumps(keep, sort_keys=True).encode())
     digest.update(code_digest().encode())
+    # The numbers also depend on the libraries that do the maths and on Python itself
+    # (a new version of numpy or scipy can change a result in the last digits).
+    versions = {
+        "python": platform.python_version(),
+        "numpy": numpy.__version__,
+        "scipy": scipy.__version__,
+        "pandas": pandas.__version__,
+    }
+    digest.update(json.dumps(versions, sort_keys=True).encode())
     return digest.hexdigest()[:20]
+
+
+def _read_cache(cache: Path) -> dict[str, Any] | None:
+    """The kept report, or None when the file cannot be used (it is then deleted).
+
+    A file cut short (a build stopped while saving, or a half-copied cache) must not
+    break every later build: it counts as a miss and the batch is run again.
+    """
+    try:
+        report = json.loads(cache.read_text(encoding="utf-8"))
+        if not isinstance(report, dict) or "stopped_because" not in report:
+            raise ValueError("not an EDITH report")
+        return report
+    except (OSError, ValueError) as error:
+        print(
+            f"EDITH: the kept result {cache.name} cannot be read ({error}); "
+            "running EDITH again",
+            flush=True,
+        )
+        cache.unlink(missing_ok=True)
+        return None
+
+
+def _write_cache(cache: Path, report: dict[str, Any]) -> None:
+    """Keep the report as the only kept result, written in one step.
+
+    The report is written to a temporary file in the same folder and then renamed to
+    its name, so a reader (or a cache saved by the build system at that moment) sees
+    either the whole file or none of it.
+    """
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(
+        dir=cache.parent, prefix=".edith-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            json.dump(report, file)
+        for old in cache.parent.glob("edith-*.json"):
+            old.unlink()
+        os.replace(temporary, cache)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def ellipse(report: dict[str, Any]) -> list[list[float]]:
@@ -180,7 +242,7 @@ def page_data(
 def write_page(data: dict[str, Any], out_dir: Path) -> Path:
     """Write ``edith/index.html`` with the data inlined."""
     template = (_HERE / "edith_page.html").read_text(encoding="utf-8")
-    page = template.replace("/*DATA*/null", json.dumps(data, separators=(",", ":")))
+    page = template.replace("/*DATA*/null", script_json(data))
     target = out_dir / "edith" / "index.html"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page, encoding="utf-8")
@@ -243,12 +305,25 @@ def cloud_data(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# A VISION page's cloud script, with or without the marker around it (pages patched by an earlier version have no marker)
+_CLOUD_BLOCK = re.compile(
+    r"(?:<!--EDITH-->)?<script>window\.EDITH_CLOUD=.*?</script>(?:<!--/EDITH-->)?"
+    r"|<!--EDITH-->",
+    re.DOTALL,
+)
+
+
 def patch_viewers(out_dir: Path, cloud: dict[str, Any]) -> int:
-    """Give the VISION pages of the default launch condition the cloud of flights."""
+    """Give the VISION pages of the default launch condition the cloud of flights.
+
+    Safe to run again: a page that already has a cloud gets the new one in
+    its place, so no run leaves an old cloud behind. The markers stay in the
+    page so the next run can find the cloud.
+    """
     done = 0
     for path in _viewer_files(out_dir):
         text = path.read_text(encoding="utf-8")
-        if _CLOUD_MARK not in text:
+        if not _CLOUD_BLOCK.search(text):
             continue
         # viewer/index.html and viewer/<name>/index.html are one folder apart
         link = (
@@ -256,12 +331,13 @@ def patch_viewers(out_dir: Path, cloud: dict[str, Any]) -> int:
             if path.parent.name == "viewer"
             else "../../edith/index.html"
         )
-        script = (
-            "<script>window.EDITH_CLOUD="
-            + json.dumps({**cloud, "link": link}, separators=(",", ":"))
-            + ";</script>"
+        data = script_json({**cloud, "link": link})  # "</" and "<!--" are escaped inside
+        block = (
+            f"{_CLOUD_MARK}<script>window.EDITH_CLOUD={data};</script>{_CLOUD_END_MARK}"
         )
-        path.write_text(text.replace(_CLOUD_MARK, script), encoding="utf-8")
+        # the new text is a re.sub template, so its backslashes are doubled
+        patched = _CLOUD_BLOCK.sub(block.replace("\\", "\\\\"), text)
+        path.write_text(patched, encoding="utf-8")
         done += 1
     return done
 
@@ -278,12 +354,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     key = cache_key(args, site, settings)
     cache = Path(args.cache) / f"edith-{key}.json" if args.cache else None
-    if cache is not None and cache.is_file():
+    kept = _read_cache(cache) if cache is not None and cache.is_file() else None
+    if cache is not None and kept is not None:
         print(
             f"EDITH: reusing the result kept for these inputs ({cache.name})",
             flush=True,
         )
-        return {"report": json.loads(cache.read_text(encoding="utf-8")), "cached": True}
+        if args.name:  # the name is not part of the key: show the current one
+            kept["rocket"] = args.name
+        return {"report": kept, "cached": True}
     spec = RocketSpec("ork", args.ork, args.aero, args.motor, args.sim, args.name)
     started = time.perf_counter()
     report = run_batch(spec, site, settings)
@@ -291,12 +370,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         f"EDITH: {report['runs']} flights in {time.perf_counter() - started:.0f} s",
         flush=True,
     )
-    finished = report["stopped_because"] != "reached the time limit"
-    if cache is not None and finished:  # a result cut short is not kept
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        for old in cache.parent.glob("edith-*.json"):
-            old.unlink()
-        cache.write_text(json.dumps(report), encoding="utf-8")
+    # only a batch cut short by the time limit is not kept; one that flew all its
+    # planned rounds is complete, however long it took
+    finished = report.get("stopped_for") != "time_limit"
+    if cache is not None and finished:
+        _write_cache(cache, report)
     return {"report": report, "cached": False}
 
 

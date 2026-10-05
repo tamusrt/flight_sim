@@ -14,7 +14,7 @@ import pytest
 from ork_fixture import write_aero_csv, write_cdx, write_eng, write_ork, write_rse
 
 from flight_sim.ork import load_ork
-from flight_sim.whatif import build
+from flight_sim.whatif import build, script_json
 from flight_sim.whatif.build import (
     build_data,
     read_rasaero_geometry,
@@ -275,6 +275,16 @@ def test_page_is_one_file_with_the_data_and_engine(
     assert 'type="range"' not in html and "'range'" not in html  # no sliders
     assert 'id="updatecsv"' in html and "/api/status" in html
     assert 'id="weather"' in html  # apogee in every weather
+    assert 'id="filesused"' in html and "/api/use-file" in html
+    assert "ucPoll();   // once" not in html  # a visitor's browser never asks for localhost on load
+
+
+def test_json_inside_a_script_cannot_end_the_script() -> None:
+    """JSON put in a script tag has its closing-tag text escaped but reads back the same."""
+    data = {"note": "</script><script>x</script> <!-- y", "n": [1, 2]}
+    text = script_json(data)
+    assert "</" not in text and "<!--" not in text
+    assert json.loads(text) == data
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

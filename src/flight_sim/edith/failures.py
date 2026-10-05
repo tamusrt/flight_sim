@@ -13,15 +13,24 @@ points whatever the guide's numbers say:
 * a canopy never opened (the descent is ballistic);
 * a canopy was opened harder than it is rated for (it tears);
 * the rocket did not reach apogee, or did not come down within the time;
-* the simulation itself failed on that run.
+* the simulation itself failed on that run;
+* a number a check needs is missing or is not a finite number (NaN or infinity)
+  on a run that otherwise finished: that counts as a failed check ("result
+  missing: rail_v"), never as a pass. Only two numbers may be absent, because
+  some rockets genuinely do not have them (see ``OPTIONAL_KEYS``): the drogue's
+  descent rate (no drogue) and the main's deployment altitude (no deployment;
+  the "every canopy opened" check catches that case).
 
 There is no landing zone here: where the rocket comes down is reported as a
-footprint, not judged. Nor is the landing speed: EDITH's quick descent model gave a
-different one from the full model, so the JARVIS page's number is the one to use.
+footprint, not judged. Nor is the landing speed, and nor are the descent rates of the
+main parachute: EDITH's quick descent model gave a different landing speed from the
+full model, so the JARVIS page's number is the one to use. (The drogue's descent rate
+and the main's deployment altitude are checked.)
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -154,10 +163,79 @@ CHECKS: tuple[Check, ...] = (
 )
 
 
-def _triggered(check: Check, result: dict[str, Any]) -> bool:
-    value = result.get(check.key)
-    if value is None:  # not applicable to this rocket (no drogue, say)
+# Numbers a rocket may genuinely not have: None (or absent) means "not applicable"
+OPTIONAL_KEYS = frozenset({"drogue_v", "main_alt"})
+# Numbers that only exist once the rocket has reached apogee and come down
+_AFTER_APOGEE = frozenset(
+    {"drogue_v", "main_alt", "load_ratio", "separated", "all_open", "landed"}
+)
+
+
+def finite(value: Any) -> bool:
+    """Whether a value is a real (not boolean) number that is not NaN or infinite."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _usable(check: Check, value: Any) -> bool:
+    """Whether a value can be judged: present, and a finite number if it is a number."""
+    if value is None:
         return False
+    if check.low is None and check.high is None:
+        return True  # a yes/no value
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return False
+    return math.isfinite(float(value))
+
+
+def missing_values(result: dict[str, Any]) -> list[str]:
+    """The numbers a run that finished should have but lacks (absent, None, NaN, inf).
+
+    A run that stopped with an error (``sim_ok`` false) is not asked for numbers: it
+    already fails the "simulation" check. A run that never reached apogee is not asked
+    for the descent's numbers, and its missing apogee is not "missing" but too low.
+    """
+    if not result.get("sim_ok"):
+        return []
+    climbed = result.get("apogee_ok") is not False
+    out: list[str] = []
+    for check in CHECKS:
+        key = check.key
+        if key == "sim_ok" or key in OPTIONAL_KEYS or key in out:
+            continue
+        if not climbed and (key in _AFTER_APOGEE or key == "apogee_m"):
+            continue
+        if not _usable(check, result.get(key)):
+            out.append(key)
+    return out
+
+
+def reasons(result: dict[str, Any]) -> list[str]:
+    """Reasons for a run's missing numbers, e.g. "result missing: rail_v"."""
+    return [f"result missing: {key}" for key in missing_values(result)]
+
+
+def _triggered(  # pylint: disable=too-many-return-statements
+    check: Check, result: dict[str, Any], missing: list[str] | None = None
+) -> bool:
+    if check.key == "sim_ok":
+        return not result.get("sim_ok")  # an absent value is a failed simulation too
+    if not result.get("sim_ok"):
+        return False  # the run stopped with an error: only "simulation" shows it
+    if missing is None:
+        missing = missing_values(result)
+    if check.key in missing:
+        return True  # a number the check needs is not there: failed, never passed
+    value = result.get(check.key)
+    if value is None:
+        # never reached apogee: below the window; else not applicable (no drogue, say)
+        return check.key == "apogee_m" and result.get("apogee_ok") is False
     if check.low is None and check.high is None:
         return not bool(value)
     number = float(value)
@@ -170,17 +248,20 @@ def _triggered(check: Check, result: dict[str, Any]) -> bool:
 
 def statuses(result: dict[str, Any]) -> dict[str, bool]:
     """Which checks the run triggered (True means the check was failed or warned)."""
-    return {check.name: _triggered(check, result) for check in CHECKS}
+    missing = missing_values(result)
+    return {check.name: _triggered(check, result, missing) for check in CHECKS}
 
 
 def any_failure(result: dict[str, Any]) -> bool:
     """Whether the run failed at least one red check."""
-    return any(_triggered(c, result) for c in CHECKS if c.severity == "fail")
+    missing = missing_values(result)
+    return any(_triggered(c, result, missing) for c in CHECKS if c.severity == "fail")
 
 
 def any_warning(result: dict[str, Any]) -> bool:
     """Whether the run triggered at least one amber check."""
-    return any(_triggered(c, result) for c in CHECKS if c.severity == "warn")
+    missing = missing_values(result)
+    return any(_triggered(c, result, missing) for c in CHECKS if c.severity == "warn")
 
 
 def limits(check: Check) -> list[float]:
@@ -207,13 +288,18 @@ def closeness(
     best = float("inf")
     for check in CHECKS:
         value = result.get(check.key)
-        if value is None or check.tolerance <= 0.0 or isinstance(value, bool):
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or check.tolerance <= 0.0
+        ):
             continue
         tolerance = max((tolerances or {}).get(check.key, 0.0), check.tolerance)
         for limit in limits(check):
             best = min(best, abs(float(value) - limit) / tolerance)
     for key, limit, tolerance in extra:
         value = result.get(key)
-        if isinstance(value, (int, float)) and tolerance > 0.0:
+        if isinstance(value, (int, float)) and math.isfinite(value) and tolerance > 0.0:
             best = min(best, abs(float(value) - limit) / tolerance)
     return best

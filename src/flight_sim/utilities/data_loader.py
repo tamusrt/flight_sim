@@ -1,6 +1,9 @@
 """Functions for loading aerodynamic CSV data."""
 
+import hashlib
 import math
+import os
+import tempfile
 from dataclasses import dataclass, field, fields
 from itertools import pairwise
 from pathlib import Path
@@ -196,8 +199,13 @@ def eng_to_csv(motor_file_path: str) -> str:
 
     Returns:
         str: Path of the CSV to read. For a ".eng" file this is a CSV with the
-            same name beside it, written on every call, holding "Time" and
-            "Thrust" columns in seconds and newtons.
+            same name beside it, holding "Time" and "Thrust" columns in seconds
+            and newtons. The file beside the ".eng" is created only when it does
+            not exist yet and is never rewritten: many worker processes call
+            this at once, and a CSV someone made by hand must not be replaced.
+            If a different CSV is already there, the converted data goes to a
+            file in the system's temporary folder (named after the content) and
+            that path is returned instead.
 
     Raises:
         ValueError: If the ".eng" file has no thrust samples, a sample line
@@ -236,7 +244,47 @@ def eng_to_csv(motor_file_path: str) -> str:
     if times[0] > 0.0:
         samples.insert(0, (0.0, 0.0))
 
-    csv_path = path.with_suffix(".csv")
     rows = "".join(f"{time},{thrust}\n" for time, thrust in samples)
-    csv_path.write_text("Time,Thrust\n" + rows, encoding="utf-8")
-    return str(csv_path)
+    return _csv_for(path, "Time,Thrust\n" + rows)
+
+
+def _csv_for(path: Path, text: str) -> str:
+    """The path of a CSV holding ``text`` for the ".eng" file ``path``.
+
+    That is the CSV beside the ".eng" file when it is missing (it is created) or
+    already holds exactly ``text``; otherwise a copy in the temporary folder.
+    """
+    csv_path = path.with_suffix(".csv")
+    try:
+        if csv_path.read_text(encoding="utf-8") == text:
+            return str(csv_path)  # already converted; leave the file alone
+    except FileNotFoundError:
+        # Nothing there yet: create it in one step (write a temporary file, then
+        # rename it), so another process never reads a half-written file.
+        _write_atomically(csv_path, text)
+        return str(csv_path)
+    except (OSError, UnicodeDecodeError):
+        pass
+    # A different CSV is already beside the ".eng" (a hand-made one, or one from
+    # an older version of the motor file). Leave it alone and use a copy elsewhere.
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    folder = Path(tempfile.gettempdir()) / "flight_sim_motors"
+    folder.mkdir(parents=True, exist_ok=True)
+    copy = folder / f"{path.stem}-{digest}.csv"
+    if not copy.is_file():
+        _write_atomically(copy, text)
+    return str(copy)
+
+
+def _write_atomically(target: Path, text: str) -> None:
+    """Write ``text`` to ``target`` by writing a temporary file and renaming it."""
+    handle, temporary = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as file:
+            file.write(text)
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise

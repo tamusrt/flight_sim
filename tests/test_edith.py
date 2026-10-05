@@ -1,5 +1,7 @@
 """Tests of the EDITH Monte Carlo system: statistics, inputs, checks, a small batch."""
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import json
@@ -10,7 +12,19 @@ import pytest
 
 from flight_sim.edith import failures
 from flight_sim.edith import stats as ci
-from flight_sim.edith.batch import Settings, _Pool, _run_seed, _sobol, run_batch
+from flight_sim.edith.batch import (
+    TARGET_HALF_WIDTH,
+    WATCHED,
+    Settings,
+    _close_to_a_limit,
+    _Pool,
+    _reco_check,
+    _run_seed,
+    _sobol,
+    _worst_headline,
+    run_batch,
+    summarize,
+)
 from flight_sim.edith.inputs import (
     DIMENSIONS,
     INPUTS,
@@ -19,7 +33,8 @@ from flight_sim.edith.inputs import (
     describe,
     draw,
 )
-from flight_sim.edith.run import RocketSpec
+from flight_sim.edith.report import format_report
+from flight_sim.edith.run import Rocket, RocketSpec
 from flight_sim.edith.surrogate import FEATURES, TARGETS, Surrogate
 from flight_sim.environment.wind import LayeredWind
 
@@ -75,6 +90,69 @@ def test_widen_stays_inside_zero_and_one() -> None:
     wide = ci.widen(ci.Interval(0.02, 0.0, 0.05), 0.1)
     assert wide.low == 0.0 and wide.high == pytest.approx(0.15)
     assert ci.widen(ci.Interval(0.99, 0.95, 1.0), 0.2).high == 1.0
+
+
+def test_a_90_percent_mean_interval_covers_the_true_mean_about_90_percent_of_the_time() -> (
+    None
+):
+    """Over many samples from a known curve, the interval holds the true mean in most of them."""
+    rng = np.random.default_rng(21)
+    hits = 0
+    trials = 150
+    for _ in range(trials):
+        sample = rng.normal(10.0, 2.0, 60)
+        interval = ci.bootstrap(sample, np.mean, rng, resamples=200)
+        hits += interval.low <= 10.0 <= interval.high
+    assert 0.80 <= hits / trials <= 0.97  # nominal 90%, with room for the 150 trials
+
+
+def test_a_wilson_interval_covers_the_true_chance_about_90_percent_of_the_time() -> (
+    None
+):
+    """The same check for a yes/no chance of 30% from 100 flights."""
+    rng = np.random.default_rng(22)
+    hits = 0
+    trials = 400
+    for _ in range(trials):
+        events = int(rng.binomial(100, 0.3))
+        interval = ci.wilson(events, 100)
+        hits += interval.low <= 0.3 <= interval.high
+    assert 0.86 <= hits / trials <= 0.95
+
+
+def test_the_high_end_of_an_interval_is_a_one_sided_bound_at_a_higher_confidence() -> (
+    None
+):
+    """A two-sided 90% interval's high end is "95% sure it is below"."""
+    assert ci.one_sided(0.90) == pytest.approx(0.95)
+    assert ci.one_sided(0.80) == pytest.approx(0.90)
+    # the exact bound for zero events in 100 flights: 95% sure it is below about 2.95%
+    assert ci.clopper_pearson(0, 100).high == pytest.approx(
+        1.0 - 0.05 ** (1.0 / 100.0), abs=0.002
+    )
+
+
+def test_a_watched_chance_can_reach_the_default_target_with_512_flights() -> None:
+    """With 512 flights a 90% interval is narrower than plus or minus 4% for any chance
+    (about 3.6% at 50%), which plus or minus 3% never was between 30% and 70%."""
+    assert TARGET_HALF_WIDTH == 0.04 and Settings().target_half_width == 0.04
+    for p in (0.3, 0.5, 0.7):
+        half = ci.wilson(round(512 * p), 512).half_width
+        assert 0.03 < half <= 0.04
+    assert set(WATCHED) == {
+        "probability_any_failure",
+        "probability_apogee_at_least_target",
+    }
+
+
+def test_the_stop_rule_looks_at_the_widest_watched_chance() -> None:
+    """Only the two watched chances decide; the widest one counts."""
+    summary = {
+        "probability_any_failure": {"low": 0.30, "high": 0.38},  # half-width 0.04
+        "probability_apogee_at_least_target": {"low": 0.45, "high": 0.50},
+        "probability_any_warning": {"low": 0.0, "high": 1.0},  # not watched
+    }
+    assert _worst_headline(summary) == pytest.approx(0.04)
 
 
 def test_bootstrap_intervals_cover_the_truth_and_repeat() -> None:
@@ -146,10 +224,64 @@ def test_draws_follow_the_bell_curves() -> None:
     assert temperature.mean() == pytest.approx(300.0, abs=0.3)
     assert temperature.std() == pytest.approx(site.temperature_sd_k, rel=0.1)
     assert wind.max() <= 11.0
-    assert wind.mean() < _NOMINAL.wind_speed_m_s  # the cut removes the windiest days
-    assert wind.mean() > 0.7 * _NOMINAL.wind_speed_m_s
+    # the stated mean is the mean of the days that are flown (the cut curve)
+    assert wind.mean() == pytest.approx(_NOMINAL.wind_speed_m_s, rel=0.05)
     # a Weibull is skewed: the mean is above the median
     assert wind.mean() > np.median(wind)
+
+
+def _flown_wind_mean(site: SiteConfig, nominal: Nominal = _NOMINAL) -> float:
+    """The mean of the wind over the whole flown curve (an even grid on its quantiles)."""
+    n = 1500
+    speeds = []
+    for u in (np.arange(n) + 0.5) / n:
+        point = _MIDDLE.copy()
+        point[INPUTS.index("wind_speed")] = u
+        speeds.append(draw(point, site, nominal, 0).wind_speed_m_s)
+    return float(np.mean(speeds))
+
+
+@pytest.mark.parametrize("mean", [3.0, 5.0, 7.15])
+def test_the_mean_wind_of_the_flown_days_is_the_stated_mean(mean: float) -> None:
+    """Winds over the limit are not flown, but the stated mean is still the mean of the days
+    that are flown (within 1%); SRT14's 'average' 7.15 m/s used to come out as 5.98."""
+    site = SiteConfig(wind_mean_m_s=mean, wind_launch_limit_m_s=11.0)
+    assert _flown_wind_mean(site) == pytest.approx(mean, rel=0.01)
+
+
+def test_the_wind_mean_comes_from_the_rocket_profile_when_the_site_has_none() -> None:
+    """With no mean in the site file, the profile's wind (5 m/s here) is the flown mean."""
+    assert _flown_wind_mean(SiteConfig()) == pytest.approx(5.0, rel=0.01)
+
+
+def test_the_wind_description_states_the_flown_mean_honestly() -> None:
+    """The report says the mean is of the days flown, and says so when the mean is out of reach."""
+    text = describe(SiteConfig(wind_mean_m_s=7.15), _NOMINAL)[0]["numbers"]
+    assert "mean 7.15 m/s on the days it flies" in text and "not flown" in text
+    # a Rayleigh curve cut at 11 m/s cannot have a mean over 7.33 m/s (two thirds of 11)
+    text = describe(SiteConfig(wind_mean_m_s=8.05), _NOMINAL)[0]["numbers"]
+    assert "mean 7.33" in text and "out of reach" in text
+
+
+def test_a_vertical_rail_is_not_a_pile_of_runs_exactly_on_vertical() -> None:
+    """The tilt is folded at vertical: no run sits on the limit, and about half lean the other way."""
+    vertical = Nominal(5.0, 270.0, 90.0, 90.0, 300.0, 90000.0, 1400.0)
+    site = SiteConfig()
+    units = np.random.default_rng(4).random((4000, DIMENSIONS))
+    drawn = [draw(u, site, vertical, seed=0) for u in units]
+    elevation = np.array([v.rail_elevation_deg for v in drawn])
+    heading = np.array([v.rail_azimuth_deg for v in drawn])
+    assert (elevation <= 90.0).all()
+    assert (elevation == 90.0).mean() < 0.001, (
+        "clipping would put about half exactly here"
+    )
+    tilt = 90.0 - elevation
+    # a half-normal tilt: mean sd * sqrt(2 / pi)
+    assert tilt.mean() == pytest.approx(
+        site.rail_elevation_sd_deg * math.sqrt(2 / math.pi), rel=0.1
+    )
+    leaning_back = (heading > 180.0).mean()  # heading 90 +- 1, or 270 +- 1 when flipped
+    assert leaning_back == pytest.approx(0.5, abs=0.05)
 
 
 def test_each_run_gets_its_own_wind_layers() -> None:
@@ -246,11 +378,70 @@ def test_each_amber_check_warns_without_failing(
     assert failures.statuses(result)[check]
 
 
-def test_a_missing_number_is_not_applicable() -> None:
-    """A rocket with no drogue has no drogue rate to check."""
+def test_a_missing_optional_number_is_not_applicable() -> None:
+    """A rocket with no drogue has no drogue rate to check (and none deployed has no main altitude)."""
     result = _good()
     result["drogue_v"] = None
     assert not failures.statuses(result)["drogue_rate"]
+    result["main_alt"] = None
+    assert not failures.statuses(result)["main_altitude"]
+    del result["drogue_v"]
+    assert not failures.any_failure(result) and not failures.any_warning(result)
+    assert failures.missing_values(result) == []
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), None, "gone"])
+@pytest.mark.parametrize(
+    ("key", "check"),
+    [
+        ("rail_v", "rail_exit_floor"),
+        ("rail_margin", "stability_rail"),
+        ("margin_lo", "stability_lowest"),
+        ("load_ratio", "canopy_overload"),
+        ("apogee_m", "apogee_window"),
+    ],
+)
+def test_a_required_number_that_is_missing_or_not_a_number_fails_its_check(
+    key: str, check: str, bad: object
+) -> None:
+    """NaN, infinity or a missing number on a flight that finished is a failed check, never a pass."""
+    result = _good()
+    if bad == "gone":
+        del result[key]
+    else:
+        result[key] = bad
+    assert failures.statuses(result)[check]
+    assert failures.any_failure(result)
+    assert f"result missing: {key}" in failures.reasons(result)
+
+
+@pytest.mark.parametrize(
+    "key", ["separated", "all_open", "apogee_ok", "landed", "sim_ok"]
+)
+def test_a_missing_yes_or_no_value_fails_too(key: str) -> None:
+    """A True/False result that is not there is not a pass."""
+    result = _good()
+    result[key] = None
+    assert failures.any_failure(result)
+
+
+def test_a_run_that_never_climbed_or_errored_is_not_asked_for_its_descent() -> None:
+    """No apogee: only the climb's numbers are expected, and the apogee window and
+    'reached apogee' fail. An error run fails only the simulation check."""
+    never = {
+        "sim_ok": True,
+        "apogee_ok": False,
+        "rail_v": 40.0,
+        "rail_margin": 2.5,
+        "margin_lo": 2.0,
+        "margin_hi": 4.0,
+    }
+    assert failures.missing_values(never) == []
+    triggered = {k for k, v in failures.statuses(never).items() if v}
+    assert triggered == {"apogee_window", "reached_apogee"}
+    errored = {"sim_ok": False, "error": "RuntimeError: boom"}
+    assert failures.missing_values(errored) == []
+    assert {k for k, v in failures.statuses(errored).items() if v} == {"simulation"}
 
 
 def test_closeness_counts_in_tolerances() -> None:
@@ -277,7 +468,13 @@ def _synthetic(n: int) -> tuple[np.ndarray, list[dict[str, object]]]:
         payloads.append(
             {
                 "position": [
-                    9000.0 + 300.0 * row[0] - 200.0 * row[1] + 50.0 * row[7],
+                    # curved, not just a plane: a product and a square of the inputs
+                    9000.0
+                    + 300.0 * row[0]
+                    - 200.0 * row[1]
+                    + 50.0 * row[7]
+                    + 40.0 * row[0] * row[1]
+                    + 30.0 * row[0] ** 2,
                     100.0 * row[7],
                     100.0 * row[8],
                 ],
@@ -294,16 +491,48 @@ def _synthetic(n: int) -> tuple[np.ndarray, list[dict[str, object]]]:
     return x, payloads
 
 
-def test_the_surrogate_learns_a_smooth_climb() -> None:
-    """On a smooth synthetic climb the held-out error is small and predictions agree."""
+def _curved_truth(probe: np.ndarray) -> float:
+    return float(
+        9000.0
+        + 300.0 * probe[0]
+        - 200.0 * probe[1]
+        + 50.0 * probe[7]
+        + 40.0 * probe[0] * probe[1]
+        + 30.0 * probe[0] ** 2
+    )
+
+
+def test_the_surrogate_learns_a_curved_climb_and_knows_its_own_error() -> None:
+    """On a climb that is not a plane (a product and a square), the surrogate beats a
+    straight-line fit on new points, and its reported held-out error matches the error
+    seen on them."""
     x, payloads = _synthetic(120)
     surrogate = Surrogate(x, payloads)  # type: ignore[arg-type]
     assert set(surrogate.error) == set(TARGETS)
-    assert surrogate.error["apogee_m"] < 5.0
-    probe = np.random.default_rng(8).normal(size=FEATURES)
-    guess = surrogate.predict(probe)
-    truth = 9000.0 + 300.0 * probe[0] - 200.0 * probe[1] + 50.0 * probe[7]
-    assert guess["position"][0] == pytest.approx(truth, abs=15.0)
+    rng = np.random.default_rng(8)
+    probes = np.clip(rng.normal(size=(60, FEATURES)), -2.0, 2.0)
+    errors = np.array(
+        [surrogate.predict(p)["position"][0] - _curved_truth(p) for p in probes]
+    )
+    rms = float(np.sqrt(np.mean(errors**2)))
+    # a least-squares plane through the same pilot points is the baseline to beat
+    heights = np.array([q["position"][0] for q in payloads])  # type: ignore[index]
+    design = np.c_[np.ones(len(x)), x]
+    plane = np.linalg.lstsq(design, heights, rcond=None)[0]
+    baseline = float(
+        np.sqrt(
+            np.mean(
+                (
+                    np.c_[np.ones(len(probes)), probes] @ plane
+                    - [_curved_truth(p) for p in probes]
+                )
+                ** 2
+            )
+        )
+    )
+    assert rms < baseline
+    assert surrogate.error["apogee_m"] == pytest.approx(rms, rel=0.5)
+    guess = surrogate.predict(probes[0])
     assert guess["velocity"][0] == 0.0
     assert set(surrogate.check_tolerances()) == {
         "rail_v",
@@ -358,17 +587,34 @@ def test_one_or_two_workers_give_the_same_runs() -> None:
         two.close()
     assert [r[0] for r in a] == [r[0] for r in b] == [0, 1, 2]
     for (_, _, x), (_, _, y) in zip(a, b, strict=True):
-        for key in ("apogee_m", "rail_v", "land_v_vert", "main_alt", "drift_m"):
-            assert x.get(key) == y.get(key)
+        for key in ("apogee_m", "rail_v", "land_v_vert", "main_alt", "drift"):
+            assert key in x and x[key] is not None, f"{key} is a key of a flown run"
+            assert x[key] == y[key]
 
 
-def test_a_small_batch_reports_every_probability_with_an_interval() -> None:
-    """End to end: a tiny batch gives the full report, all intervals at 90%."""
-    report = run_batch(
+@pytest.fixture(scope="module")
+def tiny_report() -> dict[str, object]:
+    """A real tiny batch with the surrogate: 16 full climbs, then 16 estimated ones."""
+    return run_batch(
         _SPEC,
         SiteConfig(),
-        Settings(round_size=16, min_rounds=2, max_rounds=2, workers=1, reco_checks=1),
+        Settings(
+            round_size=16,
+            min_rounds=2,
+            max_rounds=2,
+            workers=1,
+            reco_checks=1,
+            reco_close_checks=1,
+            audit_fraction=0.25,
+        ),
     )
+
+
+def test_a_small_batch_reports_every_probability_with_an_interval(
+    tiny_report: dict[str, object],
+) -> None:
+    """End to end: a tiny batch gives the full report, all intervals at 90%."""
+    report = tiny_report
     json.dumps(report)  # the report is plain JSON
     assert report["runs"] == 32
     for key in (
@@ -386,6 +632,424 @@ def test_a_small_batch_reports_every_probability_with_an_interval() -> None:
     )
     assert report["apogee_m"]["mean"]["low"] <= report["apogee_m"]["mean"]["high"]
     assert report["footprint"]["n"] > 0
-    assert report["fast_reco_check"]["runs"] == 1
+    check = report["fast_reco_check"]
+    assert check["pairs"] == 2, "one typical flight and one close to a limit"
+    assert check["runs"] + check["skipped"] == check["pairs"]
+    assert check["gusts_off"] is True
     assert report["full_climbs"] >= 16 and report["surrogate_climbs"] == 16
     assert "placeholder" in report["assumptions"].lower()
+    assert report["missing_numbers"]["flights"] == 0
+    assert report["simulation_errors"] == 0 and report["first_simulation_error"] is None
+
+
+def test_the_text_report_of_a_batch_with_the_surrogate_does_not_crash(
+    tiny_report: dict[str, object],
+) -> None:
+    """``format_report`` reads only keys that exist (it used to read a missing landing-speed one)."""
+    text = format_report(tiny_report)
+    assert "EDITH Monte Carlo" in text and "Intervals are 90% confidence" in text
+    scale_line = text.split("Surrogate error scale")[1].split("\n")[0]
+    assert "landing speed" not in scale_line, "the landing speed is not judged"
+    assert "two chances it watches (any IREC failure" in text and "+/-4.0%" in text
+    assert "FastRECO against the full RECO (a spot check of 2 flights" in text
+
+
+def test_the_text_report_of_a_batch_without_the_surrogate_does_not_crash(
+    fake_flights: None,
+) -> None:
+    """The same with every climb flown in full (no surrogate lines)."""
+    text = format_report(_run(max_rounds=1))
+    assert "all 16 flown with the full 6-DOF climb" in text
+    assert "Surrogate" not in text
+
+
+def test_the_report_uses_the_configured_confidence_and_names_the_never_seen_bound(
+    tiny_report: dict[str, object],
+) -> None:
+    """The header follows the confidence; the 'never triggered' line gives the real bound."""
+    report = json.loads(json.dumps(tiny_report))
+    report["settings"]["confidence"] = 0.8
+    for check in report["checks"].values():
+        check["probability"].update(estimate=0.0, low=0.0, high=0.0054)
+    text = format_report(report)
+    assert "Intervals are 80% confidence" in text
+    assert "90% sure each is below 0.54%" in text  # 80% two-sided is 90% one-sided
+    assert "0.05%" not in text
+
+
+# ----- the batch with a fast stand-in for the flights --------------------------------
+
+
+def _flight(**over: object) -> dict[str, object]:
+    """One flown run as the batch records it: a good flight with some changes."""
+    flight: dict[str, object] = {
+        **_good(),
+        "apogee_east": 100.0,
+        "apogee_north": 50.0,
+        "land_east": 800.0,
+        "land_north": 300.0,
+        "drift": 855.0,
+        "peak_force_n": 900.0,
+    }
+    flight.update(over)
+    return flight
+
+
+class _FakePool:
+    """Stands in for the pool: flights are instant and fail by a rule of the test."""
+
+    broken = staticmethod(lambda index, kind: False)  # which flights stop with an error
+
+    def __init__(self, _spec: object, _site: object, workers: int) -> None:
+        self.workers = workers
+
+    def run(self, jobs: list[tuple]) -> list[tuple]:  # type: ignore[type-arg]
+        out = []
+        for kind, index, unit, _seed, _predicted in jobs:
+            if kind == "check":
+                good = _flight()
+                result: dict[str, object] = {
+                    "fast": good,
+                    "full": dict(good),
+                    "fast_s": 0.1,
+                    "full_s": 1.0,
+                }
+            elif self.broken(index, kind):
+                result = {"sim_ok": False, "error": "RuntimeError: boom"}
+            else:
+                # about half the flights break a rule, so no chance is quickly pinned down
+                result = _flight(
+                    separated=unit[1] > 0.5, apogee_m=9144.0 + 800.0 * (unit[0] - 0.5)
+                )
+            out.append((index, kind, result))
+        return out
+
+    def close(self) -> None:
+        """Nothing to shut down."""
+
+
+@pytest.fixture
+def fake_flights(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("flight_sim.edith.batch._Pool", _FakePool)
+    monkeypatch.setattr(_FakePool, "broken", staticmethod(lambda index, kind: False))
+
+
+def _run(**settings: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "round_size": 16,
+        "min_rounds": 1,
+        "max_rounds": 3,
+        "workers": 1,
+        "surrogate": False,
+        "reco_checks": 0,
+        "reco_close_checks": 0,
+    }
+    base.update(settings)
+    return run_batch(_SPEC, SiteConfig(), Settings(**base))  # type: ignore[arg-type]
+
+
+def test_all_rounds_flown_is_reported_as_the_largest_number_of_rounds(
+    fake_flights: None,
+) -> None:
+    """With one round planned and the time already over, the batch is complete: not 'time limit'."""
+    report = _run(max_rounds=1, time_limit_s=1e-9, target_half_width=1e-6)
+    assert report["rounds"] == 1
+    assert report["stopped_because"] == "reached the largest number of rounds"
+    assert report["stopped_for"] == "max_rounds"
+
+
+def test_a_batch_cut_short_by_the_time_limit_is_labelled_so(fake_flights: None) -> None:
+    """Rounds left over and no time left: that is the time limit."""
+    report = _run(max_rounds=3, time_limit_s=1e-9, target_half_width=1e-6)
+    assert report["rounds"] == 1
+    assert report["stopped_because"] == "reached the time limit"
+    assert report["stopped_for"] == "time_limit"
+
+
+def test_the_batch_stops_when_the_two_watched_chances_reach_the_target(
+    fake_flights: None,
+) -> None:
+    """Stops at the target and says which chances were watched, and the true width."""
+    report = _run(min_rounds=2, max_rounds=5, target_half_width=0.25)
+    assert report["stopped_for"] == "target" and report["rounds"] == 2
+    assert "any IREC failure" in report["stopped_because"]
+    assert "apogee at least the target" in report["stopped_because"]
+    assert "+/-25.0%" in report["stopped_because"]
+    assert "every headline" not in report["stopped_because"]
+    assert report["watched_chances"] == [
+        "any IREC failure",
+        "apogee at least the target",
+    ]
+    narrow = _run(min_rounds=2, max_rounds=3, target_half_width=0.001)
+    assert narrow["stopped_for"] == "max_rounds" and narrow["rounds"] == 3
+
+
+def test_the_default_stop_target_is_plus_or_minus_4_percent_on_the_command_line_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings and the command line both default to 0.04, and the command line can change it."""
+    import flight_sim.edith.__main__ as cli
+
+    seen: list[Settings] = []
+
+    class _StopError(Exception):
+        pass
+
+    def capture(_spec: object, _site: object, settings: Settings) -> None:
+        seen.append(settings)
+        raise _StopError
+
+    monkeypatch.setattr(cli, "run_batch", capture)
+    for argv in (
+        ["--rocket", "morpheus"],
+        ["--rocket", "morpheus", "--target", "0.02"],
+    ):
+        with pytest.raises(_StopError):
+            cli.main(argv)
+    assert [x.target_half_width for x in seen] == [0.04, 0.02]
+    assert Settings().target_half_width == 0.04
+
+
+def test_one_bad_flight_does_not_end_the_batch(
+    fake_flights: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flights that stop with an error are recorded and counted; the batch carries on."""
+    monkeypatch.setattr(
+        _FakePool, "broken", staticmethod(lambda index, kind: index % 4 == 0)
+    )
+    report = _run(max_rounds=2, min_rounds=2, target_half_width=0.001)
+    assert report["runs"] == 32 and report["simulation_errors"] == 8
+    assert report["first_simulation_error"] == "RuntimeError: boom"
+    text = format_report(report)
+    assert "8 runs failed to simulate" in text and "RuntimeError: boom" in text
+    # errored flights are left out of the apogee numbers, not counted as 'did not reach'
+    assert report["reached_apogee"]["estimate"] == 1.0
+    assert report["checks"]["simulation"]["probability"]["estimate"] == pytest.approx(
+        0.25
+    )
+
+
+def test_a_flight_with_no_apogee_counts_as_too_low_and_an_errored_one_is_left_out() -> (
+    None
+):
+    """below + within + above cover every flight that ran; none is in no group."""
+    site = SiteConfig()
+    inside = site.target_apogee_m
+    flights = [
+        _flight(apogee_m=inside),
+        _flight(apogee_m=inside * 1.3),
+        {
+            "sim_ok": True,
+            "apogee_ok": False,
+            "rail_v": 40.0,
+            "rail_margin": 2.5,
+            "margin_lo": 2.0,
+            "margin_hi": 4.0,
+        },
+        _flight(apogee_m=float("nan")),
+        {"sim_ok": False, "error": "RuntimeError: boom"},
+    ]
+    samples = [
+        {"round": 0, "index": i, "source": "ascent", "final": f}
+        for i, f in enumerate(flights)
+    ]
+    report = summarize(samples, [], [], None, site, Settings(workers=1))
+    rng = report["apogee_range"]
+    # four flights ran: one inside, one above, two with no usable apogee (below)
+    assert rng["within"]["estimate"] == pytest.approx(0.25)
+    assert rng["above"]["estimate"] == pytest.approx(0.25)
+    assert rng["below"]["estimate"] == pytest.approx(0.5)
+    assert report["reached_apogee"]["estimate"] == pytest.approx(
+        0.75
+    )  # 3 of the 4 that ran
+    assert report["probability_apogee_at_least_target"]["estimate"] == pytest.approx(
+        0.5
+    )
+    assert report["checks"]["simulation"]["probability"]["estimate"] == pytest.approx(
+        0.2
+    )
+    cloud = report["cloud"]
+    assert cloud["range"].count(-1) >= 1, "the NaN apogee is coloured as below range"
+    # only the NaN apogee is a missing number; a climb that never reached apogee has none to give
+    assert report["missing_numbers"] == {"flights": 1, "by_value": {"apogee_m": 1}}
+
+
+def test_missing_and_nan_numbers_are_counted_for_the_report() -> None:
+    """Flights that finished with a missing or NaN number are counted, by number."""
+    flights = [
+        _flight(),
+        _flight(rail_v=float("nan")),
+        _flight(main_alt=float("nan")),
+        _flight(rail_v=None),
+    ]
+    samples = [
+        {"round": 0, "index": i, "source": "ascent", "final": f}
+        for i, f in enumerate(flights)
+    ]
+    report = summarize(samples, [], [], None, SiteConfig(), Settings(workers=1))
+    assert report["missing_numbers"] == {
+        "flights": 3,
+        "by_value": {"main_alt": 1, "rail_v": 2},
+    }
+    # the NaN rail speed is a failed check, so it is in the chance of a failure
+    assert report["checks"]["rail_exit_floor"]["probability"][
+        "estimate"
+    ] == pytest.approx(0.5)
+    text = format_report(
+        {
+            **report,
+            "rocket": "R",
+            "site": "S",
+            "rounds": 1,
+            "seconds": 1.0,
+            "workers": 1,
+            "stopped_because": "x",
+            "settings": {"target_half_width": 0.04, "confidence": 0.9},
+            "target_apogee_m": 9144.0,
+            "surrogate_climbs": 0,
+            "full_climbs": 4,
+            "reflown_for_closeness_or_audit": 0,
+            "borderline_not_reflown_over_cap": 0,
+            "surrogate_error": None,
+            "simulation_errors": 0,
+            "inputs": [],
+        }
+    )
+    assert "3 flights had missing numbers (main_alt: 1, rail_v: 2)" in text
+
+
+def test_a_worker_catches_any_error_and_records_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An error that is not a maths error ends only that flight (it used to end the batch)."""
+    from flight_sim.edith import batch
+
+    class _Broken:
+        site = SiteConfig()
+        nominal = _NOMINAL
+
+        def fly(self, *_a: object, **_k: object) -> dict[str, object]:
+            raise KeyError("no such thing")
+
+    monkeypatch.setitem(batch._WORKER, "rocket", _Broken())
+    unit = [0.5] * DIMENSIONS
+    index, kind, result = batch._job(("ascent", 7, unit, 1, None))
+    assert (index, kind) == (7, "ascent")
+    assert result["sim_ok"] is False and "KeyError" in result["error"]
+    _, _, both = batch._job(("check", 8, unit, 1, None))
+    assert both["fast"]["sim_ok"] is False and both["full"]["sim_ok"] is False
+
+
+def test_a_rocket_flight_that_raises_is_returned_as_an_errored_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Rocket.fly`` returns the error text for any exception raised inside the flight."""
+    import flight_sim.edith.run as run_module
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(run_module, "fly_ascent", boom)
+    rocket = Rocket(_SPEC, SiteConfig())
+    v = draw(_MIDDLE, rocket.site, rocket.nominal, 1)
+    result = rocket.fly(v)
+    assert result == {"sim_ok": False, "error": "RuntimeError: boom"}
+    assert failures.any_failure(result) and failures.statuses(result)["simulation"]
+
+
+# ----- the FastRECO check -----------------------------------------------------------
+
+
+def test_the_reco_check_compares_pass_or_fail_including_warnings_and_counts_skips() -> (
+    None
+):
+    """A pair that differs only in a warning disagrees; a pair that errored is counted, not dropped."""
+    agree = {
+        "fast": _flight(),
+        "full": _flight(land_east=805.0),
+        "fast_s": 0.1,
+        "full_s": 1.0,
+    }
+    check = _reco_check([agree])
+    assert (
+        check["same_pass_fail"] is True
+        and check["disagreements"] == 0
+        and check["skipped"] == 0
+    )
+    warned = {
+        "fast": _flight(rail_v=25.0),
+        "full": _flight(),
+        "fast_s": 0.1,
+        "full_s": 1.0,
+    }
+    check = _reco_check([agree, warned])
+    assert (
+        check["same_pass_fail"] is False
+        and check["disagreements"] == 1
+        and check["pairs"] == 2
+    )
+    errored = {
+        "fast": {"sim_ok": False, "error": "x"},
+        "full": _flight(),
+        "fast_s": 0.0,
+        "full_s": 0.0,
+    }
+    check = _reco_check([agree, errored])
+    assert check["disagreements"] == 1 and check["skipped"] == 1 and check["runs"] == 1
+    only_errors = _reco_check([errored])
+    assert (
+        only_errors["runs"] == 0
+        and only_errors["skipped"] == 1
+        and not only_errors["same_pass_fail"]
+    )
+    assert _reco_check([]) is None
+
+
+def test_the_close_calls_chosen_for_the_reco_check_are_the_nearest_to_a_limit() -> None:
+    """The runs nearest a check limit (not the first ones) are picked, nearest first."""
+    results = [
+        _flight(),
+        _flight(rail_v=15.5),
+        _flight(),
+        _flight(rail_v=15.3),
+        _flight(landed=False),
+        _flight(rail_v=16.5),
+    ]
+    assert _close_to_a_limit(results, 1, 2) == [3, 1]
+    assert _close_to_a_limit(results, 4, 2) == [5], (
+        "the first ones are skipped; a flight that did not land is not chosen"
+    )
+
+
+def test_calm_flights_of_both_reco_versions_land_close_together() -> None:
+    """With the gusts off, FastRECO and the full RECO of one draw agree to about 1% of the drift."""
+    rocket = Rocket(_SPEC, SiteConfig())
+    v = draw(_MIDDLE, rocket.site, rocket.nominal, 3)
+    fast = rocket.fly(v, reco="fast", calm=True)
+    full = rocket.fly(v, reco="full", calm=True)
+    assert fast["sim_ok"] and full["sim_ok"]
+    assert (
+        math.hypot(
+            fast["land_east"] - full["land_east"],
+            fast["land_north"] - full["land_north"],
+        )
+        < 0.03 * full["drift"]
+    )
+    assert failures.any_failure(fast) == failures.any_failure(full)
+
+
+def test_a_batch_where_every_flight_errored_still_reports_without_nan() -> None:
+    """Nothing ran: the apogee chances are 'unknown' (0 to 100%), not NaN, and the report is valid JSON."""
+    samples = [
+        {
+            "round": 0,
+            "index": i,
+            "source": "ascent",
+            "final": {"sim_ok": False, "error": "E"},
+        }
+        for i in range(4)
+    ]
+    report = summarize(samples, [], [], None, SiteConfig(), Settings(workers=1))
+    assert report["apogee_range"]["within"]["high"] == 1.0
+    assert report["probability_any_failure"]["estimate"] == 1.0
+    assert "NaN" not in json.dumps(report["apogee_range"])

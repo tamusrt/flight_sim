@@ -107,6 +107,13 @@
   .code { position:relative; margin:8px 0; }
   .code pre { margin:0; padding:10px 64px 10px 12px; background:var(--bg); border:1px solid var(--line); border-radius:6px; font:12.5px/1.5 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; overflow:auto; white-space:pre; }
   .code button { position:absolute; top:6px; right:6px; font-size:12px; padding:2px 8px; }
+  /* Files used */
+  .fu { width:100%; margin:0; }
+  .fu th, .fu td { text-align:left; white-space:normal; vertical-align:top; }
+  .badge { display:inline-block; padding:0 7px; border-radius:10px; border:1px solid var(--warn); background:var(--warnbg); color:var(--warn); font-size:11.5px; }
+  .fu td:nth-child(4) { white-space:nowrap; }
+  .fu .pick { margin-top:4px; }
+  .fu .pick .code { margin:6px 0; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--flat); margin-right:6px; }
   .dot.ok { background:var(--ok); } .dot.no { background:var(--down); }
   pre.log { margin:0; padding:8px 10px; background:var(--card); border:1px solid var(--line); border-radius:6px; font-size:12px; overflow:auto; max-height:220px; white-space:pre-wrap; }
@@ -117,7 +124,7 @@
 <header>
   <h1 id="title">JARVIS predictions</h1>
   <div class="tabs">
-    <a href="../#tab=history">History</a><a href="../#tab=flight">Flight plots</a><a href="../#tab=changelog">Changelog</a>
+    <a href="../#tab=history" data-site="history">History</a><a href="../#tab=flight" data-site="flight">Flight plots</a><a href="../#tab=changelog" data-site="changelog">Changelog</a>
     <button type="button" id="tab-pred" class="on">JARVIS predictions</button><button type="button" id="tab-vision">Vision</button>
   </div>
   <span class="sub" id="sub"></span>
@@ -132,6 +139,7 @@
    <section id="view-pred">
     <p class="sumline" id="sumline"></p>
     <div class="warnings" id="warnings"></div>
+    <div class="warnings" id="parterrs"></div>
     <div class="row" id="metrics"></div>
     <div class="chartbox"><div id="plot" style="position:absolute;inset:10px"></div><div class="empty" id="empty" hidden></div></div>
     <p class="legend" id="chartnote"></p>
@@ -162,6 +170,9 @@
     </details>
     <p class="legend" id="runinfo"></p>
     <p class="legend" id="provenance"></p>
+    <details id="filesused"><summary class="big">Files used: which files this page was built from</summary>
+      <div class="uc" id="fu-body"><p class="legend" style="margin:0">Loading the list of files.</p></div>
+    </details>
     <details id="updatecsv"><summary class="big">Update CSV: regenerate the RASAero table</summary>
       <div class="uc">
         <p class="legend" style="margin:0">Use this after the rocket's shape changes. It runs RASAero II on the current design, converts the results into the aerodynamic table Jarvis uses, re-runs Jarvis and publishes the update. You need a Windows computer with RASAero II, a copy of the <code>dynamics</code> repository and <code>flight_sim</code> installed.</p>
@@ -325,12 +336,16 @@ function baseLayout(xTitle, yTitle) {
            xaxis: { title: { text: xTitle }, gridcolor: grid, zeroline: false, automargin: true },
            yaxis: { title: { text: yTitle }, gridcolor: grid, zeroline: true, zerolinecolor: grid, automargin: true } };
 }
-function showEmpty(text) { empty.hidden = !text; empty.textContent = text || ''; if (text) Plotly.purge(plotDiv); }
+// The Plotly library comes from a web address; without a connection it is missing. The rest of the page works without it.
+const hasPlotly = () => typeof Plotly !== 'undefined' && !!Plotly && typeof Plotly.react === 'function';
+const NO_PLOTLY = 'The charts could not be loaded (no connection to the Plotly library). The tables and warnings below still work.';
+function showEmpty(text) { empty.hidden = !text; empty.textContent = text || ''; if (text && hasPlotly()) Plotly.purge(plotDiv); }
 // the line the others are measured from in the two difference views
 const refLine = () => 'or';
 const refName = () => LINES.find((l) => l.key === refLine()).name;
 const isDiff = () => state.view === 'diff';
 function drawChart() {
+  if (!hasPlotly()) { $('chartnote').textContent = ''; showEmpty(NO_PLOTLY); return; }
   const M = metricOf(state.metric), U1 = M.unit(), sims = ticked();
   const diff = isDiff() && M.key !== 'drag', ref = refLine();
   if (!sims.length) return showEmpty('Select at least one launch condition on the left.');
@@ -653,21 +668,33 @@ function refBig() {
   if (design.finCount !== refChange.finCount) out.push('fin count ' + refChange.finCount + ' to ' + design.finCount);
   return out;
 }
-// the table's own lift slope and centre of pressure at Mach 0.3 against what the shape gives
+// Is the RASAero table still the one the rocket's files would give? The build writes files_used.json, which says when the
+// table was made and which RASAero settings it used. If that record is there, it decides. If it is not, the only thing left to
+// compare is where the table puts the centre of pressure (CP, the point where the air forces act) against the classic Barrowman
+// method (a textbook formula for that point). The normal-force slope (CNα, how fast the sideways force grows with angle) is never
+// compared: RASAero can use Rogers' modified Barrowman method, which gives a different slope on purpose while the CP stays the same.
 function tableCheck() {
-  const T = base.aero, im = T.mach.findIndex((m) => m >= 0.3), ia = T.alpha.indexOf(2);
-  const cna = T.cn[im][ia] / (2 * Math.PI / 180), b = W.barrowman(base.refGeometry);
-  const off = Math.abs(cna / b.cna - 1), dx = Math.abs(T.xcp[im][ia] - b.xcp);
-  if (off > 0.05 || dx > 0.12) return 'The RASAero table does not match the shape in ' + (DATA.refFile || 'the RASAero file') + ': the table gives a normal-force slope (CNα) of ' + fmt(cna, 2) + ' and a CP ' + fmt(T.xcp[im][ia], 2) + ' m from the nose tip, where the shape gives ' + fmt(b.cna, 2) + ' and ' + fmt(b.xcp, 2) + ' m. The table was probably made from a different version of the rocket. Run Update CSV at the bottom of this page.';
-  return '';
+  if (FILES === undefined) return '';   // the list is still loading; the notes are drawn again when it arrives
+  const stale = FILES && FILES.table ? FILES.table.stale : [];
+  if (stale.length) return 'The RASAero table may be out of date: ' + stale.join('; ') + '. Run Update CSV at the bottom of this page.';
+  if (FILES && FILES.table && FILES.table.meta_found) return '';   // the record exists and nothing in it is out of date
+  const T = base.aero;
+  if (!T || !Array.isArray(T.mach) || !Array.isArray(T.alpha) || !Array.isArray(T.xcp)) return '';
+  const im = T.mach.findIndex((m) => m >= 0.3), ia = T.alpha.indexOf(2);
+  if (im < 0 || ia < 0 || !Array.isArray(T.xcp[im])) return '';
+  const xcp = T.xcp[im][ia], b = W.barrowman(base.refGeometry), ref = b && b.xcp;
+  if (typeof xcp !== 'number' || typeof ref !== 'number' || !Number.isFinite(xcp) || !Number.isFinite(ref)) return '';
+  if (Math.abs(xcp - ref) <= 0.12) return '';
+  return 'The RASAero table could not be checked against a record of how the table was made (unverified). Its CP is ' + fmt(xcp, 2) + ' m from the nose tip at Mach ' + fmt(T.mach[im], 1) + ', where the classic Barrowman method gives ' + fmt(ref, 2) + ' m for the shape in ' + (DATA.refFile || 'the RASAero file') + '. The table may have been made from a different version of the rocket. Run Update CSV at the bottom of this page.';
 }
 const stem = (name) => String(name || '').replace(/\.[^.]*$/, '');
 function warnings() {
   const out = [], M = U.mass();
   const diffs = refDiffs();
   if (diffs.length) out.push(['', 'The RASAero table is out of date: the OpenRocket design has changed since the table was made (' + diffs.join('; ') + '). Jarvis is using the current masses with the old aerodynamics. Run Update CSV at the bottom of this page.']);
-  const chk = tableCheck();
-  if (chk) out.push(['bad', chk]);
+  let chk = '';
+  try { chk = tableCheck(); } catch (e) { console.error('SRT_ERROR\t' + location.pathname + '\ttable check: ' + e.message); }
+  if (chk) out.push(['', chk]);
   if (refBig().length) out.push(['', 'Large shape change since the RASAero table was made (' + refBig().join('; ') + '). Run Update CSV before relying on these predictions.']);
   const first = ticked().map(orOf).find((o) => o);
   if (first && first.source === 'history' && DATA.openrocketMotor && stem(DATA.openrocketMotor) !== stem(DATA.files.motor)) {
@@ -677,6 +704,12 @@ function warnings() {
   if (mf && mf.propKg && mf.savedPropKg && (Math.abs(mf.propKg - mf.savedPropKg) > 0.5 || Math.abs(mf.totalKg - mf.savedTotalKg) > 1.0)) {
     // Jarvis flies the .ork's motor masses; say so when the motor file lists different ones
     out.push(['', 'The motor file ' + DATA.files.motor + ' lists ' + fmt(mf.totalKg * M.f, 1) + ' ' + M.u + ' total (' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' propellant), but the OpenRocket design flies ' + fmt(mf.savedTotalKg * M.f, 1) + ' ' + M.u + ' (' + fmt(mf.savedPropKg * M.f, 1) + ' ' + M.u + ' propellant). Jarvis uses the OpenRocket masses, so its starting mass matches OpenRocket; only the thrust curve comes from the motor file.']);
+  }
+  // warnings the build itself raised about the files it used (a note is only information, so it is left out)
+  const seen = new Set(out.map((w) => w[1]));
+  for (const n of (FILES ? FILES.notices : [])) {
+    if ((n.level !== 'warn' && n.level !== 'error') || seen.has(n.text)) continue;
+    seen.add(n.text); out.push([n.level === 'error' ? 'bad' : '', n.text]);
   }
   return out;
 }
@@ -692,7 +725,7 @@ function drawNotes() {
     box.appendChild(el);
   }
   const mf = DATA.motorFile, bits = [];
-  bits.push('Motor: ' + DATA.files.motor + (mf && mf.note ? ' (' + mf.note + ')' : '') + ', ' + fmt(mf.impulse, 0) + ' N·s over ' + fmt(mf.burnS, 1) + ' s.');
+  bits.push('Motor: ' + DATA.files.motor + (mf && mf.note ? ' (' + mf.note + ')' : '') + (mf ? ', ' + fmt(mf.impulse, 0) + ' N·s over ' + fmt(mf.burnS, 1) + ' s' : '') + '.');
   const first = ticked().map(orOf).find((o) => o);
   if (first) bits.push(first.label + '.');
   bits.push(refDiffs().length ? 'RASAero table: out of date.' : 'RASAero table: matches the design.');
@@ -735,7 +768,19 @@ const uc = { st: null, startedHere: null, published: null };
 async function helper(path, post, body) {
   const r = await fetch(HELPER + path, post ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) } : { cache: 'no-store' });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || ('The helper answered with an error (' + r.status + ').'));
+  if (!r.ok) { const e = new Error((j && (j.error || j.message)) || ('The helper answered with an error (' + r.status + ').')); e.fromHelper = true; throw e; }
+  return j;
+}
+// The helper's status, with anything missing filled in; anything that is not a status at all (say a web page that is not the helper) is an error.
+async function helperStatus() {
+  const j = await helper('/api/status');
+  if (!j || typeof j !== 'object' || !('alpha' in j || 'rocket' in j || 'cdx' in j)) throw new Error('The reply is not a helper status.');
+  const num = (v) => (typeof v === 'number' ? v : 0);
+  j.alpha = Object.assign({ count: 0, newest: null }, j.alpha && typeof j.alpha === 'object' ? j.alpha : {}); j.alpha.count = num(j.alpha.count);
+  j.csv = j.csv && typeof j.csv === 'object' ? j.csv : {};
+  j.cdx = Object.assign({ path: 'rasaero.CDX1' }, j.cdx && typeof j.cdx === 'object' ? j.cdx : {}); j.cdx.path = String(j.cdx.path);
+  j.log = Array.isArray(j.log) ? j.log.map(String) : [];
+  j.rocket = j.rocket === undefined ? '' : String(j.rocket);
   return j;
 }
 const when = (iso) => iso ? new Date(iso).toLocaleString() : 'none';
@@ -768,7 +813,7 @@ function ucRender() {
     ras.innerHTML = '<span class="dot ok"></span>';
     const t = document.createElement('span');
     t.textContent = 'Helper connected (' + st.rocket + '). RASAero results: ' + st.alpha.count + ' of 31 files' + (st.alpha.count ? ' (newest ' + when(st.alpha.newest) + ')' : '') + '. Table last updated ' + when(st.csv.modified) + '.' +
-      (st.sweepAvailable ? '' : ' ' + st.sweepProblem) + (st.updateAvailable ? '' : ' ' + st.updateProblem);
+      (st.sweepAvailable ? '' : ' ' + (st.sweepProblem || '')) + (st.updateAvailable ? '' : ' ' + (st.updateProblem || ''));
     ras.appendChild(t);
   }
   $('uc-sweep').disabled = !(st && !busy && st.sweepAvailable);
@@ -818,8 +863,8 @@ function ucPoll(now) {
   if (uc.loop && !now) return;   // one chain of requests at a time
   clearTimeout(uc.timeout); uc.loop = true;
   const tick = async () => {
-    try { uc.st = await helper('/api/status'); } catch (e) { uc.st = null; }
-    ucRender();
+    try { uc.st = await helperStatus(); } catch (e) { uc.st = null; }
+    safe('Update CSV', ucRender);   // a drawing problem must not stop the next poll
     if ($('updatecsv').open || (uc.st && uc.st.busy)) uc.timeout = setTimeout(tick, uc.st && uc.st.busy ? 1000 : 3000); else uc.loop = false;
   };
   tick();
@@ -827,8 +872,8 @@ function ucPoll(now) {
 async function ucStart(job) {
   uc.startedHere = job === 'update' ? 'update' : null;
   try { await helper('/api/' + job, true); } catch (e) { uc.startedHere = null; ucError(e.message); }
-  try { uc.st = await helper('/api/status'); } catch (e) { /* keep the old status */ }
-  ucRender();
+  try { uc.st = await helperStatus(); } catch (e) { /* keep the old status */ }
+  safe('Update CSV', ucRender);
   ucPoll(true);   // asks again at once, then every second while the job runs
 }
 function ucError(msg) { const d = $('uc-done'); d.hidden = false; d.innerHTML = '<div class="warn bad"></div>'; d.firstChild.textContent = msg; }
@@ -869,45 +914,152 @@ function drawSummary() {
   box.innerHTML = '<span class="lbl">' + sim.replace(/[&<>]/g, '') + ':</span> ' + bits.join(' · ');
 }
 
+/* ---------- Files used: which files the build picked (files_used.json, written next to this page by the build) ---------- */
+let FILES;   // undefined while loading, null when there is no usable list, otherwise the cleaned-up list
+function cleanFiles(j) {
+  if (!j || typeof j !== 'object' || j.version !== 1 || !Array.isArray(j.files)) return null;
+  const str = (v) => (typeof v === 'string' ? v : ''), list = (v) => (Array.isArray(v) ? v : []);
+  const files = list(j.files).filter((f) => f && typeof f === 'object' && str(f.path)).map((f) => ({
+    role: str(f.role), label: str(f.label) || str(f.role) || 'File', setting: str(f.setting) || str(f.role), path: str(f.path), how: str(f.how),
+    auto: f.auto === true, changed: str(f.changed),
+    candidates: list(f.candidates).filter((c) => c && typeof c === 'object' && str(c.path)).map((c) => ({ path: str(c.path), changed: str(c.changed) })),
+  }));
+  const notices = list(j.notices).filter((n) => n && typeof n === 'object' && str(n.text)).map((n) => ({ level: str(n.level), text: str(n.text) }));
+  const t = j.table && typeof j.table === 'object' ? j.table : null;
+  const table = t ? { meta_found: t.meta_found === true, stale: list(t.stale).filter((x) => typeof x === 'string' && x) } : null;
+  return { rocket: str(j.rocket), motorMode: str(j.motor_mode), historyMotor: str(j.history_motor), files, notices, table };
+}
+async function loadFilesUsed() {
+  try {
+    const r = typeof fetch === 'function' ? await fetch('files_used.json', { cache: 'no-store' }) : null;
+    FILES = r && r.ok ? cleanFiles(await r.json()) : null;
+  } catch (e) { FILES = null; }   // missing, not JSON or no connection: the page works without it
+  safe('Files used', drawFilesUsed); safe('Notes', drawNotes);
+}
+const baseName = (p) => String(p).split('/').pop();
+function el(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
+// What choosing another file looks like: the line to paste into aero_modeling/whatif_config.json, and a button for the helper to do it.
+function pickBox(f, path) {
+  const box = el('div', undefined, 'pick');
+  const line = JSON.stringify(f.setting) + ': ' + JSON.stringify(path);
+  box.append(el('div', 'To use ' + baseName(path) + ', put this line in the rocket\'s section of aero_modeling/whatif_config.json:', 'legend'), codeBox(line));
+  const row = el('div', undefined, 'row'), btn = el('button', 'Apply with the helper'), note = el('span', '', 'legend');
+  btn.type = 'button'; btn.className = 'primary';
+  btn.onclick = async () => {
+    btn.disabled = true; note.textContent = 'Asking the helper...';
+    try {
+      const j = await helper('/api/use-file', true, { rocket: FILES.rocket, setting: f.setting, path });
+      note.textContent = (j && typeof j.message === 'string' && j.message) || (j && j.ok ? 'Done.' : 'The helper did not say what happened.');
+    } catch (e) {
+      note.textContent = e.fromHelper ? e.message : 'The helper is not running on this computer, so nothing was changed. Copy the line above into the file yourself, or start the helper (see Update CSV below).';
+    }
+    btn.disabled = false;
+  };
+  row.append(btn, note); box.appendChild(row); return box;
+}
+function drawFilesUsed() {
+  const body = $('fu-body'); body.textContent = '';
+  if (!FILES) { body.appendChild(el('p', FILES === undefined ? 'Loading the list of files.' : 'No file list for this build.', 'legend')); return; }
+  const info = [];
+  if (FILES.rocket) info.push('Rocket: ' + FILES.rocket + '.');
+  info.push('Motor choice: ' + (FILES.motorMode === 'newest' ? 'the newest thrust curve in the folder.' : FILES.motorMode === 'pinned' ? 'the one the History tab flies.' : 'not stated.'));
+  info.push('Motor on the History tab: ' + (FILES.historyMotor || 'none') + '.');
+  body.appendChild(el('p', info.join(' '), 'legend'));
+  const wrap = el('div', undefined, 'tablewrap'), t = el('table', undefined, 'fu'), head = t.createTHead().insertRow();
+  ['File', 'Name', 'How it was chosen', 'Last changed', ''].forEach((h) => head.appendChild(el('th', h)));
+  const tb = t.createTBody();
+  FILES.files.forEach((f) => {
+    const r = tb.insertRow(), name = el('td'), how = el('td'), pick = el('td');
+    r.appendChild(el('td', f.label));
+    const code = el('code', baseName(f.path)); code.title = f.path; name.appendChild(code);
+    if (f.auto) how.appendChild(el('span', 'auto: ' + (f.how || 'chosen by the build'), 'badge')); else how.textContent = f.how || '–';
+    r.append(name, how, el('td', f.changed || '–'), pick);
+    if (f.candidates.length > 1) {
+      const sel = document.createElement('select'), spot = el('div');
+      sel.title = 'Other files this could use'; sel.setAttribute('aria-label', 'Other ' + f.label + ' files');
+      f.candidates.forEach((c) => { const o = el('option', baseName(c.path) + (c.changed ? ' (' + c.changed + ')' : '')); o.value = c.path; o.title = c.path; o.selected = c.path === f.path; sel.appendChild(o); });
+      if (!f.candidates.some((c) => c.path === f.path)) { const o = el('option', baseName(f.path) + ' (current)'); o.value = f.path; o.selected = true; sel.insertBefore(o, sel.firstChild); }
+      sel.onchange = () => { spot.textContent = ''; if (sel.value !== f.path) spot.appendChild(pickBox(f, sel.value)); };
+      pick.append(sel, spot);
+    }
+  });
+  wrap.appendChild(t); body.appendChild(wrap);
+  body.appendChild(el('p', 'Hover over a name to see its full path (relative to the aero_modeling folder). A yellow label means the build had to pick or repair that file itself, so check it is the one you meant.', 'legend'));
+}
+
+/* ---------- links out of this page ---------- */
+// The History, Flight plots and Changelog tabs live on the site's front page. How far up that is depends on the rocket
+// (predictions/ or predictions/<key>/), so it is worked out from the address: everything before '/predictions'.
+function fixSiteLinks() {
+  const m = /^(.*?)\/predictions(\/|$)/.exec(location.pathname);
+  if (!m) return;   // not under /predictions/ (a file opened from somewhere else): keep the links as written
+  document.querySelectorAll('a[data-site]').forEach((a) => { a.href = m[1] + '/' + (location.protocol === 'file:' ? 'index.html' : '') + '#tab=' + a.dataset.site; });
+}
+
+/* ---------- one part failing must not stop the others ---------- */
+const reported = new Set();
+function safe(label, fn) {
+  try { return fn(); } catch (e) {
+    const message = e && e.message ? e.message : String(e), text = 'Part "' + label + '" could not be drawn: ' + message;
+    const box = $('parterrs');
+    if (box && !Array.from(box.children).some((c) => c.textContent === text)) { const d = el('div', text, 'warn'); box.appendChild(d); }
+    if (!reported.has(text)) { reported.add(text); console.error('SRT_ERROR\t' + location.pathname + '\t' + label + ': ' + message); }
+  }
+}
+
 /* ---------- drawing everything ---------- */
 function update() {
-  $('units').value = state.units; $('stab').value = state.stab;
-  assignColors(); writeHash();
-  if (!showTab()) return;
-  drawSummary(); refreshNav(); buildMetrics(); drawChart(); drawWeather(); drawClimb(); drawDescent(); drawMore(); geometryTable(); drawNotes();
-  if (plotDiv.data && Plotly.Plots) requestAnimationFrame(() => Plotly.Plots.resize(plotDiv));
+  const box = $('parterrs'); if (box) box.textContent = '';
+  let show = true;
+  safe('Page layout', () => { $('units').value = state.units; $('stab').value = state.stab; assignColors(); writeHash(); show = showTab(); });
+  if (!show) return;
+  safe('Summary', drawSummary); safe('Sidebar', refreshNav); safe('Metrics', buildMetrics); safe('Chart', drawChart);
+  safe('Apogee table', drawWeather); safe('Ascent table', drawClimb); safe('Descent table', drawDescent); safe('More details', drawMore);
+  safe('Geometry check', geometryTable); safe('Notes', drawNotes);
+  safe('Chart resize', () => { if (hasPlotly() && plotDiv.data && Plotly.Plots) requestAnimationFrame(() => Plotly.Plots.resize(plotDiv)); });
 }
 
 (function init() {
   const reopen = new URLSearchParams(location.hash.replace(/^#/, '')).get('update') === '1';   // read before the link is rewritten
-  document.title = 'JARVIS predictions · ' + DATA.name;
-  $('title').textContent = 'JARVIS predictions';
-  $('sub').textContent = DATA.name + ' · built ' + DATA.generated;
-  $('provenance').innerHTML = 'Built from the OpenRocket design <code>' + DATA.files.ork + '</code> (' + DATA.files.orkHash + '), the RASAero table <code>' + DATA.files.aero + '</code> and the thrust curve <code>' + DATA.files.motor + '</code>' + (DATA.motorFile && DATA.motorFile.note ? ' (' + DATA.motorFile.note + ')' : '') + ', on ' + DATA.generated + '. The page rebuilds automatically when any of them changes on GitHub. Launch conditions come from the simulations saved in the OpenRocket design; the RASAero geometry comes from <code>' + (DATA.refFile || 'the OpenRocket file') + '</code>.';
-  $('uc-cdx').textContent = DATA.refFile || 'rasaero.CDX1';
-  document.querySelectorAll('.code[data-code]').forEach((el) => { const t = el.dataset.code; el.append(codeBox(t).firstChild, copyButton(t)); });
-  readHash(); buildNav();
-  $('units').onchange = () => { state.units = $('units').value; update(); };
-  $('stab').onchange = () => { state.stab = $('stab').value; update(); };
-  $('tab-pred').onclick = () => { state.tab = 'pred'; update(); };
-  $('tab-vision').onclick = () => { state.tab = 'vision'; update(); };
-  window.addEventListener('hashchange', () => { readHash(); update(); });
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', update);
-  $('uc-sweep').onclick = () => ucStart('sweep');
-  $('uc-openras').onclick = async () => {   // shows the RASAero file's folder in File Explorer
-    const note = $('uc-open-note'); note.textContent = '';
-    try { await helper('/api/open', true, { target: 'rasaero' }); note.textContent = 'Opened in File Explorer.'; }
-    catch (e) { note.textContent = e.message; }
-  };
-  $('uc-update').onclick = () => ucStart('update');
-  $('uc-cancel').onclick = async () => { try { await helper('/api/cancel', true); } catch (e) { ucError(e.message); } };
+  safe('Page header', () => {
+    document.title = 'JARVIS predictions · ' + DATA.name;
+    $('title').textContent = 'JARVIS predictions';
+    $('sub').textContent = DATA.name + ' · built ' + DATA.generated;
+    $('provenance').innerHTML = 'Built from the OpenRocket design <code>' + DATA.files.ork + '</code> (' + DATA.files.orkHash + '), the RASAero table <code>' + DATA.files.aero + '</code> and the thrust curve <code>' + DATA.files.motor + '</code>' + (DATA.motorFile && DATA.motorFile.note ? ' (' + DATA.motorFile.note + ')' : '') + ', on ' + DATA.generated + '. The page rebuilds automatically when any of them changes on GitHub. Launch conditions come from the simulations saved in the OpenRocket design; the RASAero geometry comes from <code>' + (DATA.refFile || 'the OpenRocket file') + '</code>.';
+    $('uc-cdx').textContent = DATA.refFile || 'rasaero.CDX1';
+    document.querySelectorAll('.code[data-code]').forEach((e) => { const t = e.dataset.code; e.append(codeBox(t).firstChild, copyButton(t)); });
+  });
+  safe('Links', fixSiteLinks);
+  safe('Controls', () => {
+    readHash(); buildNav();
+    $('units').onchange = () => { state.units = $('units').value; update(); };
+    $('stab').onchange = () => { state.stab = $('stab').value; update(); };
+    $('tab-pred').onclick = () => { state.tab = 'pred'; update(); };
+    $('tab-vision').onclick = () => { state.tab = 'vision'; update(); };
+    window.addEventListener('hashchange', () => { readHash(); update(); });
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', update);
+    $('uc-sweep').onclick = () => ucStart('sweep');
+    $('uc-openras').onclick = async () => {   // shows the RASAero file's folder in File Explorer
+      const note = $('uc-open-note'); note.textContent = '';
+      try { await helper('/api/open', true, { target: 'rasaero' }); note.textContent = 'Opened in File Explorer.'; }
+      catch (e) { note.textContent = e.message; }
+    };
+    $('uc-update').onclick = () => ucStart('update');
+    $('uc-cancel').onclick = async () => { try { await helper('/api/cancel', true); } catch (e) { ucError(e.message); } };
+  });
   update();
-  tellParent('jarvis-ready');   // so the History page can take this page's conditions when it has none of its own
-  if (reopen) {   // coming back from an update: show its result
-    const d = $('updatecsv'); d.open = true; setTimeout(() => d.scrollIntoView({ block: 'start' }), 300);
-  }
-  $('updatecsv').addEventListener('toggle', () => { if ($('updatecsv').open && typeof fetch === 'function') ucPoll(); });
-  if (typeof fetch === 'function') ucPoll();   // once, so the section is right when it opens
+  safe('Files used', drawFilesUsed);
+  loadFilesUsed();
+  safe('Parent message', () => tellParent('jarvis-ready'));   // so the History page can take this page's conditions when it has none of its own
+  safe('Update CSV link', () => {
+    if (reopen) {   // coming back from an update: show its result
+      const d = $('updatecsv'); d.open = true; setTimeout(() => d.scrollIntoView({ block: 'start' }), 300);
+    }
+    // The helper is on the visitor's own computer, so the page only looks for it once the Update CSV section is opened
+    // (or at once when this page is itself served by the helper). A visitor who never opens it makes no request to localhost.
+    $('updatecsv').addEventListener('toggle', () => { if ($('updatecsv').open && typeof fetch === 'function') ucPoll(); });
+    if (isLocal && typeof fetch === 'function') ucPoll();
+  });
 })();
 </script>
 </body>

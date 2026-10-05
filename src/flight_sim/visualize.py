@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from flight_sim.descent import RecoverySystem, ReefedParachute, air_at
+from flight_sim.descent import Parachute, RecoverySystem, ReefedParachute, air_at
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.recovery_motion import CORD_TO_BODY_M, CORD_TO_NOSE_M
@@ -16,7 +16,7 @@ from flight_sim.vehicle.rocket_state import RocketState
 
 _TEMPLATE = Path(__file__).with_name("viewer.html")
 _HEAD = (
-    '<!doctype html><html><head><meta charset="utf-8">'
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">'
     '<meta name="viewport" content="width=device-width,initial-scale=1">'
     "<style>html,body{margin:0}</style></head><body>"
 )
@@ -70,6 +70,36 @@ def static_centre_of_pressure(properties: RocketProperties, mach: float) -> floa
     return coefficients.cmy * length / coefficients.cz
 
 
+def _json_safe(value: Any) -> Any:
+    """Copy of ``value`` with every NaN or infinity replaced by None.
+
+    ``json.dumps`` writes a NaN as the bare word ``NaN``, which is not valid
+    JSON. None becomes ``null``, which the viewer reads as "unknown".
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def script_json(value: Any) -> str:
+    """JSON text that is safe to put inside an HTML ``<script>`` element.
+
+    A name such as ``</script>`` or ``<!--`` inside a JSON string would end the
+    script (or hide the rest of the page) early. ``<\\/`` and ``\\u003c!--``
+    mean the same characters to JSON and to JavaScript, so nothing else changes.
+    """
+    return escape_for_script(json.dumps(_json_safe(value), allow_nan=False))
+
+
+def escape_for_script(text: str) -> str:
+    """Make already-written JSON text safe inside an HTML ``<script>`` element."""
+    return text.replace("</", "<\\/").replace("<!--", "\\u003c!--")
+
+
 class TelemetryLog:
     """Collects one row per sample, in SI units, plus what the viewer draws.
 
@@ -119,33 +149,38 @@ class TelemetryLog:
         pos = [float(x) for x in state.position.m_as("m")]
         velocity = [float(x) for x in state.velocity.m_as("m/s")]
         air, wind = air_at(self._config, pos[0])
-        if not self.rows["t"]:
-            self.wind = [float(x) for x in wind]
-        self.rows["wind_at"].append([round(float(x), 3) for x in wind])
-        airspeed = math.dist(velocity, [float(x) for x in wind])
+        wind_row = [float(x) for x in wind]
+        airspeed = math.dist(velocity, wind_row)
         mach = airspeed / air.speed_of_sound
         q = state.orientation
-        self.rows["t"].append(float(time_s))
-        self.rows["pos"].append(pos)
-        self.rows["vel"].append(velocity)
-        self.rows["quat"].append(
-            [float(q.q_w), float(q.q_x), float(q.q_y), float(q.q_z)]
-        )
         thrust = float(self._properties.engine.get_thrust(time_s))
-        self.rows["thrust"].append(thrust)
         mass_properties = self._properties.mass_properties(time_s)
-        self.rows["mdot"].append(self._mass_flow(time_s))
-        self.rows["mass"].append(mass_properties.mass)
-        self.rows["mach"].append(mach)
-        self.rows["q"].append(0.5 * air.air_density * airspeed**2)
-        self.rows["p"].append(air.pressure)
-        self.rows["nose_dir"].append(frame.nose_dir or [0.0, 0.0, 0.0])
-        self.rows["nose_sep"].append(frame.nose_sep)
-        self.rows["line"].append(frame.line or [0.0, 0.0, 0.0])
-        self.rows["swing"].append(frame.swing_deg)
-        self.rows["drag"].append(frame.drag_fraction)
-        self.rows["cg"].append(-float(mass_properties.cg_location[0]))
-        self.rows["cp"].append(self._centre_of_pressure(mach))
+        # The whole row is worked out first and added last, so a failure part
+        # way through never leaves the columns with different lengths.
+        row: dict[str, Any] = {
+            "wind_at": [round(x, 3) for x in wind_row],
+            "t": float(time_s),
+            "pos": pos,
+            "vel": velocity,
+            "quat": [float(q.q_w), float(q.q_x), float(q.q_y), float(q.q_z)],
+            "thrust": thrust,
+            "mdot": self._mass_flow(time_s),
+            "mass": mass_properties.mass,
+            "mach": mach,
+            "q": 0.5 * air.air_density * airspeed**2,
+            "p": air.pressure,
+            "nose_dir": frame.nose_dir or [0.0, 0.0, 0.0],
+            "nose_sep": frame.nose_sep,
+            "line": frame.line or [0.0, 0.0, 0.0],
+            "swing": frame.swing_deg,
+            "drag": frame.drag_fraction,
+            "cg": -float(mass_properties.cg_location[0]),
+            "cp": self._centre_of_pressure(mach),
+        }
+        if not self.rows["t"]:
+            self.wind = wind_row
+        for column, value in row.items():
+            self.rows[column].append(value)
 
     def _mass_flow(self, time_s: float) -> float:
         """Propellant mass leaving the nozzle at a time, in kg/s (never negative)."""
@@ -170,16 +205,25 @@ class TelemetryLog:
         }
 
     def describe_recovery(self, recovery: RecoverySystem) -> None:
-        """Record the canopy and shock cords the scene draws."""
-        canopy = next(
+        """Record the canopy and shock cords the scene draws.
+
+        The scene draws one canopy: the reefed one when there is one, otherwise
+        the largest. A canopy that is not reefed is drawn fully open.
+        """
+        canopy: Parachute | ReefedParachute | None = next(
             (p for p in recovery.parachutes if isinstance(p, ReefedParachute)), None
         )
-        if canopy is None:
+        if isinstance(canopy, ReefedParachute):
+            reefed_opening = canopy.reefed_opening_diameter_m
+        elif recovery.parachutes:
+            canopy = max(recovery.parachutes, key=lambda p: p.diameter_m)
+            reefed_opening = canopy.diameter_m
+        else:
             return
         self.recovery = {
             "diameter": canopy.diameter_m,
             "spill_hole": canopy.spill_hole_diameter_m,
-            "reefed_opening": canopy.reefed_opening_diameter_m,
+            "reefed_opening": reefed_opening,
             "cord_to_nose": CORD_TO_NOSE_M,
             "cord_to_body": CORD_TO_BODY_M,
         }
@@ -207,18 +251,23 @@ class TelemetryLog:
         }
 
     def to_json(self) -> str:
-        """Telemetry in the format the viewer expects."""
-        cp = [None if math.isnan(x) else x for x in self.rows["cp"]]
+        """Telemetry in the format the viewer expects.
+
+        A NaN or infinite value (for example a centre of pressure the aero table
+        cannot give) is written as ``null``, which the viewer reads as unknown.
+        """
         return json.dumps(
-            {
-                **self.rows,
-                "cp": cp,
-                "wind": self.wind,
-                "events": self.events,
-                "rail": self.rail,
-                "recovery": self.recovery,
-                "vehicle": self.vehicle,
-            }
+            _json_safe(
+                {
+                    **self.rows,
+                    "wind": self.wind,
+                    "events": self.events,
+                    "rail": self.rail,
+                    "recovery": self.recovery,
+                    "vehicle": self.vehicle,
+                }
+            ),
+            allow_nan=False,
         )
 
 
@@ -241,20 +290,24 @@ def write_viewer(
             of the OpenRocket simulation to offer next to the flight; on the
             dynamics site the viewer loads its path from the History tab's data.
     """
+    # Names in the data (events, OpenRocket parts, the .ork file) must not be able
+    # to end the script early, so each blob goes through the script-safe escape.
     scripts = (
-        f"<script>window.TELEMETRY={log.to_json()};"
+        f"<script>window.TELEMETRY={escape_for_script(log.to_json())};"
         "window.TELEMETRY_NAME='simulation';</script>"
     )
     if real is not None:
         scripts += (
-            f"<script>window.REAL_TELEMETRY={json.dumps(real)};"
+            f"<script>window.REAL_TELEMETRY={script_json(real)};"
             "window.REAL_TELEMETRY_NAME='real flight';</script>"
         )
     if openrocket is not None:
-        source = json.dumps(openrocket)
-        scripts += f"<script>window.OPENROCKET_SOURCE={source};</script>"
+        scripts += (
+            f"<script>window.OPENROCKET_SOURCE={script_json(openrocket)};</script>"
+        )
     page = _TEMPLATE.read_text(encoding="utf-8").replace("<!--TELEMETRY-->", scripts)
     output = Path(output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(_HEAD + page + "</body></html>", encoding="utf-8")
     if open_browser:
         webbrowser.open(output.as_uri())

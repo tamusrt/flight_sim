@@ -15,11 +15,12 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field, fields
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from scipy import stats
+from scipy import optimize, special, stats
 
 from flight_sim.environment.wind import DIRECTION_LAYERS, SPEED_LAYERS, LayeredWind
 
@@ -61,12 +62,15 @@ class SiteConfig:  # pylint: disable=too-many-instance-attributes
 
     Attributes:
         name (str): Name of the site.
-        wind_mean_m_s (float | None): Mean of the day's wind speed on the pad;
+        wind_mean_m_s (float | None): Mean of the wind speed on the pad on the days
+            flown (winds above the launch limit are not flown);
             the rocket profile's own wind when None.
         wind_weibull_shape (float): Shape of the Weibull curve of the wind
             speed (2 is a Rayleigh curve, typical of surface winds).
         wind_launch_limit_m_s (float): Wind speed above which the launch is
-            called off, so the Weibull curve is cut there.
+            called off, so the Weibull curve is cut there. The mean of the wind
+            (``wind_mean_m_s``) is the mean of the days that are flown, that
+            is, of the cut curve.
         wind_direction_sd_deg (float): Spread of the wind direction about the
             profile's, normal curve.
         temperature_sd_k (float): Spread of the pad temperature (normal).
@@ -191,6 +195,51 @@ class Variation:  # pylint: disable=too-many-instance-attributes
         return result
 
 
+def _flown_mean(scale: float, shape: float, limit: float) -> float:
+    """Mean wind speed of the days that are flown: a Weibull curve cut at ``limit``.
+
+    Days with wind above the launch limit are called off, so only the part of the
+    curve below the limit is flown. For a Weibull curve with this ``scale`` and
+    ``shape``, the mean of that part is
+    ``scale * Gamma(1 + 1/shape) * P(1 + 1/shape, x) / (1 - exp(-x))`` with
+    ``x = (limit / scale) ** shape`` and ``P`` the regularised lower incomplete gamma
+    function (the share of a gamma curve below ``x``).
+    """
+    x = (limit / scale) ** shape
+    a = 1.0 + 1.0 / shape
+    lower = special.gammainc(a, x)  # pylint: disable=no-member
+    return float(scale * math.gamma(a) * lower / -math.expm1(-x))
+
+
+@lru_cache(maxsize=256)
+def weibull_scale(mean: float, shape: float, limit: float) -> float:
+    """The Weibull scale whose curve, cut at ``limit``, has the wanted mean.
+
+    The site's wind speed is stated as the mean of the days that are flown, so the
+    scale cannot simply be ``mean / Gamma(1 + 1/shape)`` (that is the mean of the
+    uncut curve, which is higher). The scale is found numerically (the mean of the
+    cut curve grows steadily with the scale). A mean the cut curve can never reach
+    (a flat curve over 0 to ``limit`` has the largest mean, ``limit * shape / (shape +
+    1)``) gets a very wide curve, and ``describe`` then reports the mean actually
+    reached.
+    """
+    mean = max(mean, 1e-6)
+    low, high = limit * 1e-3, limit * 1e3
+    if _flown_mean(high, shape, limit) <= mean:
+        return high
+    if _flown_mean(low, shape, limit) >= mean:
+        return low
+    return float(
+        optimize.brentq(
+            lambda scale: _flown_mean(scale, shape, limit) - mean,
+            low,
+            high,
+            xtol=1e-12,
+            rtol=1e-12,
+        )
+    )
+
+
 def _normal(u: float, mean: float, sd: float) -> float:
     return mean + sd * float(stats.norm.ppf(min(max(u, 1e-9), 1 - 1e-9)))
 
@@ -209,27 +258,32 @@ def draw(unit: np.ndarray, site: SiteConfig, nominal: Nominal, seed: int) -> Var
     mean = (
         site.wind_mean_m_s if site.wind_mean_m_s is not None else nominal.wind_speed_m_s
     )
-    scale = max(mean, 1e-6) / math.gamma(1.0 + 1.0 / site.wind_weibull_shape)
+    scale = weibull_scale(mean, site.wind_weibull_shape, site.wind_launch_limit_m_s)
     curve = stats.weibull_min(site.wind_weibull_shape, scale=scale)
     cut = float(
         curve.cdf(site.wind_launch_limit_m_s)
     )  # winds above the limit are not flown
     speed = float(curve.ppf(min(max(u["wind_speed"], 1e-9), 1 - 1e-9) * cut))
+    # The rail's tilt from vertical is drawn along its heading; a negative value means
+    # the rail leans the other way (heading + 180 deg). Folding it like this keeps
+    # the elevation at or below 90 deg without piling half the runs exactly on
+    # vertical, which clipping at 90 deg would do for a rail set to vertical.
+    tilt = _normal(
+        u["rail_elevation"],
+        90.0 - nominal.rail_elevation_deg,
+        site.rail_elevation_sd_deg,
+    )
     two_pi = 2.0 * math.pi
     return Variation(
         thrust=max(_normal(u["thrust"], 1.0, site.thrust_sd), 0.5),
         mass=max(_normal(u["mass"], 1.0, site.mass_sd), 0.5),
         drag=max(_normal(u["drag"], 1.0, site.drag_sd), 0.5),
-        rail_elevation_deg=min(
+        rail_elevation_deg=90.0 - abs(tilt),
+        rail_azimuth_deg=(
             _normal(
-                u["rail_elevation"],
-                nominal.rail_elevation_deg,
-                site.rail_elevation_sd_deg,
-            ),
-            90.0,
-        ),
-        rail_azimuth_deg=_normal(
-            u["rail_azimuth"], nominal.rail_azimuth_deg, site.rail_azimuth_sd_deg
+                u["rail_azimuth"], nominal.rail_azimuth_deg, site.rail_azimuth_sd_deg
+            )
+            + (180.0 if tilt < 0.0 else 0.0)
         ),
         temperature_k=_normal(
             u["temperature"], nominal.pad_temperature_k, site.temperature_sd_k
@@ -265,13 +319,26 @@ def describe(site: SiteConfig, nominal: Nominal) -> list[dict[str, Any]]:
     wind = (
         site.wind_mean_m_s if site.wind_mean_m_s is not None else nominal.wind_speed_m_s
     )
+    # the mean actually reached (the same as ``wind`` unless that mean is out of reach)
+    stated = wind
+    wind = _flown_mean(
+        weibull_scale(wind, site.wind_weibull_shape, site.wind_launch_limit_m_s),
+        site.wind_weibull_shape,
+        site.wind_launch_limit_m_s,
+    )
+    unreachable = (
+        f" [the wanted mean {stated:.2f} is out of reach with this limit and shape]"
+        if abs(wind - stated) > 0.005 * stated
+        else ""
+    )
     n, s = nominal, site
     rows = [
         (
             "wind speed on the pad (m/s)",
             "Weibull, cut at the launch limit",
-            f"mean {wind:.2f}, shape {s.wind_weibull_shape:g}, "
-            f"limit {s.wind_launch_limit_m_s:g}",
+            f"mean {wind:.2f} m/s on the days it flies (winds above the limit are "
+            f"not flown), shape {s.wind_weibull_shape:g}, "
+            f"limit {s.wind_launch_limit_m_s:g}{unreachable}",
         ),
         (
             "wind direction (deg)",
@@ -298,7 +365,7 @@ def describe(site: SiteConfig, nominal: Nominal) -> list[dict[str, Any]]:
         ("axial drag (share of nominal)", "normal", f"1.0, sd {s.drag_sd:g}"),
         (
             "rail tilt from vertical (deg)",
-            "normal",
+            "normal, folded at vertical (a negative tilt leans the other way)",
             f"mean {90.0 - n.rail_elevation_deg:.1f}, sd {s.rail_elevation_sd_deg:g}",
         ),
         (

@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -54,8 +57,10 @@ def _report(**over: Any) -> dict[str, Any]:
                 "probability": _interval(0.0, 0.0, 0.004),
             },
         },
-        "settings": {"target_half_width": 0.03},
-        "stopped_because": "every headline probability is within +/-3.0%",
+        "settings": {"target_half_width": 0.04, "confidence": 0.9},
+        "stopped_because": "the watched chances (any IREC failure and apogee at least the target) are within +/-4.0%",
+        "stopped_for": "target",
+        "missing_numbers": {"flights": 0, "by_value": {}},
         "simulation_errors": 0,
         "borderline_not_reflown_over_cap": 0,
         "fast_reco_check": {"same_pass_fail": True},
@@ -153,18 +158,77 @@ def test_the_quality_alerts_say_when_not_to_trust_the_numbers() -> None:
     assert not [a for a in alerts.build(_report())["alerts"] if a["kind"] == "quality"]
     report = _report(
         stopped_because="reached the time limit",
+        stopped_for="time_limit",
         simulation_errors=3,
+        first_simulation_error="KeyError: 'x'",
+        missing_numbers={"flights": 2, "by_value": {"rail_v": 2}},
         borderline_not_reflown_over_cap=7,
-        fast_reco_check={"same_pass_fail": False},
+        fast_reco_check={"same_pass_fail": False, "disagreements": 1, "pairs": 6},
     )
     quality = {
         a["id"]: a for a in alerts.build(report)["alerts"] if a["kind"] == "quality"
     }
-    assert set(quality) == {"rough", "errors", "fast_reco", "borderline"}
+    assert set(quality) == {"rough", "errors", "missing", "fast_reco", "borderline"}
     assert (
         quality["errors"]["level"] == "red" and "3 flights" in quality["errors"]["text"]
     )
+    assert "KeyError: 'x'" in quality["errors"]["text"], "the first error is shown"
     assert quality["rough"]["level"] == "amber"
+    assert (
+        "two watched chances" in quality["rough"]["text"]
+        and "4%" in quality["rough"]["text"]
+    )
+    assert (
+        quality["missing"]["level"] == "amber"
+        and "2 flights" in quality["missing"]["text"]
+    )
+    model = quality["fast_reco"]
+    assert model["level"] == "amber" and model["title"].startswith("Model check")
+    assert "1 of the 6 check flights" in model["text"]
+
+
+def test_two_amber_checks_that_add_up_to_a_red_failure_chance_make_a_red_headline() -> (
+    None
+):
+    """Two fail-checks at 3.5% each are amber alone, but 7% of flights break a rule: red, said plainly."""
+    report = _report(probability_any_failure=_interval(0.07, 0.05, 0.09))
+    report["checks"]["stability_rail"]["probability"] = _interval(0.035, 0.02, 0.05)
+    report["checks"]["stability_lowest"] = {
+        "label": "Lowest stability to apogee at least 1.5 cal",
+        "severity": "fail",
+        "probability": _interval(0.035, 0.02, 0.05),
+    }
+    built = alerts.build(report)
+    levels = {a["id"]: a["level"] for a in built["alerts"]}
+    assert levels["stability_rail"] == levels["stability_lowest"] == "amber"
+    assert levels["any_failure"] == "red"
+    assert built["headline"]["level"] == "red"
+    assert "IREC rules: 7.0% of flights break a rule" in built["headline"]["text"]
+    assert built["headline"]["text"].startswith("1 red alert:")
+    assert built["headline"]["text"] != "No red alerts."
+
+
+def test_the_headline_counts_other_red_alerts_with_the_failure_chance() -> None:
+    """A red failure chance and a red apogee together are two alerts, both named."""
+    report = _report(probability_any_failure=_interval(0.2, 0.15, 0.25))
+    report["apogee_range"]["within"] = _interval(0.2, 0.15, 0.25)
+    text = alerts.build(report)["headline"]["text"]
+    assert (
+        text.startswith("2 red alerts:")
+        and "IREC rules: 20% of flights break a rule" in text
+    )
+    assert "Reaching the wanted apogee" in text
+
+
+def test_the_page_script_counts_the_failure_chance_in_its_verdict_too() -> None:
+    """The script shares the Python rule: no 'any_failure' left out of the red list."""
+    page = (Path(edith_site.__file__).parent / "edith_page.html").read_text(
+        encoding="utf-8"
+    )
+    assert "const allReds = A.alerts.filter((a) => a.level === 'red');" in page
+    assert "const lvl = allReds.length ? 'red' : 'green';" in page
+    assert "IREC rules: ' + pct(fail.estimate) + ' of flights break a rule" in page
+    assert "pctUp" in page and "sure it is below" in page
 
 
 # ----- what EDITH adds to the pages --------------------------------------------------
@@ -370,6 +434,40 @@ def test_only_the_default_launch_condition_gets_the_flights_in_vision(
     )
 
 
+def test_patching_the_viewers_again_replaces_the_cloud(
+    tmp_path: Path, small_report: dict[str, Any]
+) -> None:
+    out = _site(tmp_path)
+    data = edith_site.page_data(small_report, "Morpheus", "average", False)
+    first = edith_site.cloud_data(data)
+    assert edith_site.patch_viewers(out, first) == 2
+    second = {**first, "n": first["n"] + 1000}
+    assert edith_site.patch_viewers(out, second) == 2
+    page = (out / "viewer" / "index.html").read_text(encoding="utf-8")
+    assert page.count("window.EDITH_CLOUD=") == 1, "no stale cloud is left behind"
+    assert f'"n":{first["n"] + 1000},' in page
+    assert page.startswith("<body><!--EDITH-->") and "<!--/EDITH-->" in page, (
+        "the marker stays so a later run can find the cloud"
+    )
+    # a third run with the same data changes nothing
+    before = page
+    edith_site.patch_viewers(out, second)
+    assert (out / "viewer" / "index.html").read_text(encoding="utf-8") == before
+
+
+def test_a_cloud_script_without_markers_is_replaced_too(
+    tmp_path: Path, small_report: dict[str, Any]
+) -> None:
+    """Pages made by an earlier version have the script but no marker."""
+    out = _site(tmp_path)
+    old = '<body><script>window.EDITH_CLOUD={"n":1};</script></body>'
+    (out / "viewer" / "index.html").write_text(old, encoding="utf-8")
+    data = edith_site.page_data(small_report, "Morpheus", "average", False)
+    edith_site.patch_viewers(out, edith_site.cloud_data(data))
+    page = (out / "viewer" / "index.html").read_text(encoding="utf-8")
+    assert page.count("window.EDITH_CLOUD=") == 1 and '"n":1}' not in page
+
+
 def test_the_edith_page_has_its_data_and_says_what_edith_is(
     tmp_path: Path, small_report: dict[str, Any]
 ) -> None:
@@ -432,7 +530,10 @@ def test_a_finished_result_is_reused_and_one_cut_short_is_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[int] = []
-    outcome = {"stopped_because": "every headline probability is within +/-3.0%"}
+    outcome = {
+        "stopped_for": "target",
+        "stopped_because": "the watched chances are within +/-4.0%",
+    }
 
     def fake(_spec: object, _site: object, _settings: object) -> dict[str, Any]:
         calls.append(1)
@@ -447,20 +548,141 @@ def test_a_finished_result_is_reused_and_one_cut_short_is_not(
 
     # a result stopped by the time limit is shown but not kept
     other = _args(tmp_path, round_size=32)
-    outcome["stopped_because"] = "reached the time limit"
+    kept = {p.name for p in (tmp_path / "cache").glob("edith-*.json")}
+    assert len(kept) == 1
+    outcome.update(stopped_for="time_limit", stopped_because="reached the time limit")
     edith_site.run(other)
     edith_site.run(other)
     assert len(calls) == 3, "the cut-short result was not reused"
-    assert len(list((tmp_path / "cache").glob("edith-*.json"))) == 1, (
-        "and the old result was cleared"
+    assert {p.name for p in (tmp_path / "cache").glob("edith-*.json")} == kept, (
+        "the cut-short result was not written, and the finished one is still there"
     )
+    # a finished result for other inputs replaces the old one (only one result is kept)
+    outcome.update(
+        stopped_for="max_rounds", stopped_because="reached the largest number of rounds"
+    )
+    edith_site.run(other)
+    now = {p.name for p in (tmp_path / "cache").glob("edith-*.json")}
+    assert len(now) == 1 and now != kept, "and the old result was cleared"
+    assert not list((tmp_path / "cache").glob("*.tmp")) and not list(
+        (tmp_path / "cache").glob(".*")
+    )
+
+
+def test_a_batch_that_flew_all_its_rounds_is_kept_even_when_the_time_was_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reason 'largest number of rounds' is complete and cacheable."""
+    monkeypatch.setattr(
+        edith_site,
+        "run_batch",
+        lambda *_: {
+            "runs": 8,
+            "stopped_for": "max_rounds",
+            "stopped_because": "reached the largest number of rounds",
+        },
+    )
+    args = _args(tmp_path)
+    assert edith_site.run(args)["cached"] is False
+    assert edith_site.run(args)["cached"] is True
+
+
+def _fake_batch(
+    monkeypatch: pytest.MonkeyPatch, calls: list[int], rocket: str = "Old"
+) -> None:
+    def fake(_spec: object, _site: object, _settings: object) -> dict[str, Any]:
+        calls.append(1)
+        return {
+            "runs": 8,
+            "rocket": rocket,
+            "stopped_for": "target",
+            "stopped_because": "x",
+        }
+
+    monkeypatch.setattr(edith_site, "run_batch", fake)
+
+
+@pytest.mark.parametrize(
+    "damage", ["", '{"runs": 64, "stopped_be', "[1, 2]", "{}", "\x00\xff"]
+)
+def test_an_unreadable_kept_result_is_a_miss_that_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    """A file cut short (or garbage) in the cache folder is deleted and the batch is run again."""
+    calls: list[int] = []
+    _fake_batch(monkeypatch, calls)
+    args = _args(tmp_path)
+    edith_site.run(args)
+    (cached,) = (tmp_path / "cache").glob("edith-*.json")
+    cached.write_bytes(damage.encode("latin-1"))
+    result = edith_site.run(args)
+    assert result["cached"] is False and len(calls) == 2
+    assert json.loads(cached.read_text(encoding="utf-8"))["runs"] == 8, (
+        "a good file is kept again"
+    )
+    assert edith_site.run(args)["cached"] is True
+
+
+def test_the_kept_result_is_written_in_one_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure while writing leaves no half file behind and keeps the earlier result."""
+    calls: list[int] = []
+    _fake_batch(monkeypatch, calls)
+    args = _args(tmp_path)
+    edith_site.run(args)
+    (cached,) = (tmp_path / "cache").glob("edith-*.json")
+    before = cached.read_text(encoding="utf-8")
+
+    def broken(*_a: object, **_k: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(edith_site.json, "dump", broken)
+    with pytest.raises(OSError, match="disk full"):
+        edith_site._write_cache(cached, {"runs": 9})
+    assert cached.read_text(encoding="utf-8") == before
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == [cached.name]
+
+
+def test_a_reused_result_shows_the_current_rocket_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The name is not part of the cache key, so a kept report is given the current name."""
+    calls: list[int] = []
+    _fake_batch(monkeypatch, calls, rocket="Old name")
+    edith_site.run(_args(tmp_path, name="Old name"))
+    again = edith_site.run(_args(tmp_path, name="New name"))
+    assert again["cached"] is True and len(calls) == 1
+    assert again["report"]["rocket"] == "New name"
+
+
+def test_the_cache_key_follows_the_library_and_python_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new numpy, scipy, pandas or Python can change the numbers, so it reruns EDITH."""
+    args = _args(tmp_path)
+    site, settings = SiteConfig(), Settings(round_size=64, max_rounds=8)
+    key = edith_site.cache_key(args, site, settings)
+    monkeypatch.setattr(edith_site.numpy, "__version__", "0.0.1")
+    assert edith_site.cache_key(args, site, settings) != key
+    monkeypatch.undo()
+    monkeypatch.setattr(edith_site.scipy, "__version__", "0.0.1")
+    assert edith_site.cache_key(args, site, settings) != key
+    monkeypatch.undo()
+    monkeypatch.setattr(edith_site.pandas, "__version__", "0.0.1")
+    assert edith_site.cache_key(args, site, settings) != key
+    monkeypatch.undo()
+    monkeypatch.setattr(edith_site.platform, "python_version", lambda: "0.0.1")
+    assert edith_site.cache_key(args, site, settings) != key
 
 
 def test_without_a_cache_folder_nothing_is_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        edith_site, "run_batch", lambda *_: {"runs": 1, "stopped_because": "x"}
+        edith_site,
+        "run_batch",
+        lambda *_: {"runs": 1, "stopped_because": "x", "stopped_for": "target"},
     )
     args = _args(tmp_path, cache=None)
     assert (
@@ -500,3 +722,51 @@ def test_the_kept_result_depends_only_on_the_code_edith_runs() -> None:
     assert {"fast_reco.py", "edith/batch.py", "edith/failures.py"} <= names
     assert not any(n.startswith("whatif/") for n in names)
     assert "visual_run.py" not in names
+
+
+# ----- the page's own script ---------------------------------------------------------
+
+# Runs the page's script against a stub of the browser's document and prints what it
+# wrote at the top of the page.
+_NODE_HARNESS = r"""
+const fs = require('fs');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const script = html.split('<script>')[1].split('</script>')[0];
+const els = {};
+const make = (id) => new Proxy({ id, innerHTML: '', textContent: '', className: '', value: '', dataset: {}, style: {},
+  classList: { toggle() {}, add() {}, remove() {} }, querySelectorAll: () => [], querySelector: () => null },
+  { get: (t, k) => (k in t ? t[k] : () => ({})), set: (t, k, v) => { t[k] = v; return true; } });
+global.document = { getElementById: (id) => (els[id] = els[id] || make(id)), querySelectorAll: () => [], body: make('body'), addEventListener() {} };
+global.window = { addEventListener() {}, location: { hash: '', pathname: '/x' } };
+global.window.top = global.window.self = global.window;
+global.location = { hash: '', pathname: '/x', protocol: 'http:' };
+global.history = { replaceState() {} };
+(0, eval)(script.replace('"use strict";', ''));
+const strip = (h) => String(h).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+console.log(JSON.stringify({ verdict: strip(els.verdict.innerHTML), level: els.verdict.className, alerts: strip(els.alerts.innerHTML) }));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_the_page_script_says_red_for_two_amber_checks_that_add_up(
+    tmp_path: Path, small_report: dict[str, Any]
+) -> None:
+    """Run the real page script: the verdict is red and names the failure chance, as the Python headline does."""
+    report = copy.deepcopy(small_report)
+    report["probability_any_failure"] = _interval(0.07, 0.05, 0.09)
+    for name in ("rail_exit_floor", "stability_rail"):
+        report["checks"][name]["probability"] = _interval(0.035, 0.02, 0.05)
+    data = edith_site.page_data(report, "Morpheus", "average", cached=False)
+    assert data["alerts"]["headline"]["level"] == "red"
+    page = edith_site.write_page(data, tmp_path)
+    harness = tmp_path / "harness.js"
+    harness.write_text(_NODE_HARNESS, encoding="utf-8")
+    done = subprocess.run(
+        ["node", str(harness), str(page)], capture_output=True, text=True, check=True
+    )
+    shown = json.loads(done.stdout)
+    assert shown["level"] == "verdict red"
+    assert "IREC rules: 7.0% of flights break a rule" in shown["verdict"]
+    assert (
+        "IREC rules: 7.0% of flights break a rule" in data["alerts"]["headline"]["text"]
+    )

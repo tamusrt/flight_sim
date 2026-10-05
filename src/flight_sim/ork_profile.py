@@ -50,17 +50,14 @@ _FALLING_BODY_CD = 0.55
 _ISA_EXPONENT = 5.2559
 
 
-def pad_pressure_pa(sea_level_pa: float, pad_k: float, elevation_m: float) -> float:
-    """Pressure at the pad, from the sea-level pressure and the pad temperature.
+def pad_pressure_pa(base_pa: float, pad_k: float, elevation_m: float) -> float:
+    """Pressure at the pad.
 
-    OpenRocket's "extended ISA" gives a base temperature and a sea-level
-    pressure; the standard lapse rate carries them up to the pad.
+    OpenRocket's launch conditions give the temperature and pressure AT THE LAUNCH SITE (the saved design has
+    a pressure of about 91.7 kPa for a pad at Spaceport America, with the launch altitude stored separately),
+    so the pressure is used as it is. ``pad_k`` and ``elevation_m`` are kept so callers need not change.
     """
-    sea_level_k = pad_k + _LAPSE_K_PER_M * elevation_m
-    return float(
-        sea_level_pa
-        * (1.0 - _LAPSE_K_PER_M * elevation_m / sea_level_k) ** _ISA_EXPONENT
-    )
+    return float(base_pa)
 
 
 def table_from(ork: OrkRocket, motor: Motor, roll_ratio: float) -> MassPropertiesTable:

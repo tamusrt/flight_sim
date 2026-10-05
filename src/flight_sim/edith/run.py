@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any
 
 import numpy as np
 
-from flight_sim import fast_reco as _fast_reco  # noqa: F401  (registers FastRECO)
 from flight_sim.__main__ import (
     INVICTUS,
     MORPHEUS,
@@ -23,6 +22,7 @@ from flight_sim.edith.inputs import Nominal, SiteConfig, Variation
 from flight_sim.environment.atmosphere import LaunchSiteAtmosphere
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import LayeredWind
+from flight_sim.fast_reco import FastRECO
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.ork_profile import profile_from_ork
 from flight_sim.reco import RecoveryRequest, get_reco
@@ -187,6 +187,7 @@ class Rocket:
         *,
         predicted: dict[str, Any] | None = None,
         reco: str = "fast",
+        calm: bool = False,
     ) -> dict[str, Any]:
         """Fly one run and report its numbers.
 
@@ -195,6 +196,11 @@ class Rocket:
             predicted (dict | None): The surrogate's guess of the climb; the
                 6-DOF climb is skipped and this is used in its place.
             reco (str): Name of the RECO version for the descent.
+            calm (bool): Switch the gusts under the canopy off (used to compare two
+                RECO versions without their different random gusts).
+
+        Any error inside the flight (not only a maths error) is returned as a run
+        with ``sim_ok`` false and the error's text, so a batch can carry on without it.
         """
         try:
             properties, config, state, scheme = self.vary(v)
@@ -204,23 +210,24 @@ class Rocket:
                     return _failed(ascent, "no apogee")
             else:
                 ascent = _from_prediction(predicted, state)
-            result = self._descend(properties, config, scheme, ascent, reco)
+            result = self._descend(properties, config, scheme, ascent, reco, calm)
             if predicted is None:
                 result["payload"] = apogee_payload(ascent)
             return result
-        except (ArithmeticError, ValueError, FloatingPointError) as error:
+        except Exception as error:  # pylint: disable=broad-exception-caught
             return {"sim_ok": False, "error": f"{type(error).__name__}: {error}"}
 
-    def _descend(  # pylint: disable=too-many-locals,too-many-arguments
+    def _descend(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
         self,
         properties: RocketProperties,
         config: IntegrationConfiguration,
         scheme: RecoveryScheme,
         ascent: Ascent,
         reco: str,
+        calm: bool = False,
     ) -> dict[str, Any]:
         mass = properties.mass_properties(ascent.apogee_time_s)
-        outcome = get_reco(reco, scheme).descend(
+        outcome = _reco_version(reco, scheme, calm).descend(
             RecoveryRequest(ascent.samples, config, mass, properties)
         )
         descent = outcome.descent
@@ -266,6 +273,25 @@ class Rocket:
         if len(ascent.samples) > 2:  # a flown climb, not the surrogate's two points
             result["history"] = flight_history(config, ascent, descent)
         return result
+
+
+def _reco_version(name: str, scheme: RecoveryScheme, calm: bool) -> Any:
+    """The RECO version called ``name``; with ``calm``, one flown without gusts."""
+    if not calm:
+        return get_reco(name, scheme)
+    if name == "fast":
+        return FastRECO(scheme, turbulence=0.0)
+    kind: Any = type(scheme)
+    if not hasattr(scheme, "swing"):  # this scheme has no gusting canopy swing
+        return get_reco(name, scheme)
+
+    def no_gusts(self: Any, centre_of_gravity_m: float) -> Any:
+        return replace(kind.swing(self, centre_of_gravity_m), turbulence=0.0)
+
+    # the same scheme, whose swing model has its gusts turned off
+    calm_kind = type(kind.__name__, (kind,), {"swing": no_gusts})
+    calm_scheme = calm_kind(**{f.name: getattr(scheme, f.name) for f in fields(scheme)})
+    return get_reco(name, calm_scheme)
 
 
 _PATH_STEP_S = 1.0  # spacing of the climb's points in the drawn path

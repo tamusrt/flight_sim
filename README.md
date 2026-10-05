@@ -78,7 +78,11 @@ request and gives back the same outcome (`flight_sim.reco`):
 height. It leaves out the shock cord bounce (a canopy opening is solved in one go, with its peak load), the swinging
 under the main canopy (the fall is straight down, drifting with the wind) and small steps once the rocket falls at a
 steady speed (steps grow, but never cover more than 25 m of height, so no wind layer is skipped). It is 40 to 150 times
-faster (by rocket) and lands within about 1% of the full model. To add a version, write a subclass of `RECO` and add it with
+faster (by rocket). How close it lands to the full model is checked, not promised: every EDITH batch flies a few
+flights both ways (three typical ones and the three closest to an IREC limit, with the gusts switched off in both so
+only the model difference shows) and reports the largest landing offset, load difference and whether the pass or fail
+of the IREC checks agreed. The tests found landings within about 1% of the drift on the test rockets, which says
+nothing for certain about another rocket. To add a version, write a subclass of `RECO` and add it with
 `reco.register`; `reco.get_reco("fast", scheme)` finds one by name.
 
 **EDITH** runs many flights with the inputs spread around what is expected at the launch site, and reports the
@@ -93,9 +97,11 @@ uv run python -m flight_sim.edith --site site.json         # run with the edited
 
 What it does, in short:
 
-- **Inputs.** Wind speed follows a Weibull curve (cut at the launch limit), and the wind changes with height in
-  random layers on every flight. Temperature, pressure, thrust, mass, drag, the launch rail and the parachute inputs
-  follow bell curves. All spreads are in `SiteConfig` (`edith/inputs.py`).
+- **Inputs.** Wind speed follows a Weibull curve cut at the launch limit (winds above it are not flown); the site's
+  mean wind is the mean of the days that are flown, and the curve's scale is solved for that. The wind changes with
+  height in random layers on every flight. Temperature, pressure, thrust, mass, drag, the launch rail and the
+  parachute inputs follow bell curves (the rail's tilt is folded at vertical, so a vertical rail does not put half
+  the flights exactly on vertical). All spreads are in `SiteConfig` (`edith/inputs.py`).
 - **Sampling.** Flights are drawn in scrambled Sobol sets, which cover the possibilities more evenly than random draws.
 - **Speed.** The first round flies the full 6-DOF climb. Its results train a surrogate that predicts the climb in the
   later rounds. Flights close to a limit are re-flown with the full climb, and a few random ones are re-flown to
@@ -103,19 +109,27 @@ What it does, in short:
   number of cores. With `Settings(surrogate=False)` every climb is flown in full instead; the dynamics site does this,
   since a full climb of SRT14 takes about a second.
 - **Results.** The chance of any failure, of any warning, of reaching the target apogee, and of each IREC check, the
-  apogee, speeds and loads, and the landing footprint. **Every number has a 90% interval.** A batch stops when the
-  headline chances are within the target width (default plus or minus 3%), after the most rounds, or at the time limit.
-- **Failures** are the IREC checks on the JARVIS predictions page (rail exit speed, stability, drogue and main
-  descent rates, main altitude, landing speed) plus what would end an IREC flight: the charge not separating, a canopy
-  not opening, a canopy opened harder than its rating, no apogee, not landing. There is no landing zone.
-- **Every batch reports a FastRECO check**: a few flights flown with both versions, and how far apart they landed.
+  apogee, speeds and loads, and the landing footprint. **Every number has a 90% interval** (two-sided: its high end
+  alone is a "95% sure it is below" bound). A batch stops when the two chances it watches, **any IREC failure** and
+  **apogee at least the target**, each have an interval no wider than plus or minus 4% (`target_half_width`, default
+  0.04), after the most rounds, or at the time limit. The other chances are not watched and can be wider. About 512
+  flights are needed for plus or minus 4% on a chance near 50%.
+- **Failures** are the IREC checks on the JARVIS predictions page (rail exit speed, stability, drogue descent rate,
+  main deployment altitude) plus what would end an IREC flight: apogee outside 21,000 to 39,000 ft, the charge not
+  separating, a canopy not opening, a canopy opened harder than its rating, no apogee, not landing, a simulation
+  error, or a number the checks need that is missing or not a number. The landing speed and the main's descent rate
+  are not judged here (use the JARVIS page's). There is no landing zone. A flight that stops with an error is
+  recorded, counted as a failure and left out of the apogee numbers; the batch carries on and the report says how many
+  and the first error.
+- **Every batch reports a FastRECO check**: a few flights flown with both versions (see above), how far apart they
+  landed, and a "model check" alert when any pair disagrees on pass or fail.
 - **Over time.** For every fully flown climb the report keeps the altitude, Mach number and stability against time
   (as the average, the standard deviation and the lowest and highest flight at each moment) and each flight's path
   from the pad to the ground.
 
 On the dynamics site, `python -m flight_sim.whatif.edith_site` runs EDITH after the JARVIS pages are built and adds
 the EDITH page (the chances, charts of altitude, Mach and stability over time with their spread, and a picture of every
-flight path), a summary on the JARVIS predictions page, and to VISION the apogee and landing spread, with landing circles
+flight path; EDITH's results are only on that page, not on the JARVIS page), and to VISION the apogee and landing spread, with landing circles
 (25, 50, 75 and 90% of landings) that can be turned on with the landing spread. It keeps its result between builds; see `tools/whatif/README.md` in dynamics.
 
 **All the launch-site numbers are placeholders** (marked in the report and in the site file) until the team replaces

@@ -76,6 +76,7 @@
   .seg button.on { background:var(--accent); color:#fff; }
   .chart h3 { margin:2px 4px 0; font-size:14px; text-align:center; }
   .aline { display:flex; gap:8px; align-items:center; border:1px solid var(--down); border-left-width:4px; border-radius:6px; padding:4px 10px; font-size:13px; background:var(--redbg); }
+  .aline.amber { border-color:var(--warn); background:var(--warnbg); }
   .aline .c { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
   .alerts:empty { display:none; }
   tr.accepted td { color:var(--muted); } tr.accepted .dot { background:var(--flat); }
@@ -89,7 +90,7 @@
 <header>
   <h1>EDITH</h1>
   <div class="tabs" id="tabs">
-    <a href="../../#tab=history">History</a><a href="../../#tab=flight">Flight plots</a><a href="../../#tab=changelog">Changelog</a>
+    <a href="../../#tab=history" data-site="history">History</a><a href="../../#tab=flight" data-site="flight">Flight plots</a><a href="../../#tab=changelog" data-site="changelog">Changelog</a>
     <a href="../index.html">JARVIS predictions</a><a href="../viewer/index.html">Vision</a><a class="on" href="#">EDITH</a>
   </div>
   <span class="sub" id="sub"></span>
@@ -162,6 +163,12 @@ function pct(x) {
   if (v < 0.1) return '<0.1%';
   return v < 10 ? num(v, 1) + '%' : num(v, 0) + '%';
 }
+// a percentage used as "below X": rounded UP, so the number shown is never smaller than the bound (0.54% is "0.6%", not "0.5%")
+function pctUp(x) {
+  const v = x * 100;
+  if (v <= 0) return '0%';
+  return v < 10 ? num(Math.max(Math.ceil(v * 10 - 1e-9) / 10, 0.1), 1) + '%' : num(Math.ceil(v - 1e-9), 0) + '%';
+}
 const compass = (east, north) => {
   const parts = [];
   if (Math.abs(east) >= 1) parts.push(far(Math.abs(east)) + (east < 0 ? ' west' : ' east'));
@@ -169,10 +176,13 @@ const compass = (east, north) => {
   return parts.join(', ') || 'at the pad';
 };
 
-/* ---------- the top of the page: two sentences, the verdict and the red alerts (amber is never an alert) ---------- */
+/* ---------- the top of the page: two sentences, the verdict and the red alerts (amber is never an alert, except the model check) ---------- */
 // a short chance: "12%", or "none seen" when no flight did it
 const short = (c) => (c.estimate === 0 ? 'none seen' : pct(c.estimate));
-const rangeOf = (c) => (c.estimate === 0 ? 'none of ' + R.runs + ' flights; under ' + pct(c.high) : 'likely ' + pct(c.low) + ' to ' + pct(c.high));
+// The interval is two-sided at its confidence (90% by default), so its top end is a one-sided bound at 1 - (1 - confidence) / 2 (95%).
+const sure = (c) => Math.round(100 * (c.confidence || 0.9));
+const sureBelow = (c) => Math.round(100 * (1 - (1 - (c.confidence || 0.9)) / 2));
+const rangeOf = (c) => (c.estimate === 0 ? 'none of ' + R.runs + ' flights; ' + sureBelow(c) + '% sure it is below ' + pctUp(c.high) : sure(c) + '% sure it is between ' + pct(c.low) + ' and ' + pct(c.high));
 const alertOf = (id) => A.alerts.find((a) => a.id === id);
 // the IREC numbers in the units chosen above, so no line mixes feet and metres
 const rule = (ms) => (imp() ? num(ms * FT, 0) + ' ft/s' : num(ms, 1) + ' m/s');
@@ -190,23 +200,27 @@ function drawTop() {
   $('sub').textContent = DATA.name + ' · built ' + DATA.generated;
   $('lead').innerHTML = '<b>EDITH is the team\'s Monte Carlo simulation:</b> it flies the rocket ' + R.runs + ' times, with the wind, gusts, weather, motor and launch rail varied each time, and counts what happens. The launch-site conditions are assumed, not measured, so read the chances as a guide to what to check.';
   const fail = alertOf('any_failure').chance, ap = R.apogee_m, g = R.apogee_range;
-  const reds = A.alerts.filter((a) => a.level === 'red' && a.id !== 'any_failure');
-  const lvl = reds.length ? 'red' : 'green';
+  // every alert counts for the colour, "Any IREC failure" too (a few small amber checks can add up to a red); its own line is the verdict's first words
+  const allReds = A.alerts.filter((a) => a.level === 'red');
+  const reds = allReds.filter((a) => a.id !== 'any_failure');
+  const lvl = allReds.length ? 'red' : 'green';
   $('verdict').className = 'verdict ' + lvl;
   $('verdict').innerHTML = '<span class="dot ' + lvl + '"></span><span>' +
-    [fail.estimate === 0 ? 'IREC: no rule broken in ' + R.runs + ' flights' : 'IREC: ' + pct(fail.estimate) + ' of flights break a rule',
+    [fail.estimate === 0 ? 'IREC rules: no rule broken in ' + R.runs + ' flights' : 'IREC rules: ' + pct(fail.estimate) + ' of flights break a rule',
      'Apogee ' + len(ap.p50.estimate) + ' (' + len(ap.p10.estimate) + ' to ' + len(ap.p90.estimate) + ')',
      pct(g.within.estimate) + ' within ' + (g.tolerance * 100) + '% of the ' + len(g.target_m) + ' target'].map(esc).join(' · ') + '</span>';
   // only red: one line each
   $('alerts').innerHTML = reds.map((a) => '<div class="aline" title="' + esc(a.text || '') + '"><span class="dot red"></span><span>' + esc(titleOf(a)) + '</span><span class="c">' +
-    (a.chance ? short(a.chance) + (a.chance.estimate ? ' · ' + rangeOf(a.chance) : '') : '') + '</span></div>').join('');
+    (a.chance ? short(a.chance) + (a.chance.estimate ? ' · ' + rangeOf(a.chance) : '') : '') + '</span></div>').join('') +
+    // the one amber line shown up here: the quick descent model disagreed with the full one on a check flight
+    (alertOf('fast_reco') ? '<div class="aline amber" title="' + esc(alertOf('fast_reco').text) + '"><span class="dot amber"></span><span>' + esc(alertOf('fast_reco').title) + '</span></div>' : '');
 }
 
 /* ---------- apogee: the three chances and the spread, below the climb ---------- */
 function drawApogee() {
   const g = R.apogee_range, ap = R.apogee_m;
   $('apogeeintro').innerHTML = 'The wanted apogee is <b>' + len(g.target_m) + '</b> above the pad (assumed). "Within range" means within ' + (g.tolerance * 100) + '% of it: ' + len(g.low_m) + ' to ' + len(g.high_m) + '. Hover over a number for how sure it is.';
-  const f = (title, c2) => '<div class="fig" title="' + rangeOf(c2) + '"><div class="d">' + title + '</div><div class="n">' + (c2.estimate === 0 ? 'under ' + pct(c2.high) : pct(c2.estimate)) + '</div></div>';
+  const f = (title, c2) => '<div class="fig" title="' + rangeOf(c2) + '"><div class="d">' + title + '</div><div class="n">' + (c2.estimate === 0 ? 'under ' + pctUp(c2.high) : pct(c2.estimate)) + '</div></div>';
   $('apofigs').innerHTML = f('Within range', g.within) + f('Too low', g.below) + f('Too high', g.above) +
     '<div class="fig" title="average ' + len(ap.mean.estimate) + '; the middle is likely between ' + len(ap.p50.low) + ' and ' + len(ap.p50.high) + '"><div class="d">Middle apogee</div><div class="n">' + len(ap.p50.estimate) + '</div><div class="d">80% of flights: ' + len(ap.p10.estimate) + ' to ' + len(ap.p90.estimate) + '</div></div>';
 }
@@ -405,11 +419,14 @@ function drawChecks() {
 }
 function drawLimits() {
   const assumed = !R.assumptions || R.assumptions.indexOf('assumed placeholder') >= 0;
+  const miss = R.missing_numbers, bad = R.simulation_errors;
   $('limits').innerHTML = [
+    bad ? '<li><b>' + bad + ' flights stopped with an error</b> (the first: ' + esc(R.first_simulation_error || 'unknown') + '). They count as failures above and are left out of the apogee numbers.</li>' : '',
+    miss && miss.flights ? '<li><b>' + miss.flights + ' flights had missing numbers</b> (' + Object.entries(miss.by_value).map((e) => esc(e[0]) + ': ' + e[1]).join(', ') + '). A missing number a check needs counts as a failed check.</li>' : '',
     assumed ? '<li><b>The launch-site conditions are assumed, not measured.</b> The wind, temperature, motor strength and similar spreads are placeholders until the team replaces them with data for the launch site. The strength each parachute is assumed to have (' + num(R.rated_load_g, 0) + ' g at opening) is also a guess.</li>' : '',
     '<li><b>Stand-in recovery.</b> This design has no parachutes yet, so the descent uses the Sol Invictus recovery system (as on the JARVIS predictions page). The landing speed is not shown here: the quick descent model below gives a different one from the full model, so use the JARVIS page\'s.</li>',
     '<li><b>Hardware faults are not simulated.</b> A charge that fails to fire, a flight computer fault, a tangled parachute, a broken shock cord or a motor failure are not modelled. A low chance of failure here does not mean the rocket is safe.</li>',
-    '<li><b>The likely ranges</b> cover the luck of the draw (how many flights were flown), not the inputs being wrong.</li>',
+    '<li><b>The ranges</b> (' + sure({ confidence: R.settings.confidence }) + '% sure) cover the luck of the draw (how many flights were flown), not the inputs being wrong.</li>',
     '<li><b>One launch condition.</b> Every flight is centred on the "' + esc(DATA.sim) + '" launch condition; the inputs are drawn independently of each other.</li>',
     '<li><b>A quicker parachute model.</b> Every climb is fully simulated; the descents use a quicker model with the wind\'s gusts but without the rocket swinging under the parachute or the shock cord bouncing (see "How much to trust it").</li>'
   ].join('');
@@ -425,9 +442,11 @@ function drawTrust() {
   if (notes.length) h += '<ul>' + notes.map((x) => '<li><b>' + esc(x.title) + '.</b> ' + esc(x.text) + '</li>').join('') + '</ul>';
   if (!R.surrogate_climbs) h += '<p>Every climb was fully simulated (6-DOF, from the rail to apogee).</p>';
   else h += '<p>' + R.full_climbs + ' climbs were fully simulated and ' + R.surrogate_climbs + ' were estimated from them; ' + R.reflown_for_closeness_or_audit + ' were re-flown in full because they were close to a limit or as a spot check (' + a.random_audit_disagreements + ' of ' + a.random_audit_runs + ' spot checks disagreed).</p>';
-  if (c) h += '<p><b>Quick descent model against the full one</b> (' + c.runs + ' flights flown both ways, each with its own gusts): landing within ' + far(c.largest_landing_offset_m) + ' (' + num(c.largest_offset_share_of_drift * 100, 1) + '% of the drift), parachute load within ' + num(c.largest_peak_load_diff_percent, 1) + '%, ' + (c.same_pass_fail ? 'the same pass or fail on every flight' : '<b>a different pass or fail on some flight</b>') + '. ' + num(c.fast_seconds_per_run, 1) + ' s per flight against ' + num(c.full_seconds_per_run, 1) + ' s.</p>';
+  const verdictOf = (c) => (c.same_pass_fail ? 'the same pass or fail (rules and recommendations) on every flight' : '<b>a different pass or fail on ' + (c.disagreements || 'some') + ' of ' + (c.pairs || c.runs) + ' flights</b>');
+  if (c && c.runs) h += '<p><b>Quick descent model against the full one</b> (a spot check of ' + c.pairs + ' flights each run, not a guarantee for every flight: typical ones and the ones closest to a limit, flown both ways with the gusts switched off in both so that only the model difference shows' + (c.skipped ? '; ' + c.skipped + ' could not be compared in detail' : '') + '): landing within ' + far(c.largest_landing_offset_m) + ' (' + num(c.largest_offset_share_of_drift * 100, 1) + '% of the drift), parachute load within ' + num(c.largest_peak_load_diff_percent, 1) + '%, ' + verdictOf(c) + '. ' + num(c.fast_seconds_per_run, 1) + ' s per flight against ' + num(c.full_seconds_per_run, 1) + ' s.</p>';
+  else if (c) h += '<p><b>Quick descent model against the full one:</b> none of the ' + c.pairs + ' check flights could be compared in detail; ' + verdictOf(c) + '.</p>';
   const L = A.levels;
-  h += '<p>The colours are the team\'s judgement, not IREC rules (<code>flight_sim/edith/alerts.py</code>): a rule broken in ' + pct(L.failure_red) + ' of flights or more is red, from ' + pct(L.failure_amber) + ' amber; a recommendation missed in ' + pct(L.warning_amber) + ' or more is amber; the apogee is red below ' + pct(L.apogee_amber) + ' within range. Only red is an alert at the top of the page. To mark a recommendation as accepted, list its id under <code>edith_accepted</code> in <code>aero_modeling/whatif_config.json</code>.</p>';
+  h += '<p>The colours are the team\'s judgement, not IREC rules (<code>flight_sim/edith/alerts.py</code>): a rule broken in ' + pct(L.failure_red) + ' of flights or more is red, from ' + pct(L.failure_amber) + ' amber; a recommendation missed in ' + pct(L.warning_amber) + ' or more is amber; the apogee is red below ' + pct(L.apogee_amber) + ' within range. Only red is an alert at the top of the page (and, in amber, the model check, when the quick descent model disagreed with the full one). To mark a recommendation as accepted, list its id under <code>edith_accepted</code> in <code>aero_modeling/whatif_config.json</code>.</p>';
   $('trust').innerHTML = h;
   $('provenance').textContent = 'Built ' + DATA.generated + (DATA.cached ? ' (the flights were simulated earlier; nothing they depend on has changed since)' : '') + ' · random seed ' + R.settings.seed + ' · site settings: ' + R.site + '.';
 }
@@ -444,6 +463,14 @@ function update() {
   history.replaceState(null, '', '#units=' + state.units + '&stab=' + state.stab + (state.chart !== 'altitude' ? '&chart=' + state.chart : '') + (embedded ? '&embed=1' : ''));
   drawTop(); drawSeries(); drawApogee(); drawLanding(); drawChecks(); drawNumbers(); drawLimits(); drawInputs(); drawTrust();
 }
+// The links to the History, Flight plots and Changelog tabs point at the site's front page. How far up that is depends on the rocket
+// (predictions/edith/ or predictions/<key>/edith/), so it is worked out from the address: everything before '/predictions/'.
+(function fixSiteLinks() {
+  const m = /^(.*?)\/predictions(\/|$)/.exec(location.pathname);
+  const root = m ? m[1] + '/' : null;
+  if (root === null) return;   // not under /predictions/: keep the links as written
+  document.querySelectorAll('a[data-site]').forEach((a) => { a.href = root + (location.protocol === 'file:' ? 'index.html' : '') + '#tab=' + a.dataset.site; });
+})();
 readHash();
 $('units').onchange = () => { state.units = $('units').value; update(); };
 $('stab').onchange = () => { state.stab = $('stab').value; update(); };

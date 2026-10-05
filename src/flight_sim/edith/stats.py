@@ -4,8 +4,11 @@
   near 0 and 1 where the usual normal formula does not. When the samples come
   from several independent scrambled Sobol sets, the spread between the sets
   gives a second interval, and the wider of the two is reported. When nothing
-  was ever seen (zero events), the bound is the exact Clopper-Pearson one,
-  "below X% with 90% confidence".
+  was ever seen (zero events), the bound is the exact Clopper-Pearson one.
+* The intervals are two-sided: a 90% interval leaves 5% of the probability below
+  its low end and 5% above its high end. So its high end alone is a one-sided
+  bound with more confidence: "95% sure it is below X" (``one_sided``). Say it
+  that way; calling the high end "90% sure it is below X" would be wrong.
 * A mean, a percentile or a footprint size uses the bootstrap: resample the
   runs with replacement many times and take the middle 90% of the answers.
 
@@ -26,9 +29,18 @@ CONFIDENCE = 0.90
 BOOTSTRAPS = 1000
 
 
+def one_sided(confidence: float) -> float:
+    """The confidence of the high end of a two-sided interval, taken alone.
+
+    A two-sided 90% interval puts 5% of the probability above its high end, so
+    that end is a one-sided bound at 95%.
+    """
+    return 1.0 - 0.5 * (1.0 - confidence)
+
+
 @dataclass(frozen=True)
 class Interval:
-    """An estimate and the range it is 90% likely to be in (``confidence``)."""
+    """An estimate and the range it is likely to be in (two-sided, ``confidence``)."""
 
     estimate: float
     low: float
@@ -68,7 +80,8 @@ def wilson(events: int, runs: int, confidence: float = CONFIDENCE) -> Interval:
 
 
 def clopper_pearson(events: int, runs: int, confidence: float = CONFIDENCE) -> Interval:
-    """The exact two-sided interval; its upper end bounds a probability never seen."""
+    """The exact two-sided interval; its upper end bounds a probability never seen
+    (with the confidence ``one_sided(confidence)``, 95% for a 90% interval)."""
     if runs <= 0:
         return Interval(float("nan"), 0.0, 1.0, confidence)
     alpha = 1.0 - confidence

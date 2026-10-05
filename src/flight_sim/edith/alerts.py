@@ -173,20 +173,22 @@ def _quality(report: dict[str, Any]) -> list[dict[str, Any]]:
     """Alerts about how much to trust the batch itself."""
     out: list[dict[str, Any]] = []
     target = report["settings"]["target_half_width"]
-    if not report["stopped_because"].startswith("every headline"):
+    if report.get("stopped_for") != "target":
         out.append(
             {
                 "id": "rough",
                 "level": "amber",
                 "kind": "quality",
                 "title": "These chances are rougher than planned",
-                "text": f"The batch stopped ({report['stopped_because']}) before the main "
-                f"chances were pinned down to plus or minus {target:.0%}. Read the "
-                "likely ranges, not just the middle numbers.",
+                "text": f"The batch stopped ({report['stopped_because']}) before the two "
+                "watched chances (any IREC failure, and reaching the target apogee) were "
+                f"pinned down to plus or minus {target:.0%}. Read the likely ranges, not "
+                "just the middle numbers.",
                 "chance": None,
             }
         )
     if report["simulation_errors"]:
+        first = report.get("first_simulation_error")
         out.append(
             {
                 "id": "errors",
@@ -194,7 +196,20 @@ def _quality(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "kind": "quality",
                 "title": "Some flights could not be simulated",
                 "text": f"{report['simulation_errors']} flights stopped with an error. They count "
-                "as failures above.",
+                "as failures above." + (f" The first error: {first}" if first else ""),
+                "chance": None,
+            }
+        )
+    missing = (report.get("missing_numbers") or {}).get("flights", 0)
+    if missing:
+        out.append(
+            {
+                "id": "missing",
+                "level": "amber",
+                "kind": "quality",
+                "title": "Some flights had missing numbers",
+                "text": f"{missing} flights finished with a number missing or not a number. "
+                "A missing number a check needs counts as a failed check.",
                 "chance": None,
             }
         )
@@ -205,9 +220,11 @@ def _quality(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "id": "fast_reco",
                 "level": "amber",
                 "kind": "quality",
-                "title": "The quick descent model disagreed with the full one",
-                "text": "On at least one check flight the quick model and the full model did not "
-                "agree on pass or fail. Treat the landing chances with extra care.",
+                "title": "Model check: the quick descent model disagreed with the full one",
+                "text": f"On {check.get('disagreements', 'at least one')} of the "
+                f"{check.get('pairs', 'check')} check flights the quick model and the full "
+                "model did not agree on pass or fail (red or amber checks). Treat the "
+                "landing and descent chances with extra care.",
                 "chance": None,
             }
         )
@@ -227,12 +244,32 @@ def _quality(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _headline(alerts: list[dict[str, Any]]) -> dict[str, Any]:
-    """One sentence for the top of the page: only red counts as an alert."""
-    red = [a for a in alerts if a["level"] == "red" and a["id"] != "any_failure"]
+    """One sentence for the top of the page: only red counts as an alert.
+
+    Every alert counts, "Any IREC failure" included: the chance of breaking a rule can
+    be red from several small amber checks that add up. When it is red the sentence
+    says so in plain words. (The page's script, ``edith_page.html``, does the same.)
+    """
+    red = [a for a in alerts if a["level"] == "red"]
     if red:
+        broken = next((a for a in red if a["id"] == "any_failure"), None)
+        others = [a for a in red if a["id"] != "any_failure"]
+        parts = []
+        if broken is not None:
+            share = broken["chance"]["estimate"]
+            parts.append(f"IREC rules: {_percent(share)} of flights break a rule")
+        parts += [a["title"] for a in others[: 3 - len(parts)]]
         return {
             "level": "red",
             "text": f"{len(red)} red alert{'s' if len(red) != 1 else ''}: "
-            + "; ".join(a["title"] for a in red[:3]),
+            + "; ".join(parts),
         }
     return {"level": "green", "text": "No red alerts."}
+
+
+def _percent(share: float) -> str:
+    """A share as a percentage for a sentence: 7% , 3.5%, under 0.1%."""
+    value = 100.0 * share
+    if value < 0.1:
+        return "under 0.1%"
+    return f"{value:.1f}%" if value < 10 else f"{value:.0f}%"

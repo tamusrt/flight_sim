@@ -5,9 +5,11 @@ independent scrambled Sobol set each, so the points fill the space of inputs
 evenly):
 
 1. **Pilot.** The first round flies the full 6-DOF climb for every run. These
-   climbs train the climb surrogate (``surrogate``), and three of them are also
-   flown with the full RECO as well as FastRECO, to measure how far FastRECO is
-   from it.
+   climbs train the climb surrogate (``surrogate``). A few of them (three typical
+   runs, and the three closest to an IREC limit) are also flown with the full RECO as
+   well as FastRECO, with the gusts switched off in both so that only the model
+   difference shows, to measure how far FastRECO is from it. This is a spot check
+   on a handful of flights, not a guarantee for every flight or every rocket.
 2. **Later rounds.** The surrogate predicts each run's climb, and FastRECO flies
    the descent from the predicted apogee. Runs whose numbers lie close to an IREC
    limit (nearer than the surrogate's or FastRECO's likely error) are re-flown
@@ -20,8 +22,12 @@ evenly):
    With ``surrogate`` off, every round flies the full climb like the pilot
    (no estimates, no re-flies); the site's runs do that, since on a rocket like
    SRT14 the full climb costs about a second.
-3. **Stop** when every headline probability's 90% interval is narrower than
-   ``target_half_width``, at ``max_rounds``, or at the time limit.
+3. **Stop** when the 90% intervals of the two chances the batch watches (any IREC
+   failure, and apogee at least the target) are both narrower than
+   ``target_half_width`` (plus or minus 4% unless changed), at ``max_rounds``, or at
+   the time limit. The other chances (each check, any warning, the apogee range) are
+   not watched and can be wider. A 90% interval on a chance near 50% is about plus or
+   minus 3.6% with 512 flights, so a target much below 4% needs more flights.
 
 Every run's inputs depend only on the batch seed and its index, so the answer is
 the same on any number of cores.
@@ -52,9 +58,12 @@ from flight_sim.edith.inputs import (
 from flight_sim.edith.run import Rocket, RocketSpec
 from flight_sim.edith.surrogate import Surrogate, features
 
+# The default width the watched chances are pinned down to (plus or minus 4%)
+TARGET_HALF_WIDTH = 0.04
+
 
 @dataclass(frozen=True)
-class Settings:
+class Settings:  # pylint: disable=too-many-instance-attributes
     """How a batch is run.
 
     Attributes:
@@ -62,14 +71,18 @@ class Settings:
             (the climb model needs that many climbs to fit).
         min_rounds (int): Rounds always flown (the pilot and one more).
         max_rounds (int): Most rounds flown.
-        target_half_width (float): Stop when each headline probability's 90%
-            interval is this narrow (half-width, as a probability).
+        target_half_width (float): Stop when the interval of each watched chance
+            (any IREC failure, apogee at least the target) is this narrow
+            (half-width, as a probability; 0.04 is plus or minus 4%).
         time_limit_s (float | None): Stop starting new rounds after this long.
         workers (int | None): Processes to use; all the cores when None.
         audit_fraction (float): Share of confidently classified runs re-flown.
         borderline_fraction (float): Most runs per round re-flown for being
             close to a limit.
-        reco_checks (int): Pilot runs also flown with the full RECO.
+        reco_checks (int): Typical pilot runs (the first of the round) also flown
+            with the full RECO.
+        reco_close_checks (int): More pilot runs, the ones closest to an IREC
+            limit, also flown with the full RECO.
         seed (int): Seed of the whole batch.
         confidence (float): Confidence level of every interval.
         surrogate (bool): Estimate the climbs of later rounds from the pilot's
@@ -79,12 +92,13 @@ class Settings:
     round_size: int = 128
     min_rounds: int = 2
     max_rounds: int = 8
-    target_half_width: float = 0.03
+    target_half_width: float = TARGET_HALF_WIDTH
     time_limit_s: float | None = None
     workers: int | None = None
     audit_fraction: float = 0.05
     borderline_fraction: float = 0.15
     reco_checks: int = 3
+    reco_close_checks: int = 3
     seed: int = 2027
     confidence: float = ci.CONFIDENCE
     surrogate: bool = True
@@ -99,16 +113,48 @@ def _init(spec: RocketSpec, site: SiteConfig) -> None:
     _WORKER["rocket"] = Rocket(spec, site)
 
 
+def _error_result(error: BaseException) -> dict[str, Any]:
+    """The result of a flight that stopped with an error: it fails the run's checks."""
+    return {"sim_ok": False, "error": f"{type(error).__name__}: {error}"}
+
+
 def _job(job: tuple[Any, ...]) -> tuple[int, str, dict[str, Any]]:
-    """Fly one job in a worker; the result carries the job's index back."""
+    """Fly one job in a worker; the result carries the job's index back.
+
+    Whatever goes wrong inside one flight is recorded as that flight's error and the
+    batch carries on, so one bad draw does not throw away minutes of other flights.
+    """
+    kind, index = job[0], job[1]
+    try:
+        return _fly_job(job)
+    except Exception as error:  # pylint: disable=broad-exception-caught
+        if kind == "check":
+            failed = _error_result(error)
+            return (
+                index,
+                kind,
+                {
+                    "fast": failed,
+                    "full": dict(failed),
+                    "fast_s": 0.0,
+                    "full_s": 0.0,
+                },
+            )
+        return index, kind, _error_result(error)
+
+
+def _fly_job(job: tuple[Any, ...]) -> tuple[int, str, dict[str, Any]]:
     kind, index, unit, seed, predicted = job
     rocket = _WORKER["rocket"]
     v = draw(np.asarray(unit), rocket.site, rocket.nominal, seed)
     if kind == "check":
+        # gusts off in both models: otherwise each model flies different random gusts
+        # (they cannot be given the same ones) and the offsets mix gust noise with
+        # the model difference
         start = time.perf_counter()
-        fast = rocket.fly(v, reco="fast")
+        fast = rocket.fly(v, reco="fast", calm=True)
         middle = time.perf_counter()
-        full = rocket.fly(v, reco="full")
+        full = rocket.fly(v, reco="full", calm=True)
         end = time.perf_counter()
         return (
             index,
@@ -180,10 +226,48 @@ def _flag(samples: list[dict[str, Any]], name: str, severity: str) -> np.ndarray
 
 
 def _numbers(samples: list[dict[str, Any]], key: str) -> np.ndarray:
+    """A number of every flight that has it (missing and NaN ones are left out;
+    ``_missing_numbers`` counts them so the report can say so)."""
     values = [s["final"].get(key) for s in samples]
     return np.array(
         [v for v in values if isinstance(v, (int, float)) and math.isfinite(v)]
     )
+
+
+_SPREAD_KEYS = (
+    "apogee_m",
+    "drogue_v",
+    "main_alt",
+    "rail_v",
+    "load_ratio",
+    "descent_s",
+)
+
+
+def _missing_numbers(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Flights that finished but have a missing or NaN number, and which numbers.
+
+    A missing number a check needs counts as a failed check (``failures``); the
+    spreads of the report leave the flight's NaN out. Either way the report says how
+    many flights were affected, so it is not silent.
+    """
+    by_value: dict[str, int] = {}
+    flights = 0
+    for sample in samples:
+        result = sample["final"]
+        if not result.get("sim_ok"):
+            continue
+        keys = set(failures.missing_values(result))
+        keys.update(
+            key
+            for key in _SPREAD_KEYS
+            if isinstance(result.get(key), (int, float))
+            and not math.isfinite(result[key])
+        )
+        flights += bool(keys)
+        for key in keys:
+            by_value[key] = by_value.get(key, 0) + 1
+    return {"flights": flights, "by_value": dict(sorted(by_value.items()))}
 
 
 def _spread(
@@ -286,13 +370,18 @@ def _cloud(samples: list[dict[str, Any]], site: SiteConfig) -> dict[str, Any]:
         r = sample["final"]
         if not isinstance(r.get("apogee_m"), (int, float)) or "apogee_east" not in r:
             continue
+        place = [r["apogee_east"], r["apogee_north"]]
+        if not all(isinstance(x, (int, float)) and math.isfinite(x) for x in place):
+            continue
+        height = float(r["apogee_m"])
+        finite = math.isfinite(height)
         landed = bool(r.get("landed")) and "land_east" in r
         rows.append(
             {
                 "apogee": [
                     round(float(r["apogee_east"]), 1),
                     round(float(r["apogee_north"]), 1),
-                    round(float(r["apogee_m"]), 1),
+                    round(height if finite else 0.0, 1),
                 ],
                 "landing": (
                     [round(float(r["land_east"]), 1), round(float(r["land_north"]), 1)]
@@ -303,10 +392,11 @@ def _cloud(samples: list[dict[str, Any]], site: SiteConfig) -> dict[str, Any]:
                 "path": (
                     [p[1:] for p in r["history"]["path"]] if "history" in r else None
                 ),
+                # no usable apogee counts as below the range
                 "range": -1
-                if r["apogee_m"] < low_m
+                if not finite or height < low_m
                 else 1
-                if r["apogee_m"] > high_m
+                if height > high_m
                 else 0,
             }
         )
@@ -403,8 +493,8 @@ def error_sigmas(
         diffs = [
             exact["final"][key] - exact["predicted"][key]
             for exact in pairs
-            if isinstance(exact["final"].get(key), (int, float))
-            and isinstance(exact["predicted"].get(key), (int, float))
+            if failures.finite(exact["final"].get(key))
+            and failures.finite(exact["predicted"].get(key))
         ]
         if len(diffs) >= 4:
             rms = math.sqrt(sum(d * d for d in diffs) / len(diffs))
@@ -426,6 +516,7 @@ def _flip(
         check.tolerance <= 0.0
         or not isinstance(value, (int, float))
         or isinstance(value, bool)
+        or not math.isfinite(value)
     ):
         return 0.0
     sigma = sigmas.get(check.key, check.tolerance / 3.0)
@@ -468,7 +559,7 @@ def _error_share(
                 ),
             )
         apogee = result.get("apogee_m")
-        if isinstance(apogee, (int, float)):
+        if failures.finite(apogee):
             shares["apogee"] += float(
                 stats.norm.sf(abs(apogee - site.target_apogee_m) / sigmas["apogee_m"])
             )
@@ -501,20 +592,42 @@ def summarize(  # pylint: disable=too-many-locals,too-many-positional-arguments
         for a in audits
     )
 
-    def probability(flags: np.ndarray, extra: float) -> dict[str, float]:
-        return ci.widen(ci.proportion(flags, sets, confidence), extra).as_dict(4)
+    def probability(
+        flags: np.ndarray, extra: float, only: np.ndarray | None = None
+    ) -> dict[str, float]:
+        """A chance with its interval; ``only`` keeps just those flights."""
+        if only is not None:
+            flags, flight_sets = flags[only], sets[only]
+        else:
+            flight_sets = sets
+        if flags.size == 0:  # nothing to count (every flight stopped with an error)
+            return {"estimate": 0.0, "low": 0.0, "high": 1.0, "confidence": confidence}
+        return ci.widen(ci.proportion(flags, flight_sets, confidence), extra).as_dict(4)
 
     apogee = _numbers(samples, "apogee_m")
+    # Flights that stopped with an error are reported on their own
+    # (``simulation_errors``)
+    # and left out of the apogee numbers. Every other flight is in exactly one of
+    # below / within / above the range; one with no usable apogee (it never climbed,
+    # or the number is NaN) counts as below.
+    ran = np.array([bool(s["final"].get("sim_ok")) for s in samples])
     reached = np.array([bool(s["final"].get("apogee_ok")) for s in samples])
-    over = np.array(
-        [(s["final"].get("apogee_m") or 0.0) >= site.target_apogee_m for s in samples]
-    )
     low_m, high_m = _apogee_range(site)
-    flown = np.array([s["final"].get("apogee_m") is not None for s in samples])
-    apogees = np.array([s["final"].get("apogee_m") or 0.0 for s in samples])
-    within = flown & (apogees >= low_m) & (apogees <= high_m)
-    below = flown & (apogees < low_m)
-    above = flown & (apogees > high_m)
+    apogees = np.array(
+        [
+            s["final"]["apogee_m"]
+            if failures.finite(s["final"].get("apogee_m"))
+            else np.nan
+            for s in samples
+        ],
+        dtype=float,
+    )
+    usable = ~np.isnan(apogees)
+    with np.errstate(invalid="ignore"):
+        over = usable & (apogees >= site.target_apogee_m)
+        above = usable & (apogees > high_m)
+        within = usable & (apogees >= low_m) & (apogees <= high_m)
+    below = ~within & ~above
     checks = {}
     for check in failures.CHECKS:
         flags = _flag(samples, check.name, check.severity)
@@ -531,20 +644,21 @@ def summarize(  # pylint: disable=too-many-locals,too-many-positional-arguments
         "probability_any_warning": probability(
             _flag(samples, "any", "warn"), share["any_warn"]
         ),
-        "probability_apogee_at_least_target": probability(over, share["apogee"]),
+        "probability_apogee_at_least_target": probability(over, share["apogee"], ran),
         "target_apogee_m": site.target_apogee_m,
         "apogee_range": {
             "target_m": site.target_apogee_m,
             "tolerance": site.target_apogee_tolerance,
             "low_m": round(low_m, 1),
             "high_m": round(high_m, 1),
-            "within": probability(within, share["apogee_range"]),
-            "below": probability(below, share["apogee_range"] / 2.0),
-            "above": probability(above, share["apogee_range"] / 2.0),
+            "within": probability(within, share["apogee_range"], ran),
+            "below": probability(below, share["apogee_range"] / 2.0, ran),
+            "above": probability(above, share["apogee_range"] / 2.0, ran),
         },
         "cloud": _cloud(samples, site),
         "rated_load_g": site.rated_load_g,
-        "reached_apogee": probability(reached, 0.0),
+        "reached_apogee": probability(reached, 0.0, ran),
+        "missing_numbers": _missing_numbers(samples),
         "checks": checks,
         "apogee_m": _spread(apogee, rng, confidence),
         "footprint": _footprint(samples, rng, confidence),
@@ -571,20 +685,36 @@ def summarize(  # pylint: disable=too-many-locals,too-many-positional-arguments
     }
 
 
+# The chances the batch watches to decide when to stop, and how the report names them
+WATCHED = {
+    "probability_any_failure": "any IREC failure",
+    "probability_apogee_at_least_target": "apogee at least the target",
+}
+
+
 def _worst_headline(summary: dict[str, Any]) -> float:
-    """The widest half-width among the probabilities that decide when to stop."""
-    names = ("probability_any_failure", "probability_apogee_at_least_target")
-    return max(0.5 * (summary[n]["high"] - summary[n]["low"]) for n in names)
+    """The widest half-width among the watched chances (``WATCHED``)."""
+    return float(max(0.5 * (summary[n]["high"] - summary[n]["low"]) for n in WATCHED))
 
 
 # ----- the FastRECO check ----------------------------------------------------
 
 
 def _reco_check(pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """How far FastRECO's descents are from the full RECO's, on the same climbs."""
+    """How far FastRECO's descents are from the full RECO's, on the same climbs.
+
+    Pass or fail (the red and the amber checks) is compared on every pair, so a flight
+    that one model could simulate and the other could not counts as a disagreement. The
+    landing, speed and load differences need both flights to have landed; a pair
+    without them is counted in ``skipped``, not dropped silently.
+    """
+    if not pairs:
+        return None
     rows = []
+    disagreements = 0
     for pair in pairs:
         fast, full = pair["fast"], pair["full"]
+        disagreements += not _same_outcome(fast, full)
         if not (
             fast.get("sim_ok")
             and full.get("sim_ok")
@@ -610,14 +740,20 @@ def _reco_check(pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
                 ),
                 "fast_s": pair["fast_s"],
                 "full_s": pair["full_s"],
-                "same_outcome": failures.any_failure(fast)
-                == failures.any_failure(full),
             }
         )
-    if not rows:
-        return None
-    return {
+    base = {
+        "pairs": len(pairs),
         "runs": len(rows),
+        "skipped": len(pairs) - len(rows),
+        "disagreements": int(disagreements),
+        "same_pass_fail": disagreements == 0,
+        "gusts_off": True,
+    }
+    if not rows:
+        return base
+    return {
+        **base,
         "largest_landing_offset_m": round(max(r["landing_offset_m"] for r in rows), 1),
         "largest_offset_share_of_drift": round(
             max(r["landing_offset_m"] / max(r["drift_full_m"], 1.0) for r in rows), 4
@@ -631,10 +767,29 @@ def _reco_check(pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
         "largest_main_altitude_diff_m": round(
             max(r["main_altitude_diff_m"] for r in rows), 1
         ),
-        "same_pass_fail": all(r["same_outcome"] for r in rows),
         "fast_seconds_per_run": round(float(np.mean([r["fast_s"] for r in rows])), 2),
         "full_seconds_per_run": round(float(np.mean([r["full_s"] for r in rows])), 2),
     }
+
+
+def _same_outcome(fast: dict[str, Any], full: dict[str, Any]) -> bool:
+    """Whether two flights of the same draw have the same red and amber checks."""
+    return failures.any_failure(fast) == failures.any_failure(full) and (
+        failures.any_warning(fast) == failures.any_warning(full)
+    )
+
+
+def _close_to_a_limit(
+    results: list[dict[str, Any]], skip: int, count: int
+) -> list[int]:
+    """Indexes of the ``count`` flights nearest to a check limit (leaving out the first
+    ``skip``, which are already checked), nearest first."""
+    nearness = [
+        (failures.closeness(r), i)
+        for i, r in enumerate(results)
+        if i >= skip and r.get("sim_ok") and r.get("landed")
+    ]
+    return [i for value, i in sorted(nearness) if math.isfinite(value)][:count]
 
 
 # ----- the batch -------------------------------------------------------------
@@ -660,6 +815,7 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
     full_climbs = predicted_climbs = reflown = borderline_uncapped = 0
     summary: dict[str, Any] = {}
     stop_reason = "reached the largest number of rounds"
+    stopped_for = "max_rounds"
     try:
         for round_index in range(settings.max_rounds):
             unit = _sobol(settings.seed, round_index, size)
@@ -668,19 +824,27 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
                 jobs: list[tuple[Any, ...]] = [
                     ("ascent", i, unit[i].tolist(), seeds[i], None) for i in range(size)
                 ]
-                if round_index == 0:
-                    jobs += [
-                        ("check", size + i, unit[i].tolist(), seeds[i], None)
-                        for i in range(min(settings.reco_checks, size))
-                    ]
                 done = pool.run(jobs)
                 full_climbs += size
-                pilot = sorted(
-                    (r for r in done if r[1] == "ascent"), key=lambda r: r[0]
-                )
-                if round_index == 0:
-                    reco_pairs = [r[2] for r in done if r[1] == "check"]
+                pilot = sorted(done, key=lambda r: r[0])
                 results = [r[2] for r in pilot]
+                if round_index == 0:
+                    # The FastRECO check: the first runs (typical ones, as the first
+                    # points of a Sobol set are spread evenly) and the runs closest to
+                    # a limit, which are the ones most likely to change pass or fail.
+                    typical = min(settings.reco_checks, size)
+                    chosen = list(range(typical)) + _close_to_a_limit(
+                        results, typical, settings.reco_close_checks
+                    )
+                    reco_pairs = [
+                        r[2]
+                        for r in pool.run(
+                            [
+                                ("check", size + i, unit[i].tolist(), seeds[i], None)
+                                for i in chosen
+                            ]
+                        )
+                    ]
                 for i, result in enumerate(results):
                     samples.append(
                         {
@@ -769,18 +933,22 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
                 and worst <= settings.target_half_width
             ):
                 stop_reason = (
-                    "every headline probability is within "
-                    f"+/-{settings.target_half_width:.1%}"
+                    "the watched chances (" + " and ".join(WATCHED.values()) + ") are "
+                    f"within +/-{settings.target_half_width:.1%}"
                 )
+                stopped_for = "target"
                 break
+            if round_index + 1 >= settings.max_rounds:
+                break  # every planned round was flown: that is the reason, not the time
             elapsed = time.perf_counter() - started
             if settings.time_limit_s is not None and elapsed >= settings.time_limit_s:
                 stop_reason = "reached the time limit"
+                stopped_for = "time_limit"
                 break
     finally:
         pool.close()
     elapsed = time.perf_counter() - started
-    errors = [s["final"] for s in samples if not s["final"].get("sim_ok", True)]
+    errors = [s["final"] for s in samples if not s["final"].get("sim_ok")]
     summary.update(
         {
             "rocket": nominal_rocket.profile.name,
@@ -789,6 +957,8 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
             "inputs": describe(site, nominal),
             "assumptions": site.note,
             "stopped_because": stop_reason,
+            "stopped_for": stopped_for,
+            "watched_chances": list(WATCHED.values()),
             "rounds": samples[-1]["round"] + 1,
             "seconds": round(elapsed, 1),
             "workers": workers,
@@ -805,6 +975,9 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
             "series": flight_series(samples),
             "geometry": nominal_rocket.geometry(),
             "simulation_errors": len(errors),
+            "first_simulation_error": (
+                str(errors[0].get("error", "unknown error")) if errors else None
+            ),
             "fast_reco_check": _reco_check(reco_pairs),
         }
     )
