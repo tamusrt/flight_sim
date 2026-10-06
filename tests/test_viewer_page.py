@@ -21,6 +21,7 @@ from flight_sim.visualize import write_viewer
 DASH = "\u2013"  # what the page shows for a value it does not know
 _CDN = "**/ajax/libs/three.js/r128/three.min.js"
 _TILES = "**/World_Imagery/MapServer/tile/**"
+_TERRAIN = "**/elevation-tiles-prod/terrarium/**"
 _THREE_CANDIDATES = (
     os.environ.get("VISION_THREE_JS", ""),
     "node_modules/three/build/three.min.js",
@@ -123,6 +124,7 @@ def _open(
     tmp_path: Path,
     log: Any,
     tiles: Callable[[Any], None] | None = None,
+    terrain: Callable[[Any], None] | None = None,
     **kwargs: Any,
 ) -> _Opened:
     page_file = write_viewer(
@@ -140,6 +142,7 @@ def _open(
     page.route("**/fonts.g*/**", lambda route: route.abort())
     # Satellite tiles never reach the internet in a test: a test hands its own
     page.route(_TILES, tiles or (lambda route: route.abort()))
+    page.route(_TERRAIN, terrain or (lambda route: route.abort()))
     page.goto(page_file.as_uri())
     page.wait_for_function(
         "window.__viewer && window.__viewer.frames > 2", timeout=20000
@@ -472,7 +475,7 @@ def _centre_of(shot: Any, colour: tuple[int, int, int]) -> tuple[float, float] |
 def test_the_engineering_look_never_asks_for_satellite_tiles(
     browser: Any, tmp_path: Path
 ) -> None:
-    """Tiles are fetched only once the Realistic look is chosen: all 5 x 64."""
+    """Imagery and terrain tiles are fetched only once the Realistic look is chosen."""
     asked: list[str] = []
 
     def count(route: Any) -> None:
@@ -480,7 +483,8 @@ def test_the_engineering_look_never_asks_for_satellite_tiles(
         asked.append(route.request.url)
         route.abort()
 
-    opened = _open(browser, tmp_path, _typed(_Log(_with_site())), tiles=count)
+    log = _typed(_Log(_with_site()))
+    opened = _open(browser, tmp_path, log, tiles=count, terrain=count)
     try:
         opened.page.wait_for_timeout(500)
         assert asked == []
@@ -488,6 +492,8 @@ def test_the_engineering_look_never_asks_for_satellite_tiles(
         _realistic(opened)
         opened.page.wait_for_function("window.__viewer.satellite().total > 0")
         assert opened.js("window.__viewer.satellite().total") == 320
+        # and the heights of the real terrain: 2 x 64 tiles
+        assert opened.js("window.__viewer.terrain().total") == 128
     finally:
         opened.page.close()
 
@@ -582,6 +588,12 @@ def test_the_realistic_look_draws_its_own_ground_without_the_imagery(
         )
         assert opened.js("window.__viewer.satellite().attr") == ""
         assert "No satellite picture" in opened.text("#scaleNote")
+        # no terrain either: the flat ground and the drawn mountains, as before
+        opened.page.wait_for_function(
+            "(t => t.total > 0 && t.bad === t.total)(window.__viewer.terrain())"
+        )
+        terrain = opened.js("window.__viewer.terrain()")
+        assert terrain["ground"] and terrain["mountains"] and not terrain["mesh"]
         assert _clutter_on_the_pad(opened)
         np = pytest.importorskip("numpy")
         shot = np.asarray(_look_down(opened)).astype(int)
@@ -590,6 +602,70 @@ def test_the_realistic_look_draws_its_own_ground_without_the_imagery(
         r, g, b = (float(middle[..., c].mean()) for c in range(3))
         # the drawn desert: sandy (red over green over blue), not black or grey
         assert r > 90 and r > g > b + 10
+        assert opened.errors == []
+    finally:
+        opened.page.close()
+
+
+def _terrarium_png(z: int, x: int, y: int) -> bytes:
+    """A Terrarium height tile: flat at the pad's 890 m, with a hill rising 1000 m
+    30 km north of the pad."""
+    np = pytest.importorskip("numpy")
+    image = pytest.importorskip("PIL.Image")
+    lat0 = math.radians(_SITE["lat_deg"])
+    e2 = 0.00669437999014
+    w = 1.0 - e2 * math.sin(lat0) ** 2
+    meridian = 6378137.0 * (1.0 - e2) / w**1.5
+    across = 6378137.0 / math.sqrt(w) * math.cos(lat0)
+    world = 256.0 * 2**z
+    px = (x * 256 + np.arange(256) + 0.5)[None, :]
+    py = (y * 256 + np.arange(256) + 0.5)[:, None]
+    lon = px / world * 360.0 - 180.0
+    lat = np.degrees(np.arctan(np.sinh(math.pi * (1.0 - 2.0 * py / world))))
+    north = np.radians(lat - _SITE["lat_deg"]) * meridian + 0.0 * px
+    east = np.radians(lon - _SITE["lon_deg"]) * across + 0.0 * py
+    hill = 1000.0 * np.exp(-((north - 30000.0) ** 2 + east**2) / (2 * 5000.0**2))
+    value = 890.0 + hill + 32768.0
+    rgb = np.stack(
+        [value // 256, np.floor(value % 256), np.floor((value % 1) * 256)], axis=-1
+    ).astype(np.uint8)
+    out = io.BytesIO()
+    image.fromarray(rgb, "RGB").save(out, "PNG")
+    return out.getvalue()
+
+
+def _serve_terrain(route: Any) -> None:
+    """Answer a Terrarium tile request with the pretend hill, with CORS."""
+    z, x, y = (int(v) for v in route.request.url.split("?")[0][:-4].split("/")[-3:])
+    route.fulfill(
+        body=_terrarium_png(z, x, y),
+        content_type="image/png",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+def test_real_terrain_rises_round_the_flat_flight(browser: Any, tmp_path: Path) -> None:
+    """The ground stays flat where the rocket flies; the hill 30 km north stands
+    1000 m high less the curve of the Earth, and replaces the drawn mountains.
+    The Engineering look keeps its flat grid."""
+    log = _typed(_Log(_with_site()))
+    opened = _open(browser, tmp_path, log, terrain=_serve_terrain)
+    try:
+        _realistic(opened)
+        opened.page.wait_for_function("window.__viewer.terrain().ready", timeout=60000)
+        terrain = opened.js("window.__viewer.terrain()")
+        assert terrain["padH"] == pytest.approx(890.0, abs=0.5)
+        assert terrain["mesh"] and not terrain["ground"] and not terrain["mountains"]
+        at = "(n, e) => window.__viewer.terrainAt(n, e)"
+        foot = terrain["foot"]
+        assert opened.page.evaluate(f"({at})(0, 0)") == 0.0
+        assert opened.page.evaluate(f"({at})({foot['n']}, {foot['e']})") == 0.0
+        curve = 30000.0**2 / (2 * 6371000.0)
+        hill = opened.page.evaluate(f"({at})(30000, 0)")
+        assert hill == pytest.approx(1000.0 - curve, abs=5.0)
+        opened.page.click('#look button[data-l="eng"]')
+        terrain = opened.js("window.__viewer.terrain()")
+        assert terrain["ground"] and not terrain["mesh"] and not terrain["mountains"]
         assert opened.errors == []
     finally:
         opened.page.close()
