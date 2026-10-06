@@ -107,7 +107,8 @@ class TelemetryLog:
     ambient pressure, propellant mass flow (kg/s),
     centre of gravity and static centre of pressure (both in metres aft of
     the nose tip). ``events``, ``rail`` and ``recovery`` describe the flight
-    events, the launch rail and the recovery system for the 3D scene.
+    events, the launch rail and the recovery system for the 3D scene, and
+    ``site`` where the pad is, for the satellite picture of the ground.
     """
 
     def __init__(self, properties: RocketProperties, config: IntegrationConfiguration):
@@ -131,6 +132,12 @@ class TelemetryLog:
         self.rail: dict[str, Any] | None = None
         self.recovery: dict[str, Any] | None = None
         self.vehicle: dict[str, Any] | None = None
+        truth = config.truth
+        self.site = {
+            "lat_deg": float(truth.launch_latitude.m_as("deg")),
+            "lon_deg": float(truth.launch_longitude.m_as("deg")),
+            "elevation_m": float(truth.launch_elevation.m_as("m")),
+        }
 
     def record(
         self,
@@ -265,6 +272,7 @@ class TelemetryLog:
                     "rail": self.rail,
                     "recovery": self.recovery,
                     "vehicle": self.vehicle,
+                    "site": self.site,
                 }
             ),
             allow_nan=False,

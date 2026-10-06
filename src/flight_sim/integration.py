@@ -59,6 +59,11 @@ class TruthConfiguration(UnitChecked):
         default_factory=lambda: scalar(0.0, "deg")
     )
 
+    # East of Greenwich; only places the flight on the map in the viewer
+    launch_longitude: Annotated[Scalar, "rad"] = field(
+        default_factory=lambda: scalar(0.0, "deg")
+    )
+
     # Height of the pad above sea level
     launch_elevation: Annotated[Scalar, "m"] = field(
         default_factory=lambda: scalar(0.0, "m")

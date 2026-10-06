@@ -47,6 +47,7 @@ _ORK = """<?xml version="1.0" encoding="utf-8"?>
   <conditions><launchrodlength>5.0</launchrodlength><launchrodangle>5.0</launchrodangle>
    <launchroddirection>90.0</launchroddirection><windaverage>3.0</windaverage>
    <winddirection>1.5707963267948966</winddirection><launchaltitude>100.0</launchaltitude>
+   <launchlatitude>32.99</launchlatitude><launchlongitude>-106.97</launchlongitude>
    <atmosphere model="extendedisa"><basetemperature>295.0</basetemperature>
     <basepressure>101325.0</basepressure></atmosphere></conditions>
   <flightdata maxaltitude="3000.0" maxvelocity="300.0" maxacceleration="60.0" maxmach="0.9"

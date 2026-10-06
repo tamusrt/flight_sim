@@ -73,11 +73,13 @@ MASS_PROPERTIES = MassPropertiesTable(
     burnout_inertia_kg_m2=(0.174, 82.74, 82.74),
 )
 
-# Launch site: pad elevation, temperature and pressure, and latitude
+# Launch site: pad elevation, temperature and pressure, latitude and longitude
+# (the longitude is the IREC launch site's, from the team's OpenRocket files)
 PAD_ELEVATION_M = 890.016
 PAD_TEMPERATURE_K = 303.15
 PAD_PRESSURE_PA = 91432.755
 LAUNCH_LATITUDE_DEG = 31.0311
+LAUNCH_LONGITUDE_DEG = -103.54007
 
 # Wind of 3.57632 m/s on the pad blowing toward +Y, which is east, so it comes
 # from the west (azimuth 270 degrees); it varies with height (LayeredWind)
@@ -160,6 +162,8 @@ class RocketProfile:  # pylint: disable=too-many-instance-attributes
     pad_temperature_k: float = PAD_TEMPERATURE_K
     pad_elevation_m: float = PAD_ELEVATION_M
     pad_pressure_pa: float = PAD_PRESSURE_PA
+    launch_latitude_deg: float = LAUNCH_LATITUDE_DEG
+    launch_longitude_deg: float = LAUNCH_LONGITUDE_DEG
     # The air resisting pitch and yaw; estimated from the aero table when None
     damping: PitchDamping | None = None
 
@@ -404,7 +408,8 @@ def get_default_config(profile: RocketProfile = INVICTUS) -> IntegrationConfigur
                 pad_pressure_pa=profile.pad_pressure_pa,
             ),
             wind=profile.wind,
-            launch_latitude=scalar(LAUNCH_LATITUDE_DEG, "deg"),
+            launch_latitude=scalar(profile.launch_latitude_deg, "deg"),
+            launch_longitude=scalar(profile.launch_longitude_deg, "deg"),
             launch_elevation=scalar(profile.pad_elevation_m, "m"),
             launch_rail=profile.rail,
         )

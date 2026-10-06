@@ -111,6 +111,8 @@ def test_profile_takes_conditions_from_the_saved_sim(
     assert profile.rail.elevation.m_as("deg") == pytest.approx(85.0)
     assert profile.wind.speed.m_as("m/s") == pytest.approx(3.0)
     assert profile.pad_elevation_m == pytest.approx(100.0)
+    assert profile.launch_latitude_deg == pytest.approx(32.99)
+    assert profile.launch_longitude_deg == pytest.approx(-106.97)
     assert profile.pad_temperature_k == pytest.approx(295.0)
     # the motor masses come from the saved run, so liftoff mass is OpenRocket's own
     assert profile.mass_properties.launch_mass_kg == pytest.approx(16.3)
