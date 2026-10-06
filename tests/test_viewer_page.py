@@ -366,12 +366,18 @@ def test_a_missing_3d_library_is_explained(browser: Any, tmp_path: Path) -> None
 
 # The launch site of the satellite tests, and marks drawn on their pretend imagery
 _SITE = {"lat_deg": 31.0311, "lon_deg": -103.54007, "elevation_m": 890.0}
-_MARKS = ((1000.0, 0.0, (0, 0, 255)), (0.0, 1000.0, (0, 255, 0)))  # north, east
+# (north, east, colour, radius): 1 km north, 1 km east, and one inside the 0.25 m
+# picture round the pad
+_MARKS = (
+    (1000.0, 0.0, (0, 0, 255), 60.0),
+    (0.0, 1000.0, (0, 255, 0), 60.0),
+    (200.0, -200.0, (255, 0, 0), 25.0),
+)
 
 
 def _tile_png(z: int, x: int, y: int) -> bytes:
-    """A Web Mercator tile of pretend desert: a 500 m checker round the pad, with a
-    blue disc 1 km north of it and a green one 1 km east."""
+    """A Web Mercator tile of pretend desert: a 500 m checker round the pad, with the
+    coloured discs of ``_MARKS`` on it."""
     np = pytest.importorskip("numpy")
     image = pytest.importorskip("PIL.Image")
     lat0 = math.radians(_SITE["lat_deg"])
@@ -388,21 +394,33 @@ def _tile_png(z: int, x: int, y: int) -> bytes:
     east = np.radians(lon - _SITE["lon_deg"]) * across + 0.0 * py
     odd = (np.floor(north / 500.0) + np.floor(east / 500.0)) % 2 == 1
     rgb = np.where(odd[..., None], [150, 130, 100], [190, 170, 135]).astype(np.uint8)
-    for mark_n, mark_e, colour in _MARKS:
-        rgb[np.hypot(north - mark_n, east - mark_e) < 60.0] = colour
+    for mark_n, mark_e, colour, radius in _MARKS:
+        rgb[np.hypot(north - mark_n, east - mark_e) < radius] = colour
     out = io.BytesIO()
     image.fromarray(rgb, "RGB").save(out, "PNG")
     return out.getvalue()
 
 
-def _serve_tiles(route: Any) -> None:
-    """Answer a tile request with the pretend imagery, as Esri would (with CORS)."""
-    z, y, x = (int(v) for v in route.request.url.rstrip("/").split("/")[-3:])
-    route.fulfill(
-        body=_tile_png(z, x, y),
-        content_type="image/png",
-        headers={"Access-Control-Allow-Origin": "*"},
-    )
+def _tiles_without(*missing: int, asked: list[int] | None = None) -> Any:
+    """Serve the pretend imagery as Esri would (with CORS), except at the zooms in
+    ``missing``, where Esri has nothing that fine (a 404, asked for with
+    blankTile=false). The zoom of every tile asked for goes into ``asked``."""
+
+    def serve(route: Any) -> None:
+        path = route.request.url.split("?")[0]
+        z, y, x = (int(v) for v in path.split("/")[-3:])
+        if asked is not None:
+            asked.append(z)
+        cors = {"Access-Control-Allow-Origin": "*"}
+        if z in missing:
+            route.fulfill(status=404, body=b"", headers=cors)
+            return
+        route.fulfill(body=_tile_png(z, x, y), content_type="image/png", headers=cors)
+
+    return serve
+
+
+_serve_tiles = _tiles_without()
 
 
 def _with_site() -> dict[str, Any]:
@@ -454,7 +472,7 @@ def _centre_of(shot: Any, colour: tuple[int, int, int]) -> tuple[float, float] |
 def test_the_engineering_look_never_asks_for_satellite_tiles(
     browser: Any, tmp_path: Path
 ) -> None:
-    """Tiles are fetched only once the Realistic look is chosen: all 4 x 64."""
+    """Tiles are fetched only once the Realistic look is chosen: all 5 x 64."""
     asked: list[str] = []
 
     def count(route: Any) -> None:
@@ -469,7 +487,7 @@ def test_the_engineering_look_never_asks_for_satellite_tiles(
         assert opened.js("window.__viewer.satellite().attr") == ""
         _realistic(opened)
         opened.page.wait_for_function("window.__viewer.satellite().total > 0")
-        assert opened.js("window.__viewer.satellite().total") == 256
+        assert opened.js("window.__viewer.satellite().total") == 320
     finally:
         opened.page.close()
 
@@ -496,30 +514,53 @@ def test_data_without_a_launch_site_asks_for_no_tiles(
         opened.page.close()
 
 
+@pytest.mark.parametrize(
+    ("missing", "half_detail", "bad"),
+    [
+        ((), False, 0),
+        # no 0.25 m tiles there: each takes the quarter of its 0.5 m tile
+        ((19,), True, 0),
+        # nothing finer than 1 m: the 1 m picture shows round the pad
+        ((19, 18), True, 64),
+    ],
+)
 def test_the_satellite_picture_lies_where_the_site_is(
-    browser: Any, tmp_path: Path
+    browser: Any,
+    tmp_path: Path,
+    missing: tuple[int, ...],
+    half_detail: bool,
+    bad: int,
 ) -> None:
-    """Marks 1 km north and 1 km east of the pad show where those points are."""
-    opened = _open(browser, tmp_path, _typed(_Log(_with_site())), tiles=_serve_tiles)
+    """Marks 1 km north and east of the pad, and one 280 m from it in the finest
+    picture, show where those points are, however fine the imagery there is."""
+    asked: list[int] = []
+    tiles = _tiles_without(*missing, asked=asked)
+    opened = _open(browser, tmp_path, _typed(_Log(_with_site())), tiles=tiles)
     try:
         _realistic(opened)
         opened.page.wait_for_function(
-            "(s => s.total > 0 && s.done === s.total)(window.__viewer.satellite())",
+            "(s => s.total > 0 && s.done + s.bad === s.total)"
+            "(window.__viewer.satellite())",
             timeout=60000,
         )
+        assert opened.js("window.__viewer.satellite().bad") == bad
+        # 0.5 m tiles are asked for only as stand-ins (the browser keeps the ones
+        # that several 0.25 m tiles share, so how many are asked for varies)
+        assert (18 in asked) == half_detail
         assert "Esri" in opened.js("window.__viewer.satellite().attr")
         # the photo shows the real ground: no made-up plants on it
         assert not _clutter_on_the_pad(opened)
         shot = _look_down(opened)
-        # where points 1 km north and 1 km east of the pad are in the 3D view
-        expected = opened.js(
-            """(() => { const c = window.__viewer.camera;
+        # where the marks are in the 3D view (three.js x is north, z is east)
+        expected = opened.page.evaluate(
+            """marks => { const c = window.__viewer.camera;
             const r = document.getElementById('cv').getBoundingClientRect();
-            return [[1000, 0, 0], [0, 0, 1000]].map(([x, y, z]) => {
-              const q = new THREE.Vector3(x, y, z).project(c);
-              return [(q.x + 1) / 2 * r.width, (1 - q.y) / 2 * r.height]; }); })()"""
+            return marks.map(([n, e]) => {
+              const q = new THREE.Vector3(n, 0, e).project(c);
+              return [(q.x + 1) / 2 * r.width, (1 - q.y) / 2 * r.height]; }); }""",
+            [[n, e] for n, e, _, _ in _MARKS],
         )
-        for (_, _, colour), (ex, ey) in zip(_MARKS, expected, strict=True):
+        for (_, _, colour, _), (ex, ey) in zip(_MARKS, expected, strict=True):
             found = _centre_of(shot, colour)
             assert found is not None, f"no {colour} mark on the ground"
             assert math.hypot(found[0] - ex, found[1] - ey) < 4.0

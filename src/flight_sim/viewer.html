@@ -292,8 +292,8 @@ var groundU={uCell:{value:1},uFrac:{value:0},uY:{value:0},uBase:{value:new THREE
   uReal:{value:0},uQual:{value:2},uGridA:{value:1},uSun:{value:new THREE.Vector3(0.5,0.7,0.5)},uLight:{value:new THREE.Vector2(0.55,0.75)},
   /* the satellite picture of the realistic look (see "satellite ground" below): metres to longitude and Mercator northing,
      and one picture per level */
-  uGeo:{value:new THREE.Vector4(0,0,1,0)},uImgP:{value:[new THREE.Vector4(),new THREE.Vector4(),new THREE.Vector4(),new THREE.Vector4()]},
-  uImg0:{value:null},uImg1:{value:null},uImg2:{value:null},uImg3:{value:null}};
+  uGeo:{value:new THREE.Vector4(0,0,1,0)},uImgP:{value:[new THREE.Vector4(),new THREE.Vector4(),new THREE.Vector4(),new THREE.Vector4(),new THREE.Vector4()]},
+  uImg0:{value:null},uImg1:{value:null},uImg2:{value:null},uImg3:{value:null},uImg4:{value:null}};
 function ringGeometry(){
   var SEC=96, r=0.05, radii=[], pos=[0,0,0], idx=[], i, j;
   for(; r<300000; r*=1.3) radii.push(r);
@@ -353,7 +353,7 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     '  return c*(0.86+0.28*fine);',
     '}',
     /* low swells and ripples in the ground, for the light only (the ground itself stays flat, as the simulation has it) */
-    'uniform vec4 uGeo; uniform vec4 uImgP[4]; uniform sampler2D uImg0, uImg1, uImg2, uImg3;',
+    'uniform vec4 uGeo; uniform vec4 uImgP[5]; uniform sampler2D uImg0, uImg1, uImg2, uImg3, uImg4;',
     /* p is (north, east) in metres from the pad; this is (longitude, Mercator northing) from the pad, in radians, the
        northing to second order in the latitude, which is within a few metres over the largest picture */
     'vec2 geo(vec2 p){ float ph=p.x*uGeo.x; return vec2(p.y*uGeo.y, ph*uGeo.z*(1.0+0.5*ph*uGeo.w)); }',
@@ -383,7 +383,7 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
        the branch, so neighbouring pixels always agree on what they are differencing */
     /* the satellite picture, where it has loaded; the drawn desert shows through wherever it has not */
     '    vec2 gg=geo(p); float T=1.0; vec3 pic=vec3(0.0);',
-    '    pic=layer(pic,uImg0,uImgP[0],gg,T); pic=layer(pic,uImg1,uImgP[1],gg,T); pic=layer(pic,uImg2,uImgP[2],gg,T); pic=layer(pic,uImg3,uImgP[3],gg,T);',
+    '    pic=layer(pic,uImg0,uImgP[0],gg,T); pic=layer(pic,uImg1,uImgP[1],gg,T); pic=layer(pic,uImg2,uImgP[2],gg,T); pic=layer(pic,uImg3,uImgP[3],gg,T); pic=layer(pic,uImg4,uImgP[4],gg,T);',
     '    float cov=1.0-T; vec3 base=pic; if(T>0.001) base+=desert(p,fw)*T;',
     '    float h=0.0; if(uQual>1.5&&fw<8.0) h=relief(p,fw);',
     '    vec2 dpx=dFdx(p), dpy=dFdy(p); float dhx=dFdx(h), dhy=dFdy(h);',
@@ -412,15 +412,19 @@ function setGrid(camHeight,rocketLen,camDist){
 
 /* ---------- satellite ground (realistic look only) ----------
    With the launch site's latitude and longitude in the telemetry, the realistic ground is a satellite picture of the site,
-   loaded live from Esri's World Imagery (free, no key). It is four levels of 8 x 8 map tiles, each level covering four times
-   the width of the one before at a quarter of the detail: about 2 km at 1 m a pixel, 8 km, 34 km and 134 km, centred half way
+   loaded live from Esri's World Imagery (free, no key). It is five levels of 8 x 8 map tiles, each level covering four times
+   the width of the one before at a quarter of the detail: about 500 m at 0.25 m a pixel round the pad, then 2 km at 1 m a
+   pixel, 8 km, 34 km and 134 km; all but the first are centred half way
    between the pad and the landing point. The ground shader turns each point's distance north and east of the pad into
    longitude and Mercator northing and draws the finest picture that covers it. Unloaded tiles are clear, so the drawn desert
    shows through until they arrive, or for good when there is no internet: the realistic look is then as it always was.
    Nothing is fetched in the Engineering look, or for data with no launch site. */
-var SAT_URL='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+var SAT_URL='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false';
 var SAT_ATTR='Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
-var SAT_ZOOM=[11,13,15,17], SAT_N=8, SAT_TILE=256, SAT_PX=SAT_N*SAT_TILE, SAT_PARALLEL=8;
+/* the last level, about 0.25 m a pixel over 500 m, is centred on the pad itself, where the camera is close to the ground the
+   longest; where Esri has nothing that fine it answers with an error (blankTile=false), not a grey placeholder, and the
+   1 m level shows */
+var SAT_ZOOM=[11,13,15,17,19], SAT_ON_PAD=[false,false,false,false,true], SAT_N=8, SAT_TILE=256, SAT_PX=SAT_N*SAT_TILE, SAT_PARALLEL=8;
 var WGS84_A=6378137, WGS84_E2=0.00669437999014;
 var sat={site:null,cN:0,cE:0,key:'',gen:0,levels:[],done:0,bad:0,total:0,queue:[],busy:0,upload:0};
 SAT_ZOOM.forEach(function(z,i){
@@ -432,6 +436,7 @@ SAT_ZOOM.forEach(function(z,i){
 /* world pixel of a latitude and longitude on the Web Mercator map at zoom z */
 function mercPx(latDeg,lonDeg,z){ var W=SAT_TILE*Math.pow(2,z), s=Math.sin(latDeg/DEG);
   return [(lonDeg+180)/360*W, (0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*W]; }
+function satUrl(z,x,y){ return SAT_URL.replace('{z}',z).replace('{y}',y).replace('{x}',x); }
 function satFailed(){ return sat.total>0&&sat.bad===sat.total; }
 /* the picture is on the ground: some of it has loaded (in the realistic look) */
 function satShown(){ return LOOK==='real'&&sat.done>0; }
@@ -447,9 +452,18 @@ function satNext(){
   while(sat.busy<SAT_PARALLEL&&sat.queue.length){
     (function(job,gen){
       var img=new Image(); img.crossOrigin='anonymous'; sat.busy++;
-      img.onload=function(){ sat.busy--; if(gen!==sat.gen) return; var l=sat.levels[job.l];
-        l.ctx.drawImage(img,job.i*SAT_TILE,job.j*SAT_TILE); l.dirty=true; sat.done++; satUpload(); satStatus(); satNext(); };
-      img.onerror=function(){ sat.busy--; if(gen!==sat.gen) return; sat.bad++;
+      img.onload=function(){ sat.busy--; if(gen!==sat.gen) return; var l=sat.levels[job.l], d=SAT_TILE;
+        /* a stand-in from the zoom below fills the square with the quarter of it that covers this tile, at twice the size */
+        if(job.up) l.ctx.drawImage(img,job.qx*d/2,job.qy*d/2,d/2,d/2,job.i*d,job.j*d,d,d); else l.ctx.drawImage(img,job.i*d,job.j*d);
+        l.dirty=true; sat.done++; satUpload(); satStatus(); satNext(); };
+      img.onerror=function(){ sat.busy--; if(gen!==sat.gen) return;
+        /* no imagery this fine here: try the tile of the zoom below (half the detail), if that is still finer than the next
+           level down; otherwise the square stays clear and the next level shows. Not when nothing has loaded at all (no
+           internet), so a page offline does not ask for every tile twice */
+        var z=SAT_ZOOM[job.l];
+        if(!job.up&&sat.done>0&&job.l>0&&z-1>SAT_ZOOM[job.l-1]){
+          sat.queue.unshift({l:job.l,i:job.i,j:job.j,up:1,qx:job.x&1,qy:job.y&1,url:satUrl(z-1,job.x>>1,job.y>>1)}); satNext(); return; }
+        sat.bad++;
         if(satFailed()&&LOOK==='real') satNote('No satellite picture (no internet?): the ground is drawn instead.'); satStatus(); satNext(); };
       img.src=job.url;
     })(sat.queue.shift(),sat.gen);
@@ -465,13 +479,13 @@ function satLoad(){
   groundU.uGeo.value.set(1/Mr,1/(Nr*cs),1/cs,sn/cs);
   var latC=lat+sat.cN/Mr*DEG, lonC=lon+sat.cE/(Nr*cs)*DEG, jobs=[];
   sat.levels.forEach(function(l,li){
-    var n=Math.pow(2,l.z), p=mercPx(lat,lon,l.z), c=mercPx(latC,lonC,l.z);
+    var n=Math.pow(2,l.z), p=mercPx(lat,lon,l.z), c=SAT_ON_PAD[li]?p:mercPx(latC,lonC,l.z);
     var tx0=Math.round(c[0]/SAT_TILE-SAT_N/2), ty0=clamp(Math.round(c[1]/SAT_TILE-SAT_N/2),0,n-SAT_N);
     l.ctx.clearRect(0,0,SAT_PX,SAT_PX); l.dirty=true;
     groundU.uImgP.value[li].set((p[0]-tx0*SAT_TILE)/SAT_PX,1-(p[1]-ty0*SAT_TILE)/SAT_PX,SAT_TILE*n/(TAU*SAT_PX),1);
     for(var i=0;i<SAT_N;i++) for(var j=0;j<SAT_N;j++){
       var x=((tx0+i)%n+n)%n, y=ty0+j;
-      jobs.push({l:li,i:i,j:j,o:li*1e3+Math.hypot(i+0.5-SAT_N/2,j+0.5-SAT_N/2),url:SAT_URL.replace('{z}',l.z).replace('{y}',y).replace('{x}',x)});
+      jobs.push({l:li,i:i,j:j,x:x,y:y,o:li*1e3+Math.hypot(i+0.5-SAT_N/2,j+0.5-SAT_N/2),url:satUrl(l.z,x,y)});
     }
   });
   /* the widest level first, so the whole view fills in quickly, then the finer ones from their middle out */
