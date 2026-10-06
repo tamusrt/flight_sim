@@ -1,6 +1,8 @@
 """Engine model tests."""
 
+from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,6 +17,8 @@ from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_properties import RocketProperties
 
 _MOTOR_CSV = "tests/test_data/standard_motor.csv"
+_MOTOR_ENG = "tests/test_data/standard_motor.eng"
+_MOTOR_RSE = "tests/test_data/standard_motor.rse"
 
 # Grain dimensions in m
 _OUTER_RADIUS, _CORE_RADIUS, _LENGTH = 0.04, 0.015, 0.75
@@ -109,6 +113,45 @@ def test_solid_engine_from_csv_integrates_the_thrust_curve() -> None:
     assert engine.get_thrust(-0.1) == 0.0
     assert engine.get_thrust(4.1) == 0.0
     assert engine.burned_fraction(3.0) == pytest.approx(5500.0 / 6000.0)
+
+
+def test_solid_engine_from_eng_starts_the_curve_at_zero() -> None:
+    """The first motor's curve is read, ramping up from an implicit (0, 0)."""
+    engine = SolidEngine.from_eng(_MOTOR_ENG, _GRAIN, _CASING)
+
+    # 100 N*s of ramp, 3800 N*s of hold and 2000 N*s of tail-off
+    assert engine.total_impulse == pytest.approx(5900.0)
+    assert engine.get_thrust(0.05) == pytest.approx(1000.0)
+    assert engine.get_thrust(3.0) == pytest.approx(1000.0)
+
+
+def test_solid_engine_from_rse_reads_the_first_motor() -> None:
+    """The first motor's curve matches the standard CSV curve."""
+    engine = SolidEngine.from_rse(_MOTOR_RSE, _GRAIN, _CASING)
+
+    assert engine.times == pytest.approx([0.0, 2.0, 4.0])
+    assert engine.thrusts == pytest.approx([2000.0, 2000.0, 0.0])
+
+
+@pytest.mark.parametrize(
+    ("loader", "suffix", "contents"),
+    [
+        (SolidEngine.from_eng, ".eng", "; Only a comment\n"),
+        (SolidEngine.from_rse, ".rse", "<engine-database/>"),
+    ],
+)
+def test_solid_engine_rejects_a_motor_file_without_a_curve(
+    loader: Callable[[str, PropellantGrain, MassProperties], SolidEngine],
+    suffix: str,
+    contents: str,
+    tmp_path: Path,
+) -> None:
+    """A motor file with no thrust samples cannot build a motor."""
+    motor_file = tmp_path / f"empty{suffix}"
+    motor_file.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no thrust curve"):
+        loader(str(motor_file), _GRAIN, _CASING)
 
 
 def test_late_ignition_delays_the_burn() -> None:
