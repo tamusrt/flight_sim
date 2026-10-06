@@ -1,0 +1,17 @@
+<engine-database>
+  <engine-list>
+    <engine mfg="SRT" code="Standard" dia="80." len="750." propWt="5000." initWt="8000.">
+      <data>
+        <eng-data t="0.0" f="2000.0" m="5000." cg="375."/>
+        <eng-data t="2.0" f="2000.0" m="1666.7" cg="375."/>
+        <eng-data t="4.0" f="0.0" m="0." cg="375."/>
+      </data>
+    </engine>
+    <engine mfg="SRT" code="Second" dia="80." len="750." propWt="5000." initWt="8000.">
+      <data>
+        <eng-data t="0.0" f="1000.0" m="5000." cg="375."/>
+        <eng-data t="1.0" f="0.0" m="0." cg="375."/>
+      </data>
+    </engine>
+  </engine-list>
+</engine-database>
