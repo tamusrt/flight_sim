@@ -433,6 +433,8 @@ SAT_ZOOM.forEach(function(z,i){
 function mercPx(latDeg,lonDeg,z){ var W=SAT_TILE*Math.pow(2,z), s=Math.sin(latDeg/DEG);
   return [(lonDeg+180)/360*W, (0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*W]; }
 function satFailed(){ return sat.total>0&&sat.bad===sat.total; }
+/* the picture is on the ground: some of it has loaded (in the realistic look) */
+function satShown(){ return LOOK==='real'&&sat.done>0; }
 function satStatus(){
   var el=$('satAttr'); el.hidden=LOOK!=='real'||sat.key===''||satFailed(); if(el.hidden) return;
   var left=sat.total-sat.done-sat.bad; el.textContent=SAT_ATTR+(left>0?' · loading '+(sat.done+sat.bad)+'/'+sat.total:'');
@@ -820,11 +822,12 @@ function updateLook(target,Ld){
   /* under the rocket, offset away from the sun to where its shadow lands */
   shadowSheet.position.set(target.x-SUN_DIR.x/Math.max(SUN_DIR.y,0.2)*h,0.004+0.0004*camera.position.distanceTo(target),target.z-SUN_DIR.z/Math.max(SUN_DIR.y,0.2)*h);
   var sz=Math.max(box*4,Ld*30); shadowSheet.scale.set(sz,sz,1);
-  /* grass, bushes and stones round where you are looking, when it is near the ground; none on the concrete pad */
+  /* grass, bushes and stones round where you are looking, when it is near the ground; none on the concrete pad, and none
+     on the satellite picture (it shows the real ground, so made-up plants would sit on top of it) */
   var gx=target.y<350?target.x:camera.position.x, gz=target.y<350?target.z:camera.position.z;
   var near=Math.hypot(camera.position.x-gx,camera.position.y,camera.position.z-gz)<600;
   var slab=Math.max(8,ROCKET_LEN*scaleMult*1.6), wv=ds&&ds.wind?ds.wind:[0,0,0];
-  CLUTTER.update(near&&qLevel>=4,gx,gz,slab*0.72+0.4,performance.now()/1000,windTmp.set(wv[2]||0,0,wv[1]||0).multiplyScalar(0.012).clampLength(0,0.2));
+  CLUTTER.update(near&&qLevel>=4&&!satShown(),gx,gz,slab*0.72+0.4,performance.now()/1000,windTmp.set(wv[2]||0,0,wv[1]||0).multiplyScalar(0.012).clampLength(0,0.2));
   /* the rocket's reflections: once when the look starts, then only when the height has changed a lot (and not at all on the
      lowest quality level). This comes BEFORE the shadow picture is asked for, because drawing the reflection would use it up. */
   if(envDirty||(qLevel>=2&&Math.abs(target.y-envAlt)>500)) updateEnv(target);
@@ -1993,7 +1996,7 @@ setView('follow'); cam.dist=cam.distT; /* and starts at its framing, with no zoo
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
 window.__viewer={frames:0,frameError:null,get usingDemo(){ return !!(ds&&ds.demo); },get loadError(){ return loadError; },get name(){ return ds&&ds.name; },
   get td(){ return {sc:TD.sc,t:TD.t}; },get rail(){ return {length:RAIL.length,tilt:RAIL.tilt,t:REC.rail&&REC.rail.t}; },get landed(){ return REC.land; },
-  satellite:function(){ return {key:sat.key,done:sat.done,bad:sat.bad,total:sat.total,attr:$('satAttr').hidden?'':$('satAttr').textContent}; },
+  satellite:function(){ return {shown:satShown(),clutter:CLUTTER.group.visible,key:sat.key,done:sat.done,bad:sat.bad,total:sat.total,attr:$('satAttr').hidden?'':$('satAttr').textContent}; },
   quality:function(){ return {sel:QSEL,level:qLevel,pixelRatio:pixelRatio(),puffs:puffs.count(),text:$('qtext').textContent}; },spread:function(m){ if(window.__viewerSpread) window.__viewerSpread(m); },set:function(t){tNow=t;prevT=t},view:setView,cam:cam,camera:camera,rocketLength:ROCKET_LEN,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
 /* ---------- OpenRocket's flight path for the same launch condition ----------
    On the dynamics site the History tab keeps OpenRocket's newest run of every simulation (data.json lists them,

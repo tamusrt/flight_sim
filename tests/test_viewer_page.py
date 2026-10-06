@@ -415,6 +415,15 @@ def _realistic(opened: _Opened) -> None:
     opened.page.click('#look button[data-l="real"]')
 
 
+def _clutter_on_the_pad(opened: _Opened) -> bool:
+    """Whether the made-up grass, bushes and stones are drawn round the rocket on
+    its pad, at the quality that draws them."""
+    opened.page.select_option("#quality", "high")
+    opened.js("window.__viewer.set(-2)")
+    opened.page.wait_for_timeout(600)
+    return bool(opened.js("window.__viewer.satellite().clutter"))
+
+
 def _look_down(opened: _Opened) -> Any:
     """Look straight down on the pad from 3 km, with nothing drawn over the ground,
     and return a screenshot of the 3D view alone."""
@@ -499,6 +508,8 @@ def test_the_satellite_picture_lies_where_the_site_is(
             timeout=60000,
         )
         assert "Esri" in opened.js("window.__viewer.satellite().attr")
+        # the photo shows the real ground: no made-up plants on it
+        assert not _clutter_on_the_pad(opened)
         shot = _look_down(opened)
         # where points 1 km north and 1 km east of the pad are in the 3D view
         expected = opened.js(
@@ -530,6 +541,7 @@ def test_the_realistic_look_draws_its_own_ground_without_the_imagery(
         )
         assert opened.js("window.__viewer.satellite().attr") == ""
         assert "No satellite picture" in opened.text("#scaleNote")
+        assert _clutter_on_the_pad(opened)
         np = pytest.importorskip("numpy")
         shot = np.asarray(_look_down(opened)).astype(int)
         height, width = shot.shape[:2]
