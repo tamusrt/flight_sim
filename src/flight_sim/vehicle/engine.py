@@ -2,7 +2,8 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Self
+from xml.etree import ElementTree
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
@@ -133,6 +134,84 @@ class SolidEngine(Engine, UnitChecked):
             raise ValueError("Thrust curve must deliver some impulse")
         object.__setattr__(self, "_ignition_s", float(self.ignition_time.m_as("s")))
         object.__setattr__(self, "_impulses", impulses)
+
+    @classmethod
+    def from_eng(
+        cls, motor_file_path: str, grain: PropellantGrain, casing: MassProperties
+    ) -> Self:
+        """Build a solid motor from the first motor in a RASP .eng file.
+
+        Args:
+            motor_file_path (str): RASP file whose header line is followed by
+                "time thrust" lines, in seconds from ignition and newtons.
+            grain (PropellantGrain): Propellant burned over the curve.
+            casing (MassProperties): Everything in the motor but the propellant.
+
+        Returns:
+            SolidEngine: Motor igniting at time zero.
+
+        Raises:
+            ValueError: If the file holds no thrust curve.
+        """
+        with open(motor_file_path, encoding="utf-8", errors="replace") as file:
+            # Drop ";" comments and blank lines
+            lines = [fields for line in file if (fields := line.split(";")[0].split())]
+        samples = []
+        # The curve follows the header and ends at the next motor's header
+        for fields in lines[1:]:
+            try:
+                samples.append((float(fields[0]), float(fields[1])))
+            except (ValueError, IndexError):
+                break
+        return cls._from_samples(samples, grain, casing)
+
+    @classmethod
+    def from_rse(
+        cls, motor_file_path: str, grain: PropellantGrain, casing: MassProperties
+    ) -> Self:
+        """Build a solid motor from the first motor in a RockSim .rse file.
+
+        Args:
+            motor_file_path (str): RockSim XML file whose "eng-data" elements
+                give the time "t" in seconds from ignition and thrust "f" in N.
+            grain (PropellantGrain): Propellant burned over the curve.
+            casing (MassProperties): Everything in the motor but the propellant.
+
+        Returns:
+            SolidEngine: Motor igniting at time zero.
+
+        Raises:
+            ValueError: If the file holds no thrust curve.
+        """
+        motor = ElementTree.parse(motor_file_path).find(".//engine")
+        samples = (
+            []
+            if motor is None
+            else [
+                (float(point.attrib["t"]), float(point.attrib["f"]))
+                for point in motor.iter("eng-data")
+            ]
+        )
+        return cls._from_samples(samples, grain, casing)
+
+    @classmethod
+    def _from_samples(
+        cls,
+        samples: list[tuple[float, float]],
+        grain: PropellantGrain,
+        casing: MassProperties,
+    ) -> Self:
+        """Build a motor from (time, thrust) samples, adding (0, 0) if they start later.
+
+        Raises:
+            ValueError: If there are no samples.
+        """
+        if not samples:
+            raise ValueError("Motor file holds no thrust curve")
+        if samples[0][0] > 0.0:
+            samples = [(0.0, 0.0), *samples]
+        times, thrusts = np.array(samples, dtype=float).T
+        return cls(times=times, thrusts=thrusts, grain=grain, casing=casing)
 
     @property
     def total_impulse(self) -> float:
