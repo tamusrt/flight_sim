@@ -9,6 +9,7 @@ from flight_sim.__main__ import (
     INVICTUS,
     LAUNCH_RAIL,
     RECOVERY,
+    get_default_config,
     get_default_state,
     get_profile_properties,
 )
@@ -49,6 +50,17 @@ def test_viewer_page_embeds_the_logged_flight(tmp_path: Path) -> None:
     ]
     assert data["rail"]["length"] == 10.0
     assert data["recovery"]["cord_to_body"] == 364 * 0.0254
+
+
+def test_launch_site_is_logged_for_the_map() -> None:
+    """The pad's latitude, longitude and elevation go to the viewer."""
+    log = TelemetryLog(get_profile_properties(INVICTUS), get_default_config())
+
+    site = json.loads(log.to_json())["site"]
+
+    assert site["lat_deg"] == pytest.approx(31.0311)
+    assert site["lon_deg"] == pytest.approx(-103.54007)
+    assert site["elevation_m"] == pytest.approx(890.016)
 
 
 def test_recovery_frame_is_logged_beside_the_state(

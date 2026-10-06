@@ -26,7 +26,12 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from flight_sim.__main__ import RECOVERY, RocketProfile
+from flight_sim.__main__ import (
+    LAUNCH_LATITUDE_DEG,
+    LAUNCH_LONGITUDE_DEG,
+    RECOVERY,
+    RocketProfile,
+)
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import LayeredWind
 from flight_sim.motor_file import MotorFile, eng_for_sim, load_motor
@@ -209,4 +214,6 @@ def profile_from_ork(  # pylint: disable=too-many-locals
         pad_pressure_pa=pad_pressure_pa(
             cond.get("basepressure", 101325.0), pad_k, cond["launchaltitude"]
         ),
+        launch_latitude_deg=cond.get("launchlatitude", LAUNCH_LATITUDE_DEG),
+        launch_longitude_deg=cond.get("launchlongitude", LAUNCH_LONGITUDE_DEG),
     )
