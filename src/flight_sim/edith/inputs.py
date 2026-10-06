@@ -114,6 +114,37 @@ class SiteConfig:  # pylint: disable=too-many-instance-attributes
     target_apogee_tolerance: float = 0.05
     note: str = field(default=ASSUMED)
 
+    def __post_init__(self) -> None:
+        """Refuse settings that cannot be right, with the setting's name, before any
+        flight is flown (a typo would otherwise give NaN draws or a crash minutes in)."""
+        problems = []
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.name in ("name", "note"):
+                if not isinstance(value, str):
+                    problems.append(f"{f.name} must be text")
+                continue
+            if value is None and f.name == "wind_mean_m_s":
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                problems.append(f"{f.name} must be a number, not {value!r}")
+                continue
+            if not math.isfinite(value):
+                problems.append(f"{f.name} must be a finite number, not {value!r}")
+            elif f.name.endswith("_sd") or f.name.endswith(("_sd_deg", "_sd_k", "_sd_pa")):
+                if value < 0.0:
+                    problems.append(f"{f.name} (a spread) cannot be negative")
+            elif value <= 0.0:
+                problems.append(f"{f.name} must be above zero")
+        if not problems:
+            if self.wind_mean_m_s is not None and self.wind_mean_m_s >= self.wind_launch_limit_m_s:
+                problems.append("wind_mean_m_s must be below wind_launch_limit_m_s "
+                                "(it is the mean of the days that are flown)")
+            if self.target_apogee_tolerance >= 1.0:
+                problems.append("target_apogee_tolerance is a share of the target: 0.05 is 5%")
+        if problems:
+            raise ValueError("EDITH site settings: " + "; ".join(problems) + ".")
+
     def save(self, path: str | Path) -> None:
         """Write the settings as JSON, to edit."""
         Path(path).write_text(
@@ -124,6 +155,8 @@ class SiteConfig:  # pylint: disable=too-many-instance-attributes
     def load(cls, path: str | Path) -> SiteConfig:
         """Read settings written by ``save``; missing keys keep their defaults."""
         data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} must hold one JSON object of settings")
         known = {f.name for f in fields(cls)}
         unknown = sorted(set(data) - known)
         if unknown:

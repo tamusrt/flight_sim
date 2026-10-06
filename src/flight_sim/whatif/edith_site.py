@@ -164,6 +164,15 @@ def _read_cache(cache: Path) -> dict[str, Any] | None:
         return None
 
 
+def _readable(path: str) -> None:
+    """Give a file the permissions a normally created one gets (read for everyone the
+    umask allows): ``tempfile.mkstemp`` makes it owner-only, which a shared folder or
+    a build cache would then keep."""
+    mask = os.umask(0)
+    os.umask(mask)
+    os.chmod(path, 0o666 & ~mask)
+
+
 def _write_cache(cache: Path, report: dict[str, Any]) -> None:
     """Keep the report as the only kept result, written in one step.
 
@@ -180,6 +189,7 @@ def _write_cache(cache: Path, report: dict[str, Any]) -> None:
             json.dump(report, file)
         for old in cache.parent.glob("edith-*.json"):
             old.unlink()
+        _readable(temporary)  # mkstemp makes it owner-only; the file is not secret
         os.replace(temporary, cache)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
@@ -355,6 +365,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     key = cache_key(args, site, settings)
     cache = Path(args.cache) / f"edith-{key}.json" if args.cache else None
     kept = _read_cache(cache) if cache is not None and cache.is_file() else None
+    if kept is None and cache is not None and getattr(args, "reuse_kept", False):
+        # the build kept the last pages for a design change too small to fly again: keep EDITH's last result too
+        for earlier in sorted(cache.parent.glob("edith-*.json")):
+            kept = _read_cache(earlier)
+            if kept is not None:
+                cache = earlier
+                break
     if cache is not None and kept is not None:
         print(
             f"EDITH: reusing the result kept for these inputs ({cache.name})",
@@ -402,6 +419,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--round-size", type=int, default=64)
     parser.add_argument("--max-rounds", type=int, default=8)
     parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument(
+        "--reuse-kept",
+        action="store_true",
+        help="use the result kept in --cache even if it was made for an earlier version "
+        "of the design (the site build asks for this after a very small design change)",
+    )
     parser.add_argument(
         "--accepted",
         default="",

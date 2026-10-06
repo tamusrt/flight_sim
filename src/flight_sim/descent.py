@@ -76,6 +76,13 @@ class DragStage:
     deploy_altitude_m: float | None = None
     after: str | None = None
 
+    def __post_init__(self) -> None:
+        """A negative or NaN drag area or fill distance gives nonsense, not an error
+        (a "landing" at kilometres per second), so it is refused here by name."""
+        for label, value in (("drag area", self.drag_area_m2), ("fill distance", self.fill_distance_m)):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{self.name}: the {label} must be zero or more, not {value!r}")
+
 
 @dataclass(frozen=True)
 class Parachute:
@@ -567,6 +574,11 @@ def simulate_descent(  # pylint: disable=too-many-arguments
         elapsed += h
         y = new
         descent.after_step(elapsed, y)
+        if not np.all(np.isfinite(y)):  # stop at once instead of stepping NaN for minutes
+            raise FloatingPointError(
+                f"the descent's position or speed stopped being a number {elapsed:.1f} s "
+                "after apogee"
+            )
 
         if y[0] <= 1e-6:
             y[0] = 0.0

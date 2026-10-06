@@ -284,7 +284,17 @@ def _write_atomically(target: Path, text: str) -> None:
     try:
         with os.fdopen(handle, "w", encoding="utf-8", newline="") as file:
             file.write(text)
+        _readable(temporary)  # mkstemp makes it owner-only; the file is not secret
         os.replace(temporary, target)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def _readable(path: str) -> None:
+    """Give a file the permissions a normally created one gets (read for everyone the
+    umask allows): ``tempfile.mkstemp`` makes it owner-only, which a shared folder or
+    a build cache would then keep."""
+    mask = os.umask(0)
+    os.umask(mask)
+    os.chmod(path, 0o666 & ~mask)

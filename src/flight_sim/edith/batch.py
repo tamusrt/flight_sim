@@ -6,7 +6,8 @@ evenly):
 
 1. **Pilot.** The first round flies the full 6-DOF climb for every run. These
    climbs train the climb surrogate (``surrogate``). A few of them (three typical
-   runs, and the three closest to an IREC limit) are also flown with the full RECO as
+   runs, and the three closest to a descent limit: drogue rate, main altitude,
+   opening load) are also flown with the full RECO as
    well as FastRECO, with the gusts switched off in both so that only the model
    difference shows, to measure how far FastRECO is from it. This is a spot check
    on a handful of flights, not a guarantee for every flight or every rocket.
@@ -26,8 +27,14 @@ evenly):
    failure, and apogee at least the target) are both narrower than
    ``target_half_width`` (plus or minus 4% unless changed), at ``max_rounds``, or at
    the time limit. The other chances (each check, any warning, the apogee range) are
-   not watched and can be wider. A 90% interval on a chance near 50% is about plus or
-   minus 3.6% with 512 flights, so a target much below 4% needs more flights.
+   not watched and can be wider. For a chance near 50% the Wilson interval alone is
+   about plus or minus 3.6% with 512 flights, but the reported interval is the wider
+   of that and the spread between the rounds (from only a few rounds, so it is
+   noisy): in a simulation of this rule with a 50% chance, the target was met at 512
+   flights only about 40% of the time, and the batch usually needed 640 to 1,024.
+   When it stops, the interval holds the true chance about 90% of the time and the
+   estimate is within 4% of it about 95% of the time. A chance far from 50% (say 5 or
+   20%) stops at 256 to 384 flights. A target much below 4% needs more flights.
 
 Every run's inputs depend only on the batch seed and its index, so the answer is
 the same on any number of cores.
@@ -241,6 +248,8 @@ _SPREAD_KEYS = (
     "rail_v",
     "load_ratio",
     "descent_s",
+    "land_east",
+    "land_north",
 )
 
 
@@ -293,7 +302,10 @@ def _footprint(
         [
             (s["final"]["land_east"], s["final"]["land_north"])
             for s in samples
-            if s["final"].get("landed") and "land_east" in s["final"]
+            if s["final"].get("landed")
+            # one landing that is not a number would make every footprint number NaN
+            and failures.finite(s["final"].get("land_east"))
+            and failures.finite(s["final"].get("land_north"))
         ]
     )
     if len(points) < 3:
@@ -375,7 +387,11 @@ def _cloud(samples: list[dict[str, Any]], site: SiteConfig) -> dict[str, Any]:
             continue
         height = float(r["apogee_m"])
         finite = math.isfinite(height)
-        landed = bool(r.get("landed")) and "land_east" in r
+        landed = (
+            bool(r.get("landed"))
+            and failures.finite(r.get("land_east"))
+            and failures.finite(r.get("land_north"))
+        )
         rows.append(
             {
                 "apogee": [
@@ -773,19 +789,43 @@ def _reco_check(pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _same_outcome(fast: dict[str, Any], full: dict[str, Any]) -> bool:
-    """Whether two flights of the same draw have the same red and amber checks."""
-    return failures.any_failure(fast) == failures.any_failure(full) and (
-        failures.any_warning(fast) == failures.any_warning(full)
-    )
+    """Whether two flights of the same draw trigger exactly the same checks.
+
+    Check by check, not just "any failure" and "any warning": a warning that fires on
+    every flight (the main altitude, say) would otherwise hide a disagreement in
+    another check of the same colour.
+    """
+    return failures.statuses(fast) == failures.statuses(full)
+
+
+# The numbers the descent model decides: the flights closest to their limits are the
+# ones the FastRECO check should look at (the climb's numbers are the same in both)
+_DESCENT_KEYS = frozenset({"drogue_v", "main_alt", "load_ratio"})
+
+
+def _nearest(result: dict[str, Any], limits: tuple[tuple[str, float, float], ...]) -> float:
+    """How close a flight is to any of ``limits`` (key, limit, tolerance), in tolerances."""
+    best = math.inf
+    for key, limit, tolerance in limits:
+        value = result.get(key)
+        if failures.finite(value):
+            best = min(best, abs(float(value) - limit) / tolerance)
+    return best
 
 
 def _close_to_a_limit(
     results: list[dict[str, Any]], skip: int, count: int
 ) -> list[int]:
-    """Indexes of the ``count`` flights nearest to a check limit (leaving out the first
-    ``skip``, which are already checked), nearest first."""
+    """Indexes of the ``count`` flights nearest to a descent limit (leaving out the
+    first ``skip``, which are already checked), nearest first."""
+    descent = tuple(
+        (c.key, limit, c.tolerance)
+        for c in failures.CHECKS
+        if c.key in _DESCENT_KEYS and c.tolerance > 0.0
+        for limit in failures.limits(c)
+    )
     nearness = [
-        (failures.closeness(r), i)
+        (_nearest(r, descent), i)
         for i, r in enumerate(results)
         if i >= skip and r.get("sim_ok") and r.get("landed")
     ]
@@ -812,6 +852,7 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
     pairs: list[dict[str, Any]] = []
     surrogate: Surrogate | None = None
     top_m = 0.0
+    surrogate_off: str | None = None
     full_climbs = predicted_climbs = reflown = borderline_uncapped = 0
     summary: dict[str, Any] = {}
     stop_reason = "reached the largest number of rounds"
@@ -820,7 +861,7 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
         for round_index in range(settings.max_rounds):
             unit = _sobol(settings.seed, round_index, size)
             seeds = [_run_seed(settings.seed, round_index, i) for i in range(size)]
-            if round_index == 0 or not settings.surrogate:
+            if round_index == 0 or surrogate is None:
                 jobs: list[tuple[Any, ...]] = [
                     ("ascent", i, unit[i].tolist(), seeds[i], None) for i in range(size)
                 ]
@@ -867,7 +908,12 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
                             for i, _ in good
                         ]
                     )
-                    surrogate = Surrogate(x, [r["payload"] for _, r in good])
+                    try:
+                        surrogate = Surrogate(x, [r["payload"] for _, r in good])
+                    except ValueError as why:  # too few good climbs to fit it: every
+                        # later round flies its climbs in full instead of stopping
+                        surrogate = None
+                        surrogate_off = str(why)
             else:
                 assert surrogate is not None
                 predictions = [
@@ -967,6 +1013,10 @@ def run_batch(  # pylint: disable=too-many-locals,too-many-statements,too-many-n
             "surrogate_climbs": predicted_climbs,
             "reflown_for_closeness_or_audit": reflown,
             "borderline_not_reflown_over_cap": borderline_uncapped,
+            "surrogate_not_used_because": surrogate_off,
+            "fast_reco_fallbacks": sum(
+                "reco_fallback" in s["final"] for s in samples
+            ),
             "surrogate_error": (
                 {k: round(v, 3) for k, v in surrogate.error.items()}
                 if surrogate is not None

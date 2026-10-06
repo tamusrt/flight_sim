@@ -33,6 +33,11 @@ exactly however long the step, one draw per step. Each descent gets its own
 gusts, seeded from where and when the last canopy opened, so a batch's flights
 differ and a repeated flight is the same. ``turbulence=0`` turns them off.
 
+Two descents it cannot fly correctly raise ``Unsupported`` instead of giving a
+wrong answer: a canopy still opening at the ground, and a main commanded before
+its descent starts (a main altitude at or above the apogee). EDITH flies those
+with the full RECO.
+
 What is not simulated is the pendulum swing of the rocket under the canopy and
 the bounce of the shock cord, and the nose section leaving the rocket. See
 ``tests/test_fast_reco.py`` for how close the landing point and loads are to
@@ -81,6 +86,16 @@ _G0 = 9.80665
 _NO_SEPARATION = Separation(False, 0.0, math.inf, 0.0, 0.0, [0.0], [0.0])
 _OPENING_POINTS = 49  # Points of the opening's solution along its fill distance
 _MAX_STEPS = 200_000
+
+
+class Unsupported(RuntimeError):
+    """A descent FastRECO cannot fly correctly; fly it with the full RECO instead.
+
+    Two cases: a canopy still opening when it reaches the ground (a main opened very
+    low: FastRECO would report the settled, slow speed instead of the real impact),
+    and a main commanded before FastRECO's descent starts (a main altitude at or
+    above the apogee: the timing and the opening load would be wrong).
+    """
 
 
 @dataclass(frozen=True)
@@ -429,6 +444,11 @@ class _Fast:  # pylint: disable=too-many-instance-attributes
                 return t, y, opened_any
             air, wind = air_at(self.config, float(y[0]))
             solved = _opening(stage, self.cda, y[3:6], wind, air.air_density, self.mass)
+            if float(y[0]) + float(solved.move_m[0]) < 0.0:
+                raise Unsupported(
+                    f"{stage.name} opens at {float(y[0]):.0f} m and would still be "
+                    "opening at the ground"
+                )
             self.deployments.append(
                 Deployment(
                     name=stage.name,
@@ -535,6 +555,10 @@ class _Fast:  # pylint: disable=too-many-instance-attributes
                 break
             t_new, y_new, h = self._baro_step(t, y, new, h)
             t, y = t_new, y_new
+            if not np.all(np.isfinite(y)):  # stop at once instead of stepping NaN
+                raise FloatingPointError(
+                    "the descent's position or speed stopped being a number"
+                )
             if self.main_fire_s is not None and t >= self.main_fire_s - 1e-9:
                 self._fire_main(t, y)
             t, y, _ = self._open_due(t, y)
@@ -581,7 +605,12 @@ class _Fast:  # pylint: disable=too-many-instance-attributes
         ):
             command: float | None = None
             if self.baro_pressure >= self.command_pressure:  # already below the setting
-                command = max(t, self.detected_s + 1e-6)
+                # the main altitude was passed before this stage could see it (a main
+                # set at or above the apogee): the full model times that correctly
+                raise Unsupported(
+                    "the main altitude was already passed when the descent started "
+                    "(a main set at or above the apogee)"
+                )
             elif filtered_new >= self.command_pressure:
                 fraction = (self.command_pressure - self.baro_pressure) / max(
                     filtered_new - self.baro_pressure, 1e-12

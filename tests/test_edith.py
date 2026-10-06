@@ -1005,20 +1005,70 @@ def test_the_reco_check_compares_pass_or_fail_including_warnings_and_counts_skip
     assert _reco_check([]) is None
 
 
-def test_the_close_calls_chosen_for_the_reco_check_are_the_nearest_to_a_limit() -> None:
-    """The runs nearest a check limit (not the first ones) are picked, nearest first."""
+def test_the_close_calls_chosen_for_the_reco_check_are_the_nearest_to_a_descent_limit() -> (
+    None
+):
+    """The runs nearest a descent limit (not the first ones) are picked, nearest first;
+    a run close only to a climb limit (rail exit) is not, since both models fly the same climb."""
     results = [
         _flight(),
-        _flight(rail_v=15.5),
-        _flight(),
-        _flight(rail_v=15.3),
+        _flight(drogue_v=39.0),
+        _flight(rail_v=15.3),  # close to the rail limit only: no use to the descent check
+        _flight(main_alt=456.0),
         _flight(landed=False),
-        _flight(rail_v=16.5),
+        _flight(load_ratio=0.9),
     ]
     assert _close_to_a_limit(results, 1, 2) == [3, 1]
     assert _close_to_a_limit(results, 4, 2) == [5], (
         "the first ones are skipped; a flight that did not land is not chosen"
     )
+
+
+def test_the_reco_check_compares_check_by_check() -> None:
+    """Both models warning, but on different checks, is a disagreement."""
+    pair = {
+        "fast": _flight(main_alt=500.0),  # the main-altitude warning
+        "full": _flight(drogue_v=45.0),  # the drogue-rate warning
+        "fast_s": 0.1,
+        "full_s": 1.0,
+    }
+    assert _reco_check([pair])["disagreements"] == 1
+
+
+def test_a_nan_drogue_rate_or_main_altitude_is_missing_not_a_pass() -> None:
+    """Absent is 'no drogue'; there but NaN is a broken result, and fails its check."""
+    for key, check in (("drogue_v", "drogue_rate"), ("main_alt", "main_altitude")):
+        result = _good()
+        result[key] = float("nan")
+        assert key in failures.missing_values(result)
+        assert failures.statuses(result)[check]
+
+
+def test_a_landing_that_is_not_a_number_does_not_spoil_the_footprint() -> None:
+    """One NaN landing is left out of the footprint (and counted), not made NaN of it all."""
+    samples = [
+        {"round": 0, "index": i, "source": "ascent", "final": _flight(land_east=800.0 + 10 * i)}
+        for i in range(6)
+    ]
+    samples[2]["final"]["land_east"] = float("nan")
+    report = summarize(samples, [], [], None, SiteConfig(), Settings(workers=1))
+    assert report["footprint"]["n"] == 5
+    assert math.isfinite(report["footprint"]["ellipse90_semi_major_m"])
+    assert report["missing_numbers"]["by_value"].get("land_east") == 1
+    assert None in report["cloud"]["landing"]
+
+
+def test_site_settings_that_cannot_be_right_are_refused_by_name() -> None:
+    """A negative spread, a zero target or a mean wind over the launch limit stop the batch at once."""
+    with pytest.raises(ValueError, match="thrust_sd"):
+        SiteConfig(thrust_sd=-0.1)
+    with pytest.raises(ValueError, match="target_apogee_m"):
+        SiteConfig(target_apogee_m=0.0)
+    with pytest.raises(ValueError, match="wind_mean_m_s"):
+        SiteConfig(wind_mean_m_s=12.0, wind_launch_limit_m_s=11.0)
+    with pytest.raises(ValueError, match="rated_load_g"):
+        SiteConfig(rated_load_g=float("nan"))
+    SiteConfig(thrust_sd=0.0)  # no spread at all is allowed
 
 
 def test_calm_flights_of_both_reco_versions_land_close_together() -> None:
@@ -1036,6 +1086,22 @@ def test_calm_flights_of_both_reco_versions_land_close_together() -> None:
         < 0.03 * full["drift"]
     )
     assert failures.any_failure(fast) == failures.any_failure(full)
+
+
+def test_a_descent_fast_reco_refuses_is_flown_with_the_full_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FastRECO's 'cannot fly this one' sends that flight to the full RECO, and says so."""
+    from flight_sim import fast_reco  # pylint: disable=import-outside-toplevel
+
+    def refuse(self, request):  # type: ignore[no-untyped-def]
+        raise fast_reco.Unsupported("a main set at or above the apogee")
+
+    monkeypatch.setattr(fast_reco.FastRECO, "descend", refuse)
+    rocket = Rocket(_SPEC, SiteConfig())
+    result = rocket.fly(draw(_MIDDLE, rocket.site, rocket.nominal, 3), calm=True)
+    assert result["sim_ok"] and result["landed"], result.get("error")
+    assert "apogee" in result["reco_fallback"]
 
 
 def test_a_batch_where_every_flight_errored_still_reports_without_nan() -> None:

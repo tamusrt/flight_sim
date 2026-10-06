@@ -18,11 +18,14 @@ import argparse
 import hashlib
 import json
 import math
+import multiprocessing
+import os
 import re
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -191,7 +194,7 @@ def _preset(sim: SavedSim) -> dict[str, float]:
         "windMs": c["windaverage"],
         "padK": pad_k,
         "padPa": pad_pressure_pa(
-            c.get("basepressure", 101325.0), pad_k, c["launchaltitude"]
+            c.get("basepressure"), pad_k, c["launchaltitude"]
         ),
         "padAlt": c["launchaltitude"],
     }
@@ -540,6 +543,27 @@ def read_rasaero_results(path: Path, sims: list[str]) -> list[dict[str, Any]]:
     return runs
 
 
+def _six_dof_of(job: tuple[Any, ...]) -> dict[str, Any]:
+    """One saved simulation's Jarvis flight, in a worker process (the profile is rebuilt there)."""
+    ork_path, aero_csv, motor_path, name, sim = job
+    return _six_dof(profile_from_ork(ork_path, str(aero_csv), str(motor_path), sim=sim, name=name))
+
+
+def _fly_all(profiles: dict[str, Any], files: tuple[Any, ...]) -> dict[str, dict[str, Any]]:
+    """Jarvis's flight of every saved simulation, side by side on the computer's cores (they used to take turns,
+    about 40 s each). The flights are the same as one after another; if processes cannot be used, they take turns."""
+    names = list(profiles)
+    workers = min(len(names), os.cpu_count() or 1)
+    if workers > 1:
+        try:
+            # "spawn", not fork: VISION's flights are being started from another thread at the same time
+            with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+                return dict(zip(names, pool.map(_six_dof_of, [(*files, n) for n in names]), strict=True))
+        except (OSError, BrokenProcessPool) as error:
+            print(f"(flying the conditions one after another: {error})", flush=True)
+    return {n: _six_dof(profile) for n, profile in profiles.items()}
+
+
 def build_data(  # pylint: disable=too-many-locals,too-many-arguments
     ork_path: Path,
     aero_csv: Path,
@@ -570,7 +594,7 @@ def build_data(  # pylint: disable=too-many-locals,too-many-arguments
         n: profile_from_ork(ork_path, str(aero_csv), str(motor_path), sim=n, name=name)
         for n in ork.sims
     }
-    six = {n: _six_dof(profile) for n, profile in profiles.items()}
+    six = _fly_all(profiles, (ork_path, aero_csv, motor_path, name))
     base = _base(ork, aero, motor, motor_file.thrust)
     base["recovery"] = _recovery_data(profiles[default_sim])
     history = {} if history_site is None else load_history(history_site, ork_path.name)

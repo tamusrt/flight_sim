@@ -63,11 +63,15 @@ class CanopySwing:
             rocket and canopy would fall together and nothing would swing
             the canopy back into the flow.
         turbulence (float): Random gust standard deviation as a share of the
-            wind, on top of the wind's own changes with height
-            (``LayeredWind``). 1.5, a gusty day, swings the rocket up to about
-            20 degrees under the open main, the size NASA's parachute tests
-            report; the gusts come from a fixed seed, so every run is the same.
-            Without them the rocket hangs almost still under the full main.
+            ground wind, on top of the wind's own changes with height
+            (``LayeredWind``). 0.3 is a gusty afternoon (measured turbulence
+            intensities near the ground are about 0.1 to 0.3; OpenRocket's
+            default is 0.1). The gusts are real wind here: they move the landing
+            point and add to the landing speed, so a value tuned only to make the
+            canopy swing (1.5 was used before, for about 20 degrees of swing)
+            spreads the landings far too wide. The gusts come from a fixed seed,
+            so every run is the same. Without them the rocket hangs almost still
+            under the full main.
         gust_time_s (float): Correlation time of the gusts, a few swing
             periods so the canopy keeps being pushed.
         seed (int): Seed of the gusts, so runs repeat exactly.
@@ -79,7 +83,7 @@ class CanopySwing:
     full_drag_deg: float = 20.0
     no_drag_deg: float = 75.0
     collapsed_drag_fraction: float = 0.03
-    turbulence: float = 1.5
+    turbulence: float = 0.3
     gust_time_s: float = 8.0
     seed: int = 11
 

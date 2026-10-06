@@ -276,3 +276,25 @@ def test_gusts_move_the_landing_and_repeat_for_the_same_flight() -> None:
     assert gusty.landing_velocity_m_s[0] == pytest.approx(
         calm.landing_velocity_m_s[0], abs=0.5
     )
+
+
+def test_a_main_set_above_the_apogee_is_refused_not_flown_wrong() -> None:
+    """FastRECO cannot time a main commanded before its descent starts: it says so."""
+    high = dataclasses.replace(_COMPUTER, main_altitude_m=5000.0)  # far above this apogee (about 700 m)
+    scheme = dataclasses.replace(_dual(), computer=high)
+    with pytest.raises(fast_reco.Unsupported, match="main altitude"):
+        FastRECO(scheme, turbulence=0.0).descend(_request())
+    assert FullRECO(scheme).descend(_request()).descent.landed  # the full model can
+
+
+def test_a_canopy_still_opening_at_the_ground_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An opening whose fill would end below the ground is refused, not reported as a soft landing."""
+    real = fast_reco._opening  # pylint: disable=protected-access
+
+    def long_fill(*args, **kwargs):  # type: ignore[no-untyped-def]
+        solved = real(*args, **kwargs)
+        return solved._replace(move_m=solved.move_m + np.array([-1.0e6, 0.0, 0.0]))
+
+    monkeypatch.setattr(fast_reco, "_opening", long_fill)
+    with pytest.raises(fast_reco.Unsupported, match="ground"):
+        FastRECO(_dual(), turbulence=0.0).descend(_request())

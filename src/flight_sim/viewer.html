@@ -126,7 +126,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
     <div class="tools">
       <div class="seg" id="views"><button data-v="follow" class="on">Follow</button><button data-v="wide">Whole flight</button></div>
       <div class="seg" id="look" title="Engineering: the plain grid on black. Realistic: sky, clouds, desert and shadows (only the look changes, the flight is the same)."><button data-l="eng">Engineering</button><button data-l="real">Realistic</button></div>
-      <div class="qwrap" id="qwrap"><label class="fld" title="How much of the Realistic look is drawn. Auto starts with everything and drops detail by itself if the page runs slowly (under about 30 frames a second). High is everything, Low is the lightest. Engineering is not affected.">Quality <select id="quality" aria-label="Quality of the Realistic look"><option value="auto">Auto</option><option value="high">High</option><option value="low">Low</option></select></label><span class="qtext" id="qtext" hidden></span><span class="perf" id="perf" aria-live="off"></span></div>
+      <div class="qwrap" id="qwrap"><label class="fld" title="How much of the Realistic look is drawn. Auto starts with everything and drops detail by itself if the page runs slowly (under about 25 frames a second). High is everything, Low is the lightest. Engineering is not affected.">Quality <select id="quality" aria-label="Quality of the Realistic look"><option value="auto">Auto</option><option value="high">High</option><option value="low">Low</option></select></label><span class="qtext" id="qtext" hidden></span><span class="perf" id="perf" aria-live="off"></span></div>
       <div class="seg" id="panseg"><button id="pan" aria-pressed="false" title="Drag to move the view up, down or sideways without zooming (Shift-drag, right-drag or middle-drag does the same)">Pan</button><button id="recenter" title="Put the rocket back in the middle of the view">Center</button></div>
       <label class="fld" title="Draw the rocket bigger than life size so it can be seen from far away. The flight path is not changed.">Rocket scale ×<input type="text" id="mult" value="1" inputmode="decimal" aria-label="Rocket size multiplier"></label>
       <label class="chip" title="Axes fixed to the ground at the launch pad"><input type="checkbox" data-k="world" checked>World axes</label>
@@ -515,7 +515,7 @@ try{ var savedLook=localStorage.getItem('vision.look'); if(savedLook==='eng'||sa
      3         + no grass, bushes or stones near the camera
      2         + no sun shadows, half the cloud puffs, drawn at 1 pixel per screen pixel
      1  Low    + drawn at 0.75 pixel per screen pixel, no ground bumps or extra ground layers, reflections not refreshed
-   The choice "Auto" starts at 4 and steps down one level (never up again) when the page runs under about 30 frames a second.
+   The choice "Auto" starts at 4 and steps down one level (never up again) when the page runs under about 25 frames a second.
    The choice is kept in this browser under 'vision.quality'. */
 var QSEL='auto', qLevel=4, qShadow=true;   /* QSEL: 'auto', 'high' or 'low'; qLevel: the level in use now (1 to 4) */
 try{ var savedQ=localStorage.getItem('vision.quality'); if(savedQ==='auto'||savedQ==='high'||savedQ==='low') QSEL=savedQ; }catch(e){ /* no storage: Auto */ }
@@ -539,18 +539,22 @@ function applyQuality(){
   var qt=$('qtext'); if(qt){ qt.hidden=!(QSEL==='auto'&&LOOK==='real'); qt.textContent='Quality: Auto (level '+qLevel+')'; }
   govReset();
 }
-/* the Auto governor: it times the frames and, if the average over 45 of them is slower than 33 ms (under about 30 frames a
-   second), drops one level. It never goes back up in the same session (that would flicker between two looks). It leaves out
-   the first 30 frames after the page starts, after any change of look or quality (the graphics chip is busy compiling and
-   loading then) and after the tab has been hidden, and it only watches the Realistic look */
-var gSkip=30, gN=0, gSum=0;
-function govReset(){ gSkip=30; gN=0; gSum=0; }
+/* the Auto governor: it times the frames and, if the MEDIAN of 45 of them is slower than 40 ms (under about 25 frames a
+   second), drops one level. The median, not the average, so a few slow frames (a garbage collection, a file loading) do not
+   count; and 40 ms, not 33, so a screen that refreshes 30 times a second (33.3 ms a frame however fast the page is) does not
+   drop a level every 45 frames down to Low. It never goes back up in the same session (that would flicker between two looks).
+   It leaves out the first 30 frames after the page starts, after any change of look or quality (the graphics chip is busy
+   compiling and loading then), after the tab has been hidden, and after any frame longer than a quarter of a second: that is
+   the page coming back after being out of sight (VISION's tab in the History page is hidden without the browser calling the
+   page hidden), not the page being slow. It only watches the Realistic look */
+var gSkip=30, gFrames=[];
+function govReset(){ gSkip=30; gFrames=[]; }
 function govFrame(ms){
-  if(QSEL!=='auto'||LOOK!=='real'||document.hidden){ govReset(); return; }
+  if(QSEL!=='auto'||LOOK!=='real'||document.hidden||ms>250||!(stage&&stage.clientWidth>0)){ govReset(); return; }
   if(gSkip>0){ gSkip--; return; }
-  gSum+=ms; gN++;
-  if(gN>=45){ var avg=gSum/gN; gN=0; gSum=0;
-    if(avg>33&&qLevel>1){ qLevel--; applyQuality(); } }
+  gFrames.push(ms);
+  if(gFrames.length>=45){ var sorted=gFrames.slice().sort(function(a,b){return a-b;}), med=sorted[22]; gFrames=[];
+    if(med>40&&qLevel>1){ qLevel--; applyQuality(); } }
 }
 document.addEventListener('visibilitychange',govReset);
 /* the small frame-time readout (shown with ?perf in the address, or while the Quality control is pointed at or focused) */
@@ -1210,17 +1214,24 @@ function fromTelemetry(j,conj,name,real){
   if(!j||typeof j!=='object') throw new Error('the data is not a telemetry object');
   var n=j.t&&j.t.length; if(!n||n<2) throw new Error('"t" needs at least 2 samples');
   ['pos','vel','quat'].forEach(function(k){ if(!j[k]||j[k].length!==n) throw new Error('"'+k+'" must have the same length as "t"'); });
+  /* a sample whose time, position, speed or attitude is not a number (a null or NaN in the file) is left out and the page
+     says how many were, so the real flight is still drawn. Only when fewer than 2 good samples are left is the data refused */
+  var keep=[];
+  for(var s0=0;s0<n;s0++){
+    var qq=j.quat[s0];
+    if(isNum(j.t[s0])&&vec3ok(j.pos[s0])&&vec3ok(j.vel[s0])&&Array.isArray(qq)&&qq.length>=4&&isNum(qq[0])&&isNum(qq[1])&&isNum(qq[2])&&isNum(qq[3])) keep.push(s0);
+  }
+  if(keep.length<2) throw new Error('fewer than 2 samples have numbers for "t", "pos", "vel" and "quat"');
+  var dropped=n-keep.length;
+  if(dropped){ var j2={}, nAll=n;
+    Object.keys(j).forEach(function(key){ var v=j[key]; j2[key]=(Array.isArray(v)&&v.length===nAll)?keep.map(function(ix){ return v[ix]; }):v; });
+    j=j2; n=keep.length; }
   var T0=j.t[0], span0=j.t[n-1]-T0;
-  if(!isNum(T0)||!isNum(j.t[n-1])||!(span0>0)) throw new Error('"t" must be numbers (seconds) that increase');
+  if(!(span0>0)) throw new Error('"t" must be numbers (seconds) that increase');
   var N=Math.floor(span0/DT)+1;
   if(span0>MAX_SECONDS||N>MAX_SAMPLES) throw new Error('the flight would last '+fmt(span0,0)+' s ('+fmt(N,0)+' samples); the times look like milliseconds, they should be seconds');
-  for(var s0=0;s0<n;s0++){
-    if(!isNum(j.t[s0])) throw new Error('"t" has a value that is not a number at sample '+s0);
-    if(!vec3ok(j.pos[s0])) throw new Error('"pos" at sample '+s0+' is not three numbers');
-    if(!vec3ok(j.vel[s0])) throw new Error('"vel" at sample '+s0+' is not three numbers');
-    var qq=j.quat[s0]; if(!Array.isArray(qq)||qq.length<4||!isNum(qq[0])||!isNum(qq[1])||!isNum(qq[2])||!isNum(qq[3])) throw new Error('"quat" at sample '+s0+' is not four numbers');
-  }
   var wind=vec3ok(j.wind)?j.wind:[0,0,0], warn=[];
+  if(dropped) warn.push(dropped+' sample'+(dropped>1?'s':'')+' of the flight data '+(dropped>1?'were':'was')+' not a number and '+(dropped>1?'were':'was')+' left out.');
   var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],q:[],cg:[],cp:[],p:[],mdot:[],ndir:[],nsep:[],ldir:[],swing:[],drag:[],wind:wind,
     events:cleanEvents(j.events,T0,warn),rail:cleanRail(j.rail,warn),recovery:cleanReco(j.recovery,warn),warnings:warn,site:j.site||null};
   function has(k){ return j[k]&&j[k].length===n; }

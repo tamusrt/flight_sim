@@ -19,7 +19,8 @@ points whatever the guide's numbers say:
   missing: rail_v"), never as a pass. Only two numbers may be absent, because
   some rockets genuinely do not have them (see ``OPTIONAL_KEYS``): the drogue's
   descent rate (no drogue) and the main's deployment altitude (no deployment;
-  the "every canopy opened" check catches that case).
+  the "every canopy opened" check catches that case). Absent means absent: if
+  either is there but NaN or infinite, it is missing like any other number.
 
 There is no landing zone here: where the rocket comes down is reported as a
 footprint, not judged. Nor is the landing speed, and nor are the descent rates of the
@@ -207,7 +208,13 @@ def missing_values(result: dict[str, Any]) -> list[str]:
     out: list[str] = []
     for check in CHECKS:
         key = check.key
-        if key == "sim_ok" or key in OPTIONAL_KEYS or key in out:
+        if key == "sim_ok" or key in out:
+            continue
+        if key in OPTIONAL_KEYS:
+            # absent or None: not applicable; but a value that is there and is not a
+            # finite number (NaN, inf) is a broken result, never a pass
+            if climbed and result.get(key) is not None and not _usable(check, result[key]):
+                out.append(key)
             continue
         if not climbed and (key in _AFTER_APOGEE or key == "apogee_m"):
             continue

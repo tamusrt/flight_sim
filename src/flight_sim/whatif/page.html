@@ -687,15 +687,25 @@ function tableCheck() {
   if (Math.abs(xcp - ref) <= 0.12) return '';
   return 'The RASAero table could not be checked against a record of how the table was made (unverified). Its CP is ' + fmt(xcp, 2) + ' m from the nose tip at Mach ' + fmt(T.mach[im], 1) + ', where the classic Barrowman method gives ' + fmt(ref, 2) + ' m for the shape in ' + (DATA.refFile || 'the RASAero file') + '. The table may have been made from a different version of the rocket. Run Update CSV at the bottom of this page.';
 }
+// The table's one verdict: state 'stale' (a message says why), 'unverified' (no record of how it was made, and its CP is off
+// from Barrowman's) or 'ok'.
+// The design-change message, being the most specific, comes first; a large shape change is added to it.
+function tableStatus() {
+  const diffs = refDiffs(), big = refBig();
+  let chk = '';
+  try { chk = tableCheck(); } catch (e) { console.error('SRT_ERROR\t' + location.pathname + '\ttable check: ' + e.message); }
+  const bigNote = big.length ? ' The shape changed a lot (' + big.join('; ') + '): do not rely on these predictions until it is done.' : '';
+  if (diffs.length) return { state: 'stale', message: 'The RASAero table is out of date: the OpenRocket design has changed since the table was made (' + diffs.join('; ') + '). Jarvis is using the current masses with the old aerodynamics. Run Update CSV at the bottom of this page.' + bigNote };
+  if (chk) return { state: /unverified/.test(chk) ? 'unverified' : 'stale', message: chk + bigNote };
+  if (big.length) return { state: 'stale', message: 'Large shape change since the RASAero table was made (' + big.join('; ') + '). Run Update CSV before relying on these predictions.' };
+  return { state: 'ok', message: '' };
+}
 const stem = (name) => String(name || '').replace(/\.[^.]*$/, '');
 function warnings() {
   const out = [], M = U.mass();
-  const diffs = refDiffs();
-  if (diffs.length) out.push(['', 'The RASAero table is out of date: the OpenRocket design has changed since the table was made (' + diffs.join('; ') + '). Jarvis is using the current masses with the old aerodynamics. Run Update CSV at the bottom of this page.']);
-  let chk = '';
-  try { chk = tableCheck(); } catch (e) { console.error('SRT_ERROR\t' + location.pathname + '\ttable check: ' + e.message); }
-  if (chk) out.push(['', chk]);
-  if (refBig().length) out.push(['', 'Large shape change since the RASAero table was made (' + refBig().join('; ') + '). Run Update CSV before relying on these predictions.']);
+  // the RASAero table gets ONE message, the most specific one there is (the same problem used to be said up to three ways)
+  const tableMsg = tableStatus().message;
+  if (tableMsg) out.push(['', tableMsg]);
   const first = ticked().map(orOf).find((o) => o);
   if (first && first.source === 'history' && DATA.openrocketMotor && stem(DATA.openrocketMotor) !== stem(DATA.files.motor)) {
     out.push(['', 'The OpenRocket results (from the History tab) use the motor ' + DATA.openrocketMotor + ', but Jarvis uses ' + DATA.files.motor + ', so they are not directly comparable. To compare them, set default_motor in aero_modeling/sim_config.json to ' + DATA.files.motor + '.']);
@@ -705,10 +715,12 @@ function warnings() {
     // Jarvis flies the .ork's motor masses; say so when the motor file lists different ones
     out.push(['', 'The motor file ' + DATA.files.motor + ' lists ' + fmt(mf.totalKg * M.f, 1) + ' ' + M.u + ' total (' + fmt(mf.propKg * M.f, 1) + ' ' + M.u + ' propellant), but the OpenRocket design flies ' + fmt(mf.savedTotalKg * M.f, 1) + ' ' + M.u + ' (' + fmt(mf.savedPropKg * M.f, 1) + ' ' + M.u + ' propellant). Jarvis uses the OpenRocket masses, so its starting mass matches OpenRocket; only the thrust curve comes from the motor file.']);
   }
-  // warnings the build itself raised about the files it used (a note is only information, so it is left out)
+  // warnings the build itself raised about the files it used (a note is only information, so it is left out; the build's own
+  // "table may be out of date" notice is the same problem as the table message above, so it is not said twice)
   const seen = new Set(out.map((w) => w[1]));
   for (const n of (FILES ? FILES.notices : [])) {
     if ((n.level !== 'warn' && n.level !== 'error') || seen.has(n.text)) continue;
+    if (tableMsg && /^The aero table may be out of date/.test(n.text)) continue;
     seen.add(n.text); out.push([n.level === 'error' ? 'bad' : '', n.text]);
   }
   return out;
@@ -728,7 +740,8 @@ function drawNotes() {
   bits.push('Motor: ' + DATA.files.motor + (mf && mf.note ? ' (' + mf.note + ')' : '') + (mf ? ', ' + fmt(mf.impulse, 0) + ' N·s over ' + fmt(mf.burnS, 1) + ' s' : '') + '.');
   const first = ticked().map(orOf).find((o) => o);
   if (first) bits.push(first.label + '.');
-  bits.push(refDiffs().length ? 'RASAero table: out of date.' : 'RASAero table: matches the design.');
+  const tbl = tableStatus().state;
+  bits.push(tbl === 'stale' ? 'RASAero table: out of date.' : tbl === 'ok' ? 'RASAero table: matches the design.' : 'RASAero table: unverified.');
   if (isLocal) bits.push('This is a local preview, not the published site.');
   $('runinfo').textContent = bits.join(' ');
 }
@@ -931,7 +944,10 @@ function cleanFiles(j) {
 }
 async function loadFilesUsed() {
   try {
-    const r = typeof fetch === 'function' ? await fetch('files_used.json', { cache: 'no-store' }) : null;
+    // give up after 10 s, so a stalled connection does not leave the list "still loading" for good
+    const stop = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = stop ? setTimeout(() => stop.abort(), 10000) : 0;
+    const r = typeof fetch === 'function' ? await fetch('files_used.json', { cache: 'no-store', signal: stop ? stop.signal : undefined }).finally(() => clearTimeout(timer)) : null;
     FILES = r && r.ok ? cleanFiles(await r.json()) : null;
   } catch (e) { FILES = null; }   // missing, not JSON or no connection: the page works without it
   safe('Files used', drawFilesUsed); safe('Notes', drawNotes);

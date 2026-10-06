@@ -22,7 +22,7 @@ from flight_sim.edith.inputs import Nominal, SiteConfig, Variation
 from flight_sim.environment.atmosphere import LaunchSiteAtmosphere
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import LayeredWind
-from flight_sim.fast_reco import FastRECO
+from flight_sim.fast_reco import FastRECO, Unsupported
 from flight_sim.integration import IntegrationConfiguration
 from flight_sim.ork_profile import profile_from_ork
 from flight_sim.reco import RecoveryRequest, get_reco
@@ -227,9 +227,13 @@ class Rocket:
         calm: bool = False,
     ) -> dict[str, Any]:
         mass = properties.mass_properties(ascent.apogee_time_s)
-        outcome = _reco_version(reco, scheme, calm).descend(
-            RecoveryRequest(ascent.samples, config, mass, properties)
-        )
+        request = RecoveryRequest(ascent.samples, config, mass, properties)
+        fallback = None
+        try:
+            outcome = _reco_version(reco, scheme, calm).descend(request)
+        except Unsupported as why:  # FastRECO cannot fly this one right: the full model can
+            fallback = str(why)
+            outcome = _reco_version("full", scheme, calm).descend(request)
         descent = outcome.descent
         last = descent.states[-1]
         position = last.position.m_as("m")
@@ -270,6 +274,8 @@ class Rocket:
                 else outcome.apogee.detected_s - ascent.apogee_time_s
             ),
         }
+        if fallback is not None:
+            result["reco_fallback"] = fallback
         if len(ascent.samples) > 2:  # a flown climb, not the surrogate's two points
             result["history"] = flight_history(config, ascent, descent)
         return result

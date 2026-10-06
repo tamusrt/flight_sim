@@ -55,14 +55,20 @@ _FALLING_BODY_CD = 0.55
 _ISA_EXPONENT = 5.2559
 
 
-def pad_pressure_pa(base_pa: float, pad_k: float, elevation_m: float) -> float:
+def pad_pressure_pa(base_pa: float | None, pad_k: float, elevation_m: float) -> float:
     """Pressure at the pad.
 
     OpenRocket's launch conditions give the temperature and pressure AT THE LAUNCH SITE (the saved design has
     a pressure of about 91.7 kPa for a pad at Spaceport America, with the launch altitude stored separately),
-    so the pressure is used as it is. ``pad_k`` and ``elevation_m`` are kept so callers need not change.
+    so the pressure is used as it is. A design that saved no pressure (``base_pa`` None) gets the standard
+    atmosphere's pressure at the pad's height: sea-level pressure carried up with the standard lapse rate.
     """
-    return float(base_pa)
+    if base_pa is not None:
+        return float(base_pa)
+    sea_level_k = pad_k + _LAPSE_K_PER_M * elevation_m
+    return float(
+        101325.0 * (1.0 - _LAPSE_K_PER_M * elevation_m / sea_level_k) ** _ISA_EXPONENT
+    )
 
 
 def table_from(ork: OrkRocket, motor: Motor, roll_ratio: float) -> MassPropertiesTable:
@@ -209,7 +215,7 @@ def profile_from_ork(  # pylint: disable=too-many-locals
         pad_temperature_k=pad_k,
         pad_elevation_m=cond["launchaltitude"],
         pad_pressure_pa=pad_pressure_pa(
-            cond.get("basepressure", 101325.0), pad_k, cond["launchaltitude"]
+            cond.get("basepressure"), pad_k, cond["launchaltitude"]
         ),
         launch_latitude_deg=cond.get("launchlatitude", LAUNCH_LATITUDE_DEG),
         launch_longitude_deg=cond.get("launchlongitude", LAUNCH_LONGITUDE_DEG),

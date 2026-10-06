@@ -443,7 +443,7 @@ function drawTrust() {
   if (!R.surrogate_climbs) h += '<p>Every climb was fully simulated (6-DOF, from the rail to apogee).</p>';
   else h += '<p>' + R.full_climbs + ' climbs were fully simulated and ' + R.surrogate_climbs + ' were estimated from them; ' + R.reflown_for_closeness_or_audit + ' were re-flown in full because they were close to a limit or as a spot check (' + a.random_audit_disagreements + ' of ' + a.random_audit_runs + ' spot checks disagreed).</p>';
   const verdictOf = (c) => (c.same_pass_fail ? 'the same pass or fail (rules and recommendations) on every flight' : '<b>a different pass or fail on ' + (c.disagreements || 'some') + ' of ' + (c.pairs || c.runs) + ' flights</b>');
-  if (c && c.runs) h += '<p><b>Quick descent model against the full one</b> (a spot check of ' + c.pairs + ' flights each run, not a guarantee for every flight: typical ones and the ones closest to a limit, flown both ways with the gusts switched off in both so that only the model difference shows' + (c.skipped ? '; ' + c.skipped + ' could not be compared in detail' : '') + '): landing within ' + far(c.largest_landing_offset_m) + ' (' + num(c.largest_offset_share_of_drift * 100, 1) + '% of the drift), parachute load within ' + num(c.largest_peak_load_diff_percent, 1) + '%, ' + verdictOf(c) + '. ' + num(c.fast_seconds_per_run, 1) + ' s per flight against ' + num(c.full_seconds_per_run, 1) + ' s.</p>';
+  if (c && c.runs) h += '<p><b>Quick descent model against the full one</b> (a spot check of ' + c.pairs + ' flights each run, not a guarantee for every flight: typical ones and the ones closest to a descent limit, flown both ways with the gusts switched off in both so that only the model difference shows' + (c.skipped ? '; ' + c.skipped + ' could not be compared in detail' : '') + '): landing within ' + far(c.largest_landing_offset_m) + ' (' + num(c.largest_offset_share_of_drift * 100, 1) + '% of the drift), parachute load within ' + num(c.largest_peak_load_diff_percent, 1) + '%, ' + verdictOf(c) + '. ' + num(c.fast_seconds_per_run, 1) + ' s per flight against ' + num(c.full_seconds_per_run, 1) + ' s.</p>';
   else if (c) h += '<p><b>Quick descent model against the full one:</b> none of the ' + c.pairs + ' check flights could be compared in detail; ' + verdictOf(c) + '.</p>';
   const L = A.levels;
   h += '<p>The colours are the team\'s judgement, not IREC rules (<code>flight_sim/edith/alerts.py</code>): a rule broken in ' + pct(L.failure_red) + ' of flights or more is red, from ' + pct(L.failure_amber) + ' amber; a recommendation missed in ' + pct(L.warning_amber) + ' or more is amber; the apogee is red below ' + pct(L.apogee_amber) + ' within range. Only red is an alert at the top of the page (and, in amber, the model check, when the quick descent model disagreed with the full one). To mark a recommendation as accepted, list its id under <code>edith_accepted</code> in <code>aero_modeling/whatif_config.json</code>.</p>';
@@ -461,7 +461,17 @@ function readHash() {
 function update() {
   $('units').value = state.units; $('stab').value = state.stab;
   history.replaceState(null, '', '#units=' + state.units + '&stab=' + state.stab + (state.chart !== 'altitude' ? '&chart=' + state.chart : '') + (embedded ? '&embed=1' : ''));
-  drawTop(); drawSeries(); drawApogee(); drawLanding(); drawChecks(); drawNumbers(); drawLimits(); drawInputs(); drawTrust();
+  // each part is drawn on its own: one that fails (odd data in the report) leaves the rest of the page working and says so
+  const failed = [];
+  [['the headline', drawTop], ['the chart over time', drawSeries], ['the apogee picture', drawApogee], ['the landing picture', drawLanding],
+    ['the checks', drawChecks], ['the numbers', drawNumbers], ['the limits', drawLimits], ['the inputs', drawInputs], ['how far to trust it', drawTrust]]
+    .forEach(([name, draw]) => {
+      try { draw(); } catch (e) { failed.push(name); console.error('SRT_ERROR\t' + location.pathname + '\t' + name + ': ' + (e && e.message)); }
+    });
+  let box = document.getElementById('drawerror');
+  if (!box) { box = document.createElement('div'); box.id = 'drawerror'; box.setAttribute('role', 'alert'); box.style.cssText = 'margin:8px 0;padding:8px 12px;border:1px solid #d29922;border-radius:6px'; document.body.insertBefore(box, document.body.firstChild); }
+  box.hidden = !failed.length;
+  box.textContent = failed.length ? 'Part of this page could not be drawn (' + failed.join(', ') + '). The rest is as built.' : '';
 }
 // The links to the History, Flight plots and Changelog tabs point at the site's front page. How far up that is depends on the rocket
 // (predictions/edith/ or predictions/<key>/edith/), so it is worked out from the address: everything before '/predictions/'.
