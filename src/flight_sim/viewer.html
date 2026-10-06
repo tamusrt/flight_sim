@@ -53,7 +53,8 @@ h1,h2{margin:0;font-weight:500}
 .note{position:absolute;left:8px;bottom:6px;font:400 11px var(--mono);color:#bdbdb8;pointer-events:none;text-shadow:0 0 3px #000,0 0 6px rgba(0,0,0,.8)}
 .banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);font:500 13px var(--mono);letter-spacing:.08em;padding:6px 14px;background:#d6d6d3;color:#101010;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis}
 .banner[data-kind="apogee"]{background:#d9bd7a;color:#1d1600}.banner[data-kind="burnout"]{background:#d9a56f;color:#1d1005}.banner[data-kind="impact"]{background:#d98a6a;color:#1d0c05}.banner[data-kind="reco"]{background:#b9a0d0;color:#140b1d}.banner[data-kind="aero"]{background:#cf8aa0;color:#1d070c}.banner[data-kind="rail"]{background:#8fbf8f;color:#08160a}
-.nogl[hidden],.chip[hidden]{display:none}
+.attr{position:absolute;left:8px;top:8px;max-width:45%;font:400 10px var(--mono);color:#e4e4e0;background:rgba(0,0,0,.45);padding:2px 6px;pointer-events:none}
+.nogl[hidden],.chip[hidden],.attr[hidden]{display:none}
 /* display rules such as .seg{display:flex} would otherwise win over the hidden attribute and show controls that should be off */
 .app [hidden]{display:none!important}
 .ttl{display:flex;align-items:baseline;flex-wrap:wrap}
@@ -150,6 +151,7 @@ select{font:400 12px var(--mono);background:var(--ctl);color:var(--fg);border:1p
       <canvas id="cv" role="img" aria-label="3D view of the rocket flight. Drag to rotate, scroll to zoom."></canvas>
       <div class="vignette" id="vignette" hidden></div>
       <div class="note" id="scaleNote"></div>
+      <div class="attr" id="satAttr" hidden></div>
       <div class="note" id="edNote" style="bottom:22px;max-width:92%;white-space:normal" hidden></div>
       <div class="note" id="circKey" style="top:8px;bottom:auto;left:auto;right:8px;background:rgba(10,12,16,.72);padding:6px 9px;border-radius:6px;line-height:1.7" hidden></div>
       <div class="banner" id="banner" role="status" aria-live="polite" hidden></div>
@@ -287,7 +289,11 @@ function css(n){return getComputedStyle(document.documentElement).getPropertyVal
 var GRID_PER_HEIGHT=8, GRID_UNIT=0.01;   /* about 8 squares across the ground below the camera; sizes are 0.01, 0.1, 1 ... rocket lengths */
 var groundU={uCell:{value:1},uFrac:{value:0},uY:{value:0},uBase:{value:new THREE.Color(0x23272d)},uLine:{value:new THREE.Color(0x9aa6b4)},
   uFog:{value:new THREE.Color(0x000000)},uFogRange:{value:new THREE.Vector2(9000,42000)},
-  uReal:{value:0},uQual:{value:2},uGridA:{value:1},uSun:{value:new THREE.Vector3(0.5,0.7,0.5)},uLight:{value:new THREE.Vector2(0.55,0.75)}};
+  uReal:{value:0},uQual:{value:2},uGridA:{value:1},uSun:{value:new THREE.Vector3(0.5,0.7,0.5)},uLight:{value:new THREE.Vector2(0.55,0.75)},
+  /* the satellite picture of the realistic look (see "satellite ground" below): metres to longitude and Mercator northing,
+     and one picture per level */
+  uGeo:{value:new THREE.Vector4(0,0,1,0)},uImgP:{value:[new THREE.Vector4(),new THREE.Vector4(),new THREE.Vector4(),new THREE.Vector4()]},
+  uImg0:{value:null},uImg1:{value:null},uImg2:{value:null},uImg3:{value:null}};
 function ringGeometry(){
   var SEC=96, r=0.05, radii=[], pos=[0,0,0], idx=[], i, j;
   for(; r<300000; r*=1.3) radii.push(r);
@@ -347,6 +353,18 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     '  return c*(0.86+0.28*fine);',
     '}',
     /* low swells and ripples in the ground, for the light only (the ground itself stays flat, as the simulation has it) */
+    'uniform vec4 uGeo; uniform vec4 uImgP[4]; uniform sampler2D uImg0, uImg1, uImg2, uImg3;',
+    /* p is (north, east) in metres from the pad; this is (longitude, Mercator northing) from the pad, in radians, the
+       northing to second order in the latitude, which is within a few metres over the largest picture */
+    'vec2 geo(vec2 p){ float ph=p.x*uGeo.x; return vec2(p.y*uGeo.y, ph*uGeo.z*(1.0+0.5*ph*uGeo.w)); }',
+    /* lay one picture over the colour so far (premultiplied by its alpha); its unloaded tiles are clear, and it fades out just
+       inside its edge. T: how much of what is under the pictures still shows through */
+    'vec3 layer(vec3 c, sampler2D t, vec4 P, vec2 g, inout float T){',
+    '  if(P.w<0.5) return c;',
+    '  vec2 uv=P.xy+g*P.z; vec2 e=min(uv,1.0-uv);',
+    '  float k=smoothstep(0.0,0.01,min(e.x,e.y)); vec4 s=texture2D(t,clamp(uv,0.0,1.0));',
+    '  T*=1.0-s.a*k; return c*(1.0-s.a*k)+s.rgb*k;',
+    '}',
     'float relief(vec2 p, float fw){ return 1.6*tiled3(p,0.01,4000.0)+0.35*tiled3(p,0.08,4000.0)+(fw<0.4?0.06*tiled3(p,0.9,400.0)*(1.0-smoothstep(0.05,0.4,fw)):0.0); }',
     'float lines(vec2 p, float cell){',
     '  vec2 g=p/cell; vec2 fw=max(fwidth(g),vec2(1e-6));',
@@ -363,14 +381,19 @@ var ground=new THREE.Mesh(ringGeometry(),new THREE.ShaderMaterial({
     /* the swells are only worked out within 8 m per pixel (past that the bump was already faded to nothing), and not at all on
        the lowest quality levels. The height is set to 0 outside, then the screen-space change is taken in plain code, outside
        the branch, so neighbouring pixels always agree on what they are differencing */
+    /* the satellite picture, where it has loaded; the drawn desert shows through wherever it has not */
+    '    vec2 gg=geo(p); float T=1.0; vec3 pic=vec3(0.0);',
+    '    pic=layer(pic,uImg0,uImgP[0],gg,T); pic=layer(pic,uImg1,uImgP[1],gg,T); pic=layer(pic,uImg2,uImgP[2],gg,T); pic=layer(pic,uImg3,uImgP[3],gg,T);',
+    '    float cov=1.0-T; vec3 base=pic; if(T>0.001) base+=desert(p,fw)*T;',
     '    float h=0.0; if(uQual>1.5&&fw<8.0) h=relief(p,fw);',
     '    vec2 dpx=dFdx(p), dpy=dFdy(p); float dhx=dFdx(h), dhy=dFdy(h);',
     '    float det=dpx.x*dpy.y-dpx.y*dpy.x; vec2 g=abs(det)>1e-9?vec2(dhx*dpy.y-dhy*dpx.y,dhy*dpx.x-dhx*dpy.x)/det:vec2(0.0);',
-    '    g*=1.0-smoothstep(1.0,8.0,fw); vec3 n=normalize(vec3(-g.x,1.0,-g.y));',
+    /* the photo already has the real sun's light and shade in it, so the drawn swells fade out under it */
+    '    g*=(1.0-smoothstep(1.0,8.0,fw))*(1.0-cov); vec3 n=normalize(vec3(-g.x,1.0,-g.y));',
     /* shadows of the clouds overhead, cast along the sun */
     '    vec2 cq=(p+uSun.xz/max(uSun.y,0.1)*' + (CLOUD_H+500).toFixed(1) + ')/uCloudBox+0.5;',
     '    float cs=1.0-0.4*(all(greaterThan(cq,vec2(0.0)))&&all(lessThan(cq,vec2(1.0)))?texture2D(uCloudMap,cq).a:0.0);',
-    '    vec3 d=desert(p,fw)*(uLight.x+uLight.y*max(dot(n,uSun),0.0)*cs);',
+    '    vec3 d=base*(uLight.x+uLight.y*max(dot(n,uSun),0.0)*cs);',
     '    c=mix(d,vec3(1.0),0.08*a*uGridA); }',
     '  float f=smoothstep(uFogRange.x,uFogRange.y,length(vec3(vOff.x,uY-cameraPosition.y,vOff.y)));',
     '  gl_FragColor=vec4(mix(c,uFog,f),1.0);',
@@ -386,6 +409,82 @@ function setGrid(camHeight,rocketLen,camDist){
   groundU.uCell.value=unit*Math.pow(10,n); groundU.uFrac.value=lvl-n;
 }
 
+
+/* ---------- satellite ground (realistic look only) ----------
+   With the launch site's latitude and longitude in the telemetry, the realistic ground is a satellite picture of the site,
+   loaded live from Esri's World Imagery (free, no key). It is four levels of 8 x 8 map tiles, each level covering four times
+   the width of the one before at a quarter of the detail: about 2 km at 1 m a pixel, 8 km, 34 km and 134 km, centred half way
+   between the pad and the landing point. The ground shader turns each point's distance north and east of the pad into
+   longitude and Mercator northing and draws the finest picture that covers it. Unloaded tiles are clear, so the drawn desert
+   shows through until they arrive, or for good when there is no internet: the realistic look is then as it always was.
+   Nothing is fetched in the Engineering look, or for data with no launch site. */
+var SAT_URL='https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+var SAT_ATTR='Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+var SAT_ZOOM=[11,13,15,17], SAT_N=8, SAT_TILE=256, SAT_PX=SAT_N*SAT_TILE, SAT_PARALLEL=8;
+var WGS84_A=6378137, WGS84_E2=0.00669437999014;
+var sat={site:null,cN:0,cE:0,key:'',gen:0,levels:[],done:0,bad:0,total:0,queue:[],busy:0,upload:0};
+SAT_ZOOM.forEach(function(z,i){
+  var c=document.createElement('canvas'); c.width=c.height=SAT_PX;
+  var t=new THREE.CanvasTexture(c); t.premultiplyAlpha=true; t.minFilter=THREE.LinearMipmapLinearFilter;
+  if(renderer) t.anisotropy=renderer.capabilities.getMaxAnisotropy();
+  sat.levels.push({z:z,ctx:c.getContext('2d'),tex:t}); groundU['uImg'+i].value=t;
+});
+/* world pixel of a latitude and longitude on the Web Mercator map at zoom z */
+function mercPx(latDeg,lonDeg,z){ var W=SAT_TILE*Math.pow(2,z), s=Math.sin(latDeg/DEG);
+  return [(lonDeg+180)/360*W, (0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*W]; }
+function satFailed(){ return sat.total>0&&sat.bad===sat.total; }
+function satStatus(){
+  var el=$('satAttr'); el.hidden=LOOK!=='real'||sat.key===''||satFailed(); if(el.hidden) return;
+  var left=sat.total-sat.done-sat.bad; el.textContent=SAT_ATTR+(left>0?' · loading '+(sat.done+sat.bad)+'/'+sat.total:'');
+}
+function satNote(msg){ var n=$('scaleNote'), was=n.textContent; n.textContent=msg; setTimeout(function(){ if(n.textContent===msg) n.textContent=was; },6000); }
+/* the pictures go to the graphics card at most four times a second while tiles are arriving */
+function satUpload(){ if(sat.upload) return; sat.upload=setTimeout(function(){ sat.upload=0;
+  sat.levels.forEach(function(l){ if(l.dirty){ l.dirty=false; l.tex.needsUpdate=true; } }); },250); }
+function satNext(){
+  while(sat.busy<SAT_PARALLEL&&sat.queue.length){
+    (function(job,gen){
+      var img=new Image(); img.crossOrigin='anonymous'; sat.busy++;
+      img.onload=function(){ sat.busy--; if(gen!==sat.gen) return; var l=sat.levels[job.l];
+        l.ctx.drawImage(img,job.i*SAT_TILE,job.j*SAT_TILE); l.dirty=true; sat.done++; satUpload(); satStatus(); satNext(); };
+      img.onerror=function(){ sat.busy--; if(gen!==sat.gen) return; sat.bad++;
+        if(satFailed()&&LOOK==='real') satNote('No satellite picture (no internet?): the ground is drawn instead.'); satStatus(); satNext(); };
+      img.src=job.url;
+    })(sat.queue.shift(),sat.gen);
+  }
+}
+/* start loading the pictures for the current site, if the realistic look is on and they are not loaded or loading already */
+function satLoad(){
+  var s=sat.site; if(!s||LOOK!=='real') return;
+  var lat=s.lat_deg, lon=s.lon_deg, key=lat.toFixed(6)+','+lon.toFixed(6)+','+Math.round(sat.cN/250)+','+Math.round(sat.cE/250);
+  if(key===sat.key) return; sat.key=key; sat.gen++; sat.queue=[]; sat.done=sat.bad=0;
+  /* metres to radians at the pad: meridian and prime vertical radii of curvature of the WGS84 ellipsoid */
+  var sn=Math.sin(lat/DEG), cs=Math.cos(lat/DEG), w=1-WGS84_E2*sn*sn, Mr=WGS84_A*(1-WGS84_E2)/Math.pow(w,1.5), Nr=WGS84_A/Math.sqrt(w);
+  groundU.uGeo.value.set(1/Mr,1/(Nr*cs),1/cs,sn/cs);
+  var latC=lat+sat.cN/Mr*DEG, lonC=lon+sat.cE/(Nr*cs)*DEG, jobs=[];
+  sat.levels.forEach(function(l,li){
+    var n=Math.pow(2,l.z), p=mercPx(lat,lon,l.z), c=mercPx(latC,lonC,l.z);
+    var tx0=Math.round(c[0]/SAT_TILE-SAT_N/2), ty0=clamp(Math.round(c[1]/SAT_TILE-SAT_N/2),0,n-SAT_N);
+    l.ctx.clearRect(0,0,SAT_PX,SAT_PX); l.dirty=true;
+    groundU.uImgP.value[li].set((p[0]-tx0*SAT_TILE)/SAT_PX,1-(p[1]-ty0*SAT_TILE)/SAT_PX,SAT_TILE*n/(TAU*SAT_PX),1);
+    for(var i=0;i<SAT_N;i++) for(var j=0;j<SAT_N;j++){
+      var x=((tx0+i)%n+n)%n, y=ty0+j;
+      jobs.push({l:li,i:i,j:j,o:li*1e3+Math.hypot(i+0.5-SAT_N/2,j+0.5-SAT_N/2),url:SAT_URL.replace('{z}',l.z).replace('{y}',y).replace('{x}',x)});
+    }
+  });
+  /* the widest level first, so the whole view fills in quickly, then the finer ones from their middle out */
+  jobs.sort(function(a,b){return a.o-b.o}); sat.queue=jobs; sat.total=jobs.length;
+  satUpload(); satStatus(); satNext();
+}
+/* the site of a flight; a flight without one (a loaded log) keeps the last site's picture */
+function satFor(d){
+  var s=d.site;
+  if(s&&typeof s.lat_deg==='number'&&typeof s.lon_deg==='number'&&isFinite(s.lat_deg)&&isFinite(s.lon_deg)&&Math.abs(s.lat_deg)<85&&
+     Math.abs(s.lon_deg)<=180&&!(s.lat_deg===0&&s.lon_deg===0)){
+    var k=3*(d.N-1); sat.site={lat_deg:s.lat_deg,lon_deg:s.lon_deg}; sat.cN=d.pos[k+2]/2||0; sat.cE=d.pos[k+1]/2||0;
+  }
+  satLoad(); satStatus();
+}
 
 /* ---------- the realistic look: sky, sun, haze, distant mountains, a concrete pad and sun shadows ----------
    For the eye only: nothing here changes the flight. "Engineering" switches back to the plain grid on black.
@@ -692,6 +791,7 @@ function applyLook(){
   resize();   /* the pixel count depends on the look */
   if(window.__padSlab) window.__padSlab.visible=real;
   groundU.uReal.value=real?1:0; groundU.uSun.value.copy(SUN_DIR);
+  satLoad(); satStatus();   /* the satellite picture is only fetched and shown in the realistic look */
   ambient.intensity=real?0.12:0.7; hemi.intensity=real?0.55:0;
   sun.intensity=real?1.05:0.75; sun.color.set(real?0xfff0dc:0xffffff); sun.castShadow=real&&shadowOn&&qShadow;
   if(!real) sun.position.set(0.6,1,0.8), sun.target.position.set(0,0,0);
@@ -1018,7 +1118,7 @@ function rowsToDs(r,name,demo,real){
     thrust:Float32Array.from(r.thrust),mass:Float32Array.from(r.mass),mach:Float32Array.from(r.mach),
     q:Float32Array.from(r.q||[]),cg:Float32Array.from(r.cg||[]),cp:Float32Array.from(r.cp||[]),p:Float32Array.from(r.p||[]),mdot:Float32Array.from(r.mdot||[]),
     ndir:Float32Array.from(r.ndir||[]),nsep:Float32Array.from(r.nsep||[]),ldir:Float32Array.from(r.ldir||[]),swing:Float32Array.from(r.swing||[]),drag:Float32Array.from(r.drag||[]),
-    wind:r.wind||[0,0,0], events:r.events||[], rail:r.rail||null, recovery:r.recovery||null, warnings:r.warnings||[]};
+    wind:r.wind||[0,0,0], events:r.events||[], rail:r.rail||null, recovery:r.recovery||null, warnings:r.warnings||[], site:r.site||null};
   /* a column the data does not have is "unknown" (NaN, drawn as a dash), never zero */
   if(d.q.length!==N) d.q=new Float32Array(N).fill(NaN); if(d.p.length!==N) d.p=new Float32Array(N).fill(NaN); if(d.ndir.length!==3*N) d.ndir=new Float32Array(3*N); if(d.nsep.length!==N) d.nsep=new Float32Array(N); if(d.ldir.length!==3*N) d.ldir=new Float32Array(3*N); if(d.swing.length!==N) d.swing=new Float32Array(N); if(d.drag.length!==N) d.drag=new Float32Array(N).fill(1); if(d.cg.length!==N) d.cg=new Float32Array(N).fill(NaN); if(d.cp.length!==N) d.cp=new Float32Array(N).fill(NaN);
   d.hasThrust=false; for(var i=0;i<N;i++) if(isFinite(d.thrust[i])){ d.hasThrust=true; break; }
@@ -1105,7 +1205,7 @@ function fromTelemetry(j,conj,name,real){
   }
   var wind=vec3ok(j.wind)?j.wind:[0,0,0], warn=[];
   var o={pos:[],vel:[],air:[],xb:[],yb:[],zb:[],thrust:[],mass:[],mach:[],q:[],cg:[],cp:[],p:[],mdot:[],ndir:[],nsep:[],ldir:[],swing:[],drag:[],wind:wind,
-    events:cleanEvents(j.events,T0,warn),rail:cleanRail(j.rail,warn),recovery:cleanReco(j.recovery,warn),warnings:warn};
+    events:cleanEvents(j.events,T0,warn),rail:cleanRail(j.rail,warn),recovery:cleanReco(j.recovery,warn),warnings:warn,site:j.site||null};
   function has(k){ return j[k]&&j[k].length===n; }
   /* a missing sample (null in the file) is "unknown" (NaN), not zero */
   function Ln(a,b,u){ return (!isNum(a)||!isNum(b))?NaN:a+(b-a)*u; }
@@ -1275,6 +1375,7 @@ function setDataset(d){
   ptsP=new THREE.Points(gP,new THREE.PointsMaterial({size:4.5,sizeAttenuation:false}));
   ptsG=new THREE.Points(gG,new THREE.PointsMaterial({size:3,sizeAttenuation:false,transparent:true,opacity:.35}));
   [ptsF,ptsG,ptsP].forEach(function(p){p.frustumCulled=false;G.trail.add(p)}); ptsP.userData.cnt=cnt;
+  satFor(d);
   applyTheme();
   var ap=new V3(ds.pos[3*apoIdx],ds.pos[3*apoIdx+1],ds.pos[3*apoIdx+2]), im=new V3(ds.pos[3*(d.N-1)],ds.pos[3*(d.N-1)+1],ds.pos[3*(d.N-1)+2]);
   apoMk.position.copy(ap); impMk.position.copy(im); apoLb.position.copy(ap); impLb.position.copy(im);
@@ -1892,6 +1993,7 @@ setView('follow'); cam.dist=cam.distT; /* and starts at its framing, with no zoo
 cam.tgt.copy(new V3(0,0,0)); getFrame(tNow); cam.tgt.copy(F.pos);
 window.__viewer={frames:0,frameError:null,get usingDemo(){ return !!(ds&&ds.demo); },get loadError(){ return loadError; },get name(){ return ds&&ds.name; },
   get td(){ return {sc:TD.sc,t:TD.t}; },get rail(){ return {length:RAIL.length,tilt:RAIL.tilt,t:REC.rail&&REC.rail.t}; },get landed(){ return REC.land; },
+  satellite:function(){ return {key:sat.key,done:sat.done,bad:sat.bad,total:sat.total,attr:$('satAttr').hidden?'':$('satAttr').textContent}; },
   quality:function(){ return {sel:QSEL,level:qLevel,pixelRatio:pixelRatio(),puffs:puffs.count(),text:$('qtext').textContent}; },spread:function(m){ if(window.__viewerSpread) window.__viewerSpread(m); },set:function(t){tNow=t;prevT=t},view:setView,cam:cam,camera:camera,rocketLength:ROCKET_LEN,toggle:function(k,v){G[k].visible=v},canopy:canopy,aim:function(a){aimAft=a}};
 /* ---------- OpenRocket's flight path for the same launch condition ----------
    On the dynamics site the History tab keeps OpenRocket's newest run of every simulation (data.json lists them,

@@ -6,9 +6,11 @@ loads it from a CDN, which the test replaces with the local file). Set
 them every test here is skipped.
 """
 
+import io
 import json
+import math
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from flight_sim.visualize import write_viewer
 
 DASH = "\u2013"  # what the page shows for a value it does not know
 _CDN = "**/ajax/libs/three.js/r128/three.min.js"
+_TILES = "**/World_Imagery/MapServer/tile/**"
 _THREE_CANDIDATES = (
     os.environ.get("VISION_THREE_JS", ""),
     "node_modules/three/build/three.min.js",
@@ -115,7 +118,13 @@ class _Opened:
         return before, self.js("window.__viewer.frames")
 
 
-def _open(browser: Any, tmp_path: Path, log: Any, **kwargs: Any) -> _Opened:
+def _open(
+    browser: Any,
+    tmp_path: Path,
+    log: Any,
+    tiles: Callable[[Any], None] | None = None,
+    **kwargs: Any,
+) -> _Opened:
     page_file = write_viewer(
         log, tmp_path / "sub" / "flight.html", open_browser=False, **kwargs
     )
@@ -129,6 +138,8 @@ def _open(browser: Any, tmp_path: Path, log: Any, **kwargs: Any) -> _Opened:
         ),
     )
     page.route("**/fonts.g*/**", lambda route: route.abort())
+    # Satellite tiles never reach the internet in a test: a test hands its own
+    page.route(_TILES, tiles or (lambda route: route.abort()))
     page.goto(page_file.as_uri())
     page.wait_for_function(
         "window.__viewer && window.__viewer.frames > 2", timeout=20000
@@ -351,3 +362,181 @@ def test_a_missing_3d_library_is_explained(browser: Any, tmp_path: Path) -> None
         assert "3D library" in page.evaluate("window.__viewer.loadError")
     finally:
         page.close()
+
+
+# The launch site of the satellite tests, and marks drawn on their pretend imagery
+_SITE = {"lat_deg": 31.0311, "lon_deg": -103.54007, "elevation_m": 890.0}
+_MARKS = ((1000.0, 0.0, (0, 0, 255)), (0.0, 1000.0, (0, 255, 0)))  # north, east
+
+
+def _tile_png(z: int, x: int, y: int) -> bytes:
+    """A Web Mercator tile of pretend desert: a 500 m checker round the pad, with a
+    blue disc 1 km north of it and a green one 1 km east."""
+    np = pytest.importorskip("numpy")
+    image = pytest.importorskip("PIL.Image")
+    lat0 = math.radians(_SITE["lat_deg"])
+    e2 = 0.00669437999014
+    w = 1.0 - e2 * math.sin(lat0) ** 2
+    meridian = 6378137.0 * (1.0 - e2) / w**1.5
+    across = 6378137.0 / math.sqrt(w) * math.cos(lat0)
+    world = 256.0 * 2**z
+    px = (x * 256 + np.arange(256) + 0.5)[None, :]
+    py = (y * 256 + np.arange(256) + 0.5)[:, None]
+    lon = px / world * 360.0 - 180.0
+    lat = np.degrees(np.arctan(np.sinh(math.pi * (1.0 - 2.0 * py / world))))
+    north = np.radians(lat - _SITE["lat_deg"]) * meridian + 0.0 * px
+    east = np.radians(lon - _SITE["lon_deg"]) * across + 0.0 * py
+    odd = (np.floor(north / 500.0) + np.floor(east / 500.0)) % 2 == 1
+    rgb = np.where(odd[..., None], [150, 130, 100], [190, 170, 135]).astype(np.uint8)
+    for mark_n, mark_e, colour in _MARKS:
+        rgb[np.hypot(north - mark_n, east - mark_e) < 60.0] = colour
+    out = io.BytesIO()
+    image.fromarray(rgb, "RGB").save(out, "PNG")
+    return out.getvalue()
+
+
+def _serve_tiles(route: Any) -> None:
+    """Answer a tile request with the pretend imagery, as Esri would (with CORS)."""
+    z, y, x = (int(v) for v in route.request.url.rstrip("/").split("/")[-3:])
+    route.fulfill(
+        body=_tile_png(z, x, y),
+        content_type="image/png",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+def _with_site() -> dict[str, Any]:
+    """The test flight, flown from the launch site."""
+    return {**_flight(), "site": _SITE}
+
+
+def _realistic(opened: _Opened) -> None:
+    """Switch the page to the Realistic look."""
+    opened.page.click('#look button[data-l="real"]')
+
+
+def _look_down(opened: _Opened) -> Any:
+    """Look straight down on the pad from 3 km, with nothing drawn over the ground,
+    and return a screenshot of the 3D view alone."""
+    opened.js(
+        """(() => { const v = window.__viewer;
+        ['world', 'body', 'missile', 'vec', 'trail', 'pad']
+          .forEach(k => v.toggle(k, false));
+        v.set(-2); v.cam.el = v.cam.elT = 1.45;
+        v.cam.dist = v.cam.distT = 3000; })()"""
+    )
+    opened.page.wait_for_timeout(1500)
+    image = pytest.importorskip("PIL.Image")
+    shot = opened.page.locator("#cv").screenshot()
+    return image.open(io.BytesIO(shot)).convert("RGB")
+
+
+def _centre_of(shot: Any, colour: tuple[int, int, int]) -> tuple[float, float] | None:
+    """Middle of the pixels that are mostly the one pure channel of ``colour``."""
+    np = pytest.importorskip("numpy")
+    rgb = np.asarray(shot).astype(int)
+    main = int(np.argmax(colour))
+    others = [c for c in range(3) if c != main]
+    hit = (rgb[..., main] > 140) & np.all(rgb[..., others] < 90, axis=-1)
+    ys, xs = np.nonzero(hit)
+    return None if len(xs) < 20 else (float(xs.mean()), float(ys.mean()))
+
+
+def test_the_engineering_look_never_asks_for_satellite_tiles(
+    browser: Any, tmp_path: Path
+) -> None:
+    """Tiles are fetched only once the Realistic look is chosen: all 4 x 64."""
+    asked: list[str] = []
+
+    def count(route: Any) -> None:
+        """Note each tile asked for, and refuse it."""
+        asked.append(route.request.url)
+        route.abort()
+
+    opened = _open(browser, tmp_path, _typed(_Log(_with_site())), tiles=count)
+    try:
+        opened.page.wait_for_timeout(500)
+        assert asked == []
+        assert opened.js("window.__viewer.satellite().attr") == ""
+        _realistic(opened)
+        opened.page.wait_for_function("window.__viewer.satellite().total > 0")
+        assert opened.js("window.__viewer.satellite().total") == 256
+    finally:
+        opened.page.close()
+
+
+def test_data_without_a_launch_site_asks_for_no_tiles(
+    browser: Any, tmp_path: Path
+) -> None:
+    """With no site the Realistic look keeps its drawn ground and fetches nothing."""
+    asked: list[str] = []
+
+    def count(route: Any) -> None:
+        """Note each tile asked for, and refuse it."""
+        asked.append(route.request.url)
+        route.abort()
+
+    opened = _open(browser, tmp_path, _typed(_Log(_flight())), tiles=count)
+    try:
+        _realistic(opened)
+        opened.page.wait_for_timeout(800)
+        assert asked == []
+        assert opened.js("window.__viewer.satellite().key") == ""
+        assert opened.errors == []
+    finally:
+        opened.page.close()
+
+
+def test_the_satellite_picture_lies_where_the_site_is(
+    browser: Any, tmp_path: Path
+) -> None:
+    """Marks 1 km north and 1 km east of the pad show where those points are."""
+    opened = _open(browser, tmp_path, _typed(_Log(_with_site())), tiles=_serve_tiles)
+    try:
+        _realistic(opened)
+        opened.page.wait_for_function(
+            "(s => s.total > 0 && s.done === s.total)(window.__viewer.satellite())",
+            timeout=60000,
+        )
+        assert "Esri" in opened.js("window.__viewer.satellite().attr")
+        shot = _look_down(opened)
+        # where points 1 km north and 1 km east of the pad are in the 3D view
+        expected = opened.js(
+            """(() => { const c = window.__viewer.camera;
+            const r = document.getElementById('cv').getBoundingClientRect();
+            return [[1000, 0, 0], [0, 0, 1000]].map(([x, y, z]) => {
+              const q = new THREE.Vector3(x, y, z).project(c);
+              return [(q.x + 1) / 2 * r.width, (1 - q.y) / 2 * r.height]; }); })()"""
+        )
+        for (_, _, colour), (ex, ey) in zip(_MARKS, expected, strict=True):
+            found = _centre_of(shot, colour)
+            assert found is not None, f"no {colour} mark on the ground"
+            assert math.hypot(found[0] - ex, found[1] - ey) < 4.0
+        assert opened.errors == []
+    finally:
+        opened.page.close()
+
+
+def test_the_realistic_look_draws_its_own_ground_without_the_imagery(
+    browser: Any, tmp_path: Path
+) -> None:
+    """With every tile failing, the Realistic look is as it was: the drawn desert."""
+    opened = _open(browser, tmp_path, _typed(_Log(_with_site())))
+    try:
+        _realistic(opened)
+        opened.page.wait_for_function(
+            "(s => s.total > 0 && s.bad === s.total)(window.__viewer.satellite())",
+            timeout=30000,
+        )
+        assert opened.js("window.__viewer.satellite().attr") == ""
+        assert "No satellite picture" in opened.text("#scaleNote")
+        np = pytest.importorskip("numpy")
+        shot = np.asarray(_look_down(opened)).astype(int)
+        height, width = shot.shape[:2]
+        middle = shot[height // 4 : 3 * height // 4, width // 4 : 3 * width // 4]
+        r, g, b = (float(middle[..., c].mean()) for c in range(3))
+        # the drawn desert: sandy (red over green over blue), not black or grey
+        assert r > 90 and r > g > b + 10
+        assert opened.errors == []
+    finally:
+        opened.page.close()
