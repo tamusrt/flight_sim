@@ -1,0 +1,88 @@
+imports 1.687s | build properties 0.039s | full run (warm) 963.3 ms
+         10564651 function calls (10526421 primitive calls) in 21.730 seconds
+
+   Ordered by: internal time
+   List reduced from 932 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    21720    1.488    0.000    3.531    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\data_loader.py:79(__call__)
+    43440    0.926    0.000    1.477    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\vehicle\mass_properties.py:52(_combine_pair)
+    21720    0.903    0.000   11.421    0.001 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:300(_state_rates)
+    65810    0.764    0.000    2.405    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\registry.py:1299(_parse_units_as_container)
+    87490    0.729    0.000    2.849    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\quantity.py:186(__new__)
+    21720    0.646    0.000    4.985    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:214(_aero_loads)
+   174980    0.574    0.000    1.182    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\util.py:959(__new__)
+    21720    0.535    0.000    1.000    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\r3f.py:1869(dcm)
+   197430    0.524    0.000    3.450    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\util.py:1025(to_units_container)
+    20680    0.460    0.000    1.143    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\numpy\linalg\_linalg.py:362(solve)
+   227710    0.445    0.000    0.445    0.000 {built-in method numpy.array}
+    43440    0.401    0.000    0.468    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\numpy\_core\numeric.py:909(outer)
+    21720    0.350    0.000    0.442    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\r3f.py:2416(quat_to_dcm)
+1020540/1020180    0.333    0.000    0.458    0.000 {built-in method builtins.isinstance}
+    21720    0.304    0.000    0.796    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\dcm.py:50(world_to_body)
+     3160    0.291    0.000    9.995    0.003 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:378(rkf45_step)
+    65160    0.283    0.000    0.872    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\data_loader.py:114(_cell_index)
+    90930    0.277    0.000    0.471    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\util.py:568(__eq__)
+    65810    0.259    0.000    6.723    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\quantity.py:517(to)
+    68650    0.248    0.000    0.248    0.000 {method 'searchsorted' of 'numpy.ndarray' objects}
+    21720    0.243    0.000    0.422    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\environment\atmosphere.py:116(conditions)
+    87490    0.217    0.000    0.489    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\compat.py:84(is_upcast_type)
+    21740    0.215    0.000    0.301    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\numpy\lib\_twodim_base_impl.py:258(diag)
+    55500    0.189    0.000    0.519    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\util.py:476(add)
+    87490    0.184    0.000    0.251    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\compat.py:282(_to_magnitude)
+    65810    0.183    0.000    1.176    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\registry.py:1087(convert)
+   334290    0.175    0.000    0.175    0.000 {built-in method __new__ of type object at 0x00007FF90CB78F90}
+    77000    0.167    0.000    0.329    0.000 C:\Users\nacho\AppData\Local\Programs\Python\Python311\Lib\collections\__init__.py:1018(__contains__)
+    21720    0.164    0.000    0.514    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\vehicle\engine.py:75(mass_properties)
+    21720    0.162    0.000    0.207    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\numpy\lib\_twodim_base_impl.py:176(eye)
+
+
+         10564651 function calls (10526421 primitive calls) in 21.730 seconds
+
+   Ordered by: cumulative time
+   List reduced from 932 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       10    0.024    0.002   21.887    2.189 C:\Users\nacho\AppData\Local\Temp\claude\c--Users-nacho-Documents-SRT-flight-sim\b3e7db11-2362-42bd-b639-7cc3e34ea989\scratchpad\bench.py:18(run)
+     2440    0.054    0.000   20.549    0.008 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:462(adaptive_step)
+    21720    0.903    0.000   11.421    0.001 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:300(_state_rates)
+     2650    0.102    0.000   10.180    0.004 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:405(_adaptive_step)
+     3160    0.291    0.000    9.995    0.003 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:378(rkf45_step)
+    65810    0.136    0.000    6.884    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\quantity.py:301(m_as)
+    65810    0.259    0.000    6.723    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\quantity.py:517(to)
+     7340    0.027    0.000    6.488    0.001 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\flight_event.py:23(crossed)
+     2760    0.016    0.000    5.821    0.002 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\events.py:30(vertical_acceleration)
+     2760    0.055    0.000    5.340    0.002 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:349(derivative_computation)
+    21720    0.646    0.000    4.985    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:214(_aero_loads)
+     5410    0.110    0.000    3.582    0.001 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:147(_step_inputs)
+    21720    1.488    0.000    3.531    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\data_loader.py:79(__call__)
+   197430    0.524    0.000    3.450    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\util.py:1025(to_units_container)
+    87490    0.729    0.000    2.849    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\quantity.py:186(__new__)
+    21720    0.081    0.000    2.644    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\vehicle\rocket_properties.py:24(mass_properties)
+    65810    0.122    0.000    2.631    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\nonmultiplicative\registry.py:59(parse_units_as_container)
+    65810    0.105    0.000    2.509    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\registry.py:1285(parse_units_as_container)
+    65810    0.764    0.000    2.405    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\registry.py:1299(_parse_units_as_container)
+     5410    0.099    0.000    2.042    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:180(_pack)
+    43440    0.113    0.000    1.823    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\vehicle\mass_properties.py:63(combine)
+    21720    0.097    0.000    1.771    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\vehicle\engine.py:174(mass_properties)
+    43440    0.073    0.000    1.550    0.000 {built-in method _functools.reduce}
+    43440    0.926    0.000    1.477    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\vehicle\mass_properties.py:52(_combine_pair)
+    65810    0.125    0.000    1.301    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\quantity.py:475(_convert_magnitude_not_inplace)
+   174980    0.574    0.000    1.182    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\util.py:959(__new__)
+    65810    0.183    0.000    1.176    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pint\facets\plain\registry.py:1087(convert)
+       40    0.003    0.000    1.152    0.029 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:558(locate_event)
+    20680    0.460    0.000    1.143    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\numpy\linalg\_linalg.py:362(solve)
+       10    0.001    0.000    1.132    0.113 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\__main__.py:36(get_default_properties)
+    21720    0.059    0.000    1.059    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\dcm.py:80(missile_to_body)
+       10    0.001    0.000    1.050    0.105 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\data_loader.py:123(aero_table_from_csv)
+    21720    0.535    0.000    1.000    0.000 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\r3f.py:1869(dcm)
+       10    0.001    0.000    0.986    0.099 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\data_loader.py:154(<listcomp>)
+       60    0.001    0.000    0.983    0.016 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pandas\core\frame.py:11143(pivot_table)
+       60    0.003    0.000    0.983    0.016 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pandas\core\reshape\pivot.py:54(pivot_table)
+       60    0.006    0.000    0.979    0.016 C:\Users\nacho\Documents\SRT\flight_sim\.venv\Lib\site-packages\pandas\core\reshape\pivot.py:284(__internal_pivot_table)
+      210    0.003    0.000    0.953    0.005 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\integration.py:518(step)
+    65160    0.283    0.000    0.872    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\data_loader.py:114(_cell_index)
+    21720    0.046    0.000    0.842    0.000 C:\Users\nacho\Documents\SRT\flight_sim\src\flight_sim\utilities\dcm.py:68(body_to_world)
+
+
+
