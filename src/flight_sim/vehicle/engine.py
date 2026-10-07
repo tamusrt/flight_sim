@@ -20,8 +20,16 @@ class Engine(ABC):
     """Motor the integrator samples at each time it visits."""
 
     @abstractmethod
-    def get_thrust(self, time: float) -> float:
-        """Return the thrust in N along body +X at a simulation time in seconds."""
+    def get_thrust(self, time: float, ambient_pressure: float) -> float:
+        """Return the thrust along body +X.
+
+        Args:
+            time (float): Simulation time in seconds.
+            ambient_pressure (float): Air pressure around the nozzle in Pa.
+
+        Returns:
+            float: Thrust in N.
+        """
 
     @abstractmethod
     def mass_properties(self, time: float) -> MassPropertiesSI:
@@ -98,8 +106,9 @@ class PropellantGrain(UnitChecked):
 class SolidEngine(Engine, UnitChecked):
     """Solid motor burning its propellant in proportion to the impulse delivered.
 
-    The thrust is linear between the samples of the thrust curve and zero
-    outside them.
+    The thrust curve is linear between its samples and zero outside them.
+    During the burn, the nozzle adds (reference - ambient pressure) * exit
+    area to it.
     """
 
     times: np.ndarray  # s from ignition, strictly increasing
@@ -111,7 +120,18 @@ class SolidEngine(Engine, UnitChecked):
         default_factory=lambda: scalar(0.0, "s")
     )
 
+    nozzle_exit_area: Annotated[Scalar, "m**2"] = field(
+        default_factory=lambda: scalar(0.0, "m**2")
+    )
+
+    # Ambient pressure the thrust curve was measured at
+    reference_pressure: Annotated[Scalar, "Pa"] = field(
+        default_factory=lambda: scalar(101325.0, "Pa")
+    )
+
     _ignition_s: float = field(init=False, repr=False, compare=False)
+    _exit_area_m2: float = field(init=False, repr=False, compare=False)
+    _reference_pressure_pa: float = field(init=False, repr=False, compare=False)
 
     # Impulse delivered by each sample time, in N*s
     _impulses: np.ndarray = field(init=False, repr=False, compare=False)
@@ -120,8 +140,8 @@ class SolidEngine(Engine, UnitChecked):
         """Check the thrust curve and cache its cumulative impulse.
 
         Raises:
-            ValueError: If the times are not strictly increasing or the curve
-                delivers no impulse.
+            ValueError: If the times are not strictly increasing, the curve
+                delivers no impulse or the nozzle exit area is negative.
         """
         super().__post_init__()
         intervals = np.diff(self.times)
@@ -132,7 +152,16 @@ class SolidEngine(Engine, UnitChecked):
         )
         if not impulses[-1] > 0.0:
             raise ValueError("Thrust curve must deliver some impulse")
+        exit_area = float(self.nozzle_exit_area.m_as("m**2"))
+        if exit_area < 0.0:
+            raise ValueError(
+                f"Nozzle exit area must be non-negative, got {exit_area} m**2"
+            )
         object.__setattr__(self, "_ignition_s", float(self.ignition_time.m_as("s")))
+        object.__setattr__(self, "_exit_area_m2", exit_area)
+        object.__setattr__(
+            self, "_reference_pressure_pa", float(self.reference_pressure.m_as("Pa"))
+        )
         object.__setattr__(self, "_impulses", impulses)
 
     @classmethod
@@ -218,13 +247,24 @@ class SolidEngine(Engine, UnitChecked):
         """Return the impulse of the whole thrust curve in N*s."""
         return float(self._impulses[-1])
 
-    def get_thrust(self, time: float) -> float:
-        """Return the thrust in N along body +X at a simulation time in seconds."""
-        return float(
-            np.interp(
-                time - self._ignition_s, self.times, self.thrusts, left=0.0, right=0.0
-            )
-        )
+    def get_thrust(self, time: float, ambient_pressure: float) -> float:
+        """Return the thrust in N along body +X, never negative.
+
+        Args:
+            time (float): Simulation time in seconds.
+            ambient_pressure (float): Air pressure around the nozzle in Pa.
+
+        Returns:
+            float: Curve thrust plus pressure thrust during the burn, else zero.
+        """
+        burn_time = time - self._ignition_s
+        if not self.times[0] <= burn_time <= self.times[-1]:
+            return 0.0
+        curve = float(np.interp(burn_time, self.times, self.thrusts))
+        pressure_thrust = (
+            self._reference_pressure_pa - ambient_pressure
+        ) * self._exit_area_m2
+        return max(curve + pressure_thrust, 0.0)
 
     def burned_fraction(self, time: float) -> float:
         """Return the fraction of the propellant burned by a simulation time.
