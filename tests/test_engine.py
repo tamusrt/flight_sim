@@ -20,6 +20,8 @@ _MOTOR_CSV = "tests/test_data/standard_motor.csv"
 _MOTOR_ENG = "tests/test_data/standard_motor.eng"
 _MOTOR_RSE = "tests/test_data/standard_motor.rse"
 
+_SEA_LEVEL_PA = 101325.0
+
 # Grain dimensions in m
 _OUTER_RADIUS, _CORE_RADIUS, _LENGTH = 0.04, 0.015, 0.75
 
@@ -96,7 +98,7 @@ def test_mid_burn_mass_follows_the_impulse_delivered() -> None:
     engine = _standard_engine()
     time = 3.0  # Within the tail-off
     times = np.linspace(0.0, time, 4001)
-    thrust = np.array([engine.get_thrust(sample) for sample in times])
+    thrust = np.array([engine.get_thrust(sample, _SEA_LEVEL_PA) for sample in times])
     burned = float(np.trapezoid(thrust, times)) * 5.0 / engine.total_impulse
 
     assert engine.mass_properties(time).mass == pytest.approx(8.0 - burned, rel=1e-7)
@@ -108,10 +110,10 @@ def test_solid_engine_from_csv_integrates_the_thrust_curve() -> None:
 
     # 2000 N for 2 s, then a linear tail-off to zero over 2 s
     assert engine.total_impulse == pytest.approx(6000.0)
-    assert engine.get_thrust(1.0) == pytest.approx(2000.0)
-    assert engine.get_thrust(3.0) == pytest.approx(1000.0)
-    assert engine.get_thrust(-0.1) == 0.0
-    assert engine.get_thrust(4.1) == 0.0
+    assert engine.get_thrust(1.0, _SEA_LEVEL_PA) == pytest.approx(2000.0)
+    assert engine.get_thrust(3.0, _SEA_LEVEL_PA) == pytest.approx(1000.0)
+    assert engine.get_thrust(-0.1, _SEA_LEVEL_PA) == 0.0
+    assert engine.get_thrust(4.1, _SEA_LEVEL_PA) == 0.0
     assert engine.burned_fraction(3.0) == pytest.approx(5500.0 / 6000.0)
 
 
@@ -121,8 +123,8 @@ def test_solid_engine_from_eng_starts_the_curve_at_zero() -> None:
 
     # 100 N*s of ramp, 3800 N*s of hold and 2000 N*s of tail-off
     assert engine.total_impulse == pytest.approx(5900.0)
-    assert engine.get_thrust(0.05) == pytest.approx(1000.0)
-    assert engine.get_thrust(3.0) == pytest.approx(1000.0)
+    assert engine.get_thrust(0.05, _SEA_LEVEL_PA) == pytest.approx(1000.0)
+    assert engine.get_thrust(3.0, _SEA_LEVEL_PA) == pytest.approx(1000.0)
 
 
 def test_solid_engine_from_rse_reads_the_first_motor() -> None:
@@ -159,14 +161,62 @@ def test_late_ignition_delays_the_burn() -> None:
     engine = _standard_engine()
     delayed = replace(engine, ignition_time=scalar(2.0, "s"))
 
-    assert delayed.get_thrust(1.0) == 0.0
+    assert delayed.get_thrust(1.0, _SEA_LEVEL_PA) == 0.0
     assert delayed.mass_properties(1.0).mass == pytest.approx(8.0)
     for time in (0.5, 3.0, 6.0):
         expected = engine.mass_properties(time)
         actual = delayed.mass_properties(time + 2.0)
-        assert delayed.get_thrust(time + 2.0) == pytest.approx(engine.get_thrust(time))
+        assert delayed.get_thrust(time + 2.0, _SEA_LEVEL_PA) == pytest.approx(
+            engine.get_thrust(time, _SEA_LEVEL_PA)
+        )
         assert actual.mass == pytest.approx(expected.mass)
         assert actual.inertia == pytest.approx(expected.inertia)
+
+
+@pytest.mark.parametrize(
+    ("time", "ambient_pressure", "expected"),
+    [
+        (1.0, _SEA_LEVEL_PA, 2000.0),  # At the reference pressure
+        (1.0, 0.0, 2000.0 + _SEA_LEVEL_PA * 0.002),  # Vacuum
+        (3.0, 50000.0, 1000.0 + (_SEA_LEVEL_PA - 50000.0) * 0.002),
+        (4.0, 0.0, _SEA_LEVEL_PA * 0.002),  # Last sample, still burning
+        (4.1, 0.0, 0.0),  # Burned out
+        (-0.1, 0.0, 0.0),  # Before ignition
+    ],
+)
+def test_pressure_thrust_adds_to_the_curve_during_the_burn(
+    time: float, ambient_pressure: float, expected: float
+) -> None:
+    """The nozzle adds (reference - ambient pressure) * exit area while burning."""
+    engine = replace(_standard_engine(), nozzle_exit_area=scalar(20.0, "cm**2"))
+
+    assert engine.get_thrust(time, ambient_pressure) == pytest.approx(expected)
+
+
+def test_pressure_thrust_leaves_the_burn_rate_unchanged() -> None:
+    """Propellant still burns in proportion to the curve's impulse."""
+    engine = _standard_engine()
+    nozzled = replace(engine, nozzle_exit_area=scalar(20.0, "cm**2"))
+
+    assert nozzled.total_impulse == pytest.approx(engine.total_impulse)
+    assert nozzled.burned_fraction(3.0) == pytest.approx(engine.burned_fraction(3.0))
+
+
+def test_overexpanded_thrust_is_never_negative() -> None:
+    """Ambient pressure far above the reference cannot pull the rocket back."""
+    engine = replace(
+        _standard_engine(),
+        nozzle_exit_area=scalar(20.0, "cm**2"),
+        reference_pressure=scalar(0.0, "Pa"),
+    )
+
+    assert engine.get_thrust(3.9, _SEA_LEVEL_PA) == 0.0
+
+
+def test_solid_engine_rejects_a_negative_nozzle_exit_area() -> None:
+    """The nozzle exit area must be at least zero."""
+    with pytest.raises(ValueError, match="exit area"):
+        replace(_standard_engine(), nozzle_exit_area=scalar(-1.0, "cm**2"))
 
 
 @pytest.mark.parametrize(

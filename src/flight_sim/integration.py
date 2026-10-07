@@ -12,7 +12,11 @@ from typing import Annotated, NamedTuple
 
 import numpy as np
 
-from flight_sim.environment.atmosphere import AtmosphereModel, StandardAtmosphere1976
+from flight_sim.environment.atmosphere import (
+    AtmosphereConditions,
+    AtmosphereModel,
+    StandardAtmosphere1976,
+)
 from flight_sim.environment.gravity import GravityModel, WGS84Gravity
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind, WindModel
@@ -212,8 +216,8 @@ def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
 
 
 def _aero_loads(
-    velocity: np.ndarray,
-    altitude: float,
+    air_velocity: np.ndarray,
+    conditions: AtmosphereConditions,
     to_body: np.ndarray,
     cg_location: np.ndarray,
     inputs: _StepInputs,
@@ -224,8 +228,9 @@ def _aero_loads(
     moment of the force through the lever arm from the CG.
 
     Args:
-        velocity (np.ndarray): Velocity in the world frame in m/s.
-        altitude (float): Altitude above sea level in metres.
+        air_velocity (np.ndarray): Velocity relative to the wind in the world
+            frame in m/s.
+        conditions (AtmosphereConditions): Air conditions around the rocket.
         to_body (np.ndarray): World-to-body rotation matrix.
         cg_location (np.ndarray): CG from the nose tip in body axes in m.
         inputs (_StepInputs): Constants of the step.
@@ -234,8 +239,7 @@ def _aero_loads(
         tuple[np.ndarray, np.ndarray]: Force in N and torque in N*m.
     """
     table = inputs.properties.aero_table
-    conditions = inputs.atmosphere.conditions(altitude)
-    airspeed_body = to_body @ (velocity - inputs.wind.velocity(altitude))
+    airspeed_body = to_body @ air_velocity
     speed = math.sqrt(float(airspeed_body @ airspeed_body))
     alpha, phi = aero_angles(airspeed_body)
     coefficients = table(
@@ -317,12 +321,17 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     to_world = body_to_world(Quaternion(*orientation))
     properties = inputs.properties
     mass_properties = properties.mass_properties(time)
+    conditions = inputs.atmosphere.conditions(altitude)
 
     # Aerodynamics plus thrust along the nose, then gravity along -X
     force_body, torque_body = _aero_loads(
-        velocity, altitude, to_world.T, mass_properties.cg_location, inputs
+        velocity - inputs.wind.velocity(altitude),
+        conditions,
+        to_world.T,
+        mass_properties.cg_location,
+        inputs,
     )
-    force_body[0] += properties.engine.get_thrust(time)
+    force_body[0] += properties.engine.get_thrust(time, conditions.pressure)
     acceleration = to_world @ force_body / mass_properties.mass
     acceleration[0] -= inputs.gravity.magnitude(inputs.latitude_rad, altitude)
 

@@ -30,7 +30,7 @@ def _baseline_rocket_properties() -> RocketProperties:
 class _InertEngine(Engine):
     """Massless motor that never fires."""
 
-    def get_thrust(self, time: float) -> float:
+    def get_thrust(self, time: float, ambient_pressure: float) -> float:
         return 0.0
 
     def mass_properties(self, time: float) -> MassPropertiesSI:
