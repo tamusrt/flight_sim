@@ -1,5 +1,7 @@
 """Engine models giving the thrust and mass properties of a motor over its burn."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Annotated, Self
@@ -8,12 +10,59 @@ from xml.etree import ElementTree
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
-from flight_sim.units import Scalar, UnitChecked, Vector, scalar
+from flight_sim.units import Scalar, UnitChecked, Vector, matrix, scalar, vector
 from flight_sim.vehicle.mass_properties import (
     MassProperties,
     MassPropertiesSI,
     combine,
 )
+
+
+def _motor_parts(
+    diameter_mm: float,
+    length_mm: float,
+    propellant_mass_kg: float,
+    total_mass_kg: float,
+    cg_mm: float | None = None,
+) -> tuple[PropellantGrain, MassProperties]:
+    """Build validated propellant and casing properties from motor metadata.
+
+    Args:
+        diameter_mm (float): Motor diameter in millimeters.
+        length_mm (float): Motor length in millimeters.
+        propellant_mass_kg (float): Propellant mass in kilograms.
+        total_mass_kg (float): Loaded motor mass in kilograms.
+        cg_mm (float, optional): Motor CG measured from the motor's forward
+            end in millimeters. Defaults to the motor center.
+
+    Returns:
+        tuple[PropellantGrain, MassProperties]: Propellant and casing
+            properties centered at the supplied motor CG.
+
+    Raises:
+        ValueError: If dimensions or masses are invalid.
+    """
+    if diameter_mm <= 0.0 or length_mm <= 0.0:
+        raise ValueError("Motor header dimensions must be positive")
+    casing_mass_kg = total_mass_kg - propellant_mass_kg
+    if propellant_mass_kg < 0.0 or casing_mass_kg < 0.0:
+        raise ValueError("Motor header masses must be non-negative")
+    if cg_mm is None:
+        cg_mm = length_mm / 2.0
+    center = vector((-cg_mm, 0.0, 0.0), "mm")
+    grain = PropellantGrain(
+        mass=scalar(propellant_mass_kg, "kg"),
+        length=scalar(length_mm, "mm"),
+        outer_diameter=scalar(diameter_mm, "mm"),
+        core_diameter=scalar(0.0, "mm"),
+        cg_location=center,
+    )
+    casing = MassProperties(
+        mass=scalar(casing_mass_kg, "kg"),
+        cg_location=center,
+        inertia=matrix(np.zeros((3, 3)), "kg*m**2"),
+    )
+    return grain, casing
 
 
 class Engine(ABC):
@@ -165,26 +214,39 @@ class SolidEngine(Engine, UnitChecked):
         object.__setattr__(self, "_impulses", impulses)
 
     @classmethod
-    def from_eng(
-        cls, motor_file_path: str, grain: PropellantGrain, casing: MassProperties
-    ) -> Self:
+    def from_eng(cls, motor_file_path: str) -> Self:
         """Build a solid motor from the first motor in a RASP .eng file.
 
         Args:
-            motor_file_path (str): RASP file whose header line is followed by
-                "time thrust" lines, in seconds from ignition and newtons.
-            grain (PropellantGrain): Propellant burned over the curve.
-            casing (MassProperties): Everything in the motor but the propellant.
-
+            motor_file_path (str): RASP file whose first motor header is
+                followed by "time thrust" lines, in seconds from ignition and
+                newtons.
         Returns:
             SolidEngine: Motor igniting at time zero.
 
         Raises:
-            ValueError: If the file holds no thrust curve.
+            ValueError: If the header is missing or invalid, or the file holds
+                no thrust curve.
         """
         with open(motor_file_path, encoding="utf-8", errors="replace") as file:
             # Drop ";" comments and blank lines
             lines = [fields for line in file if (fields := line.split(";")[0].split())]
+        if not lines:
+            raise ValueError("Motor file holds no thrust curve or header")
+        try:
+            diameter_mm = float(lines[0][1])
+            length_mm = float(lines[0][2])
+            propellant_mass = float(lines[0][4])
+            total_mass = float(lines[0][5])
+        except (IndexError, ValueError) as error:
+            raise ValueError("Motor file holds an invalid motor header") from error
+        grain, casing = _motor_parts(
+            diameter_mm,
+            length_mm,
+            propellant_mass,
+            total_mass,
+        )
+
         samples = []
         # The curve follows the header and ends at the next motor's header
         for fields in lines[1:]:
@@ -195,16 +257,12 @@ class SolidEngine(Engine, UnitChecked):
         return cls._from_samples(samples, grain, casing)
 
     @classmethod
-    def from_rse(
-        cls, motor_file_path: str, grain: PropellantGrain, casing: MassProperties
-    ) -> Self:
+    def from_rse(cls, motor_file_path: str) -> Self:
         """Build a solid motor from the first motor in a RockSim .rse file.
 
         Args:
-            motor_file_path (str): RockSim XML file whose "eng-data" elements
-                give the time "t" in seconds from ignition and thrust "f" in N.
-            grain (PropellantGrain): Propellant burned over the curve.
-            casing (MassProperties): Everything in the motor but the propellant.
+            motor_file_path (str): RockSim XML file whose first engine
+                contains the motor metadata and "eng-data" thrust samples.
 
         Returns:
             SolidEngine: Motor igniting at time zero.
@@ -213,14 +271,22 @@ class SolidEngine(Engine, UnitChecked):
             ValueError: If the file holds no thrust curve.
         """
         motor = ElementTree.parse(motor_file_path).find(".//engine")
-        samples = (
-            []
-            if motor is None
-            else [
+        if motor is None:
+            raise ValueError("Motor file holds no thrust curve or motor header")
+        try:
+            grain, casing = _motor_parts(
+                float(motor.attrib["dia"]),
+                float(motor.attrib["len"]),
+                float(motor.attrib["propWt"]) / 1000.0,
+                float(motor.attrib["initWt"]) / 1000.0,
+                float(next(motor.iter("eng-data")).attrib["cg"]),
+            )
+            samples = [
                 (float(point.attrib["t"]), float(point.attrib["f"]))
                 for point in motor.iter("eng-data")
             ]
-        )
+        except (KeyError, StopIteration, ValueError) as error:
+            raise ValueError("Motor file holds an invalid motor header") from error
         return cls._from_samples(samples, grain, casing)
 
     @classmethod

@@ -17,8 +17,9 @@ from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_properties import RocketProperties
 
 _MOTOR_CSV = "tests/test_data/standard_motor.csv"
-_MOTOR_ENG = "tests/test_data/standard_motor.eng"
-_MOTOR_RSE = "tests/test_data/standard_motor.rse"
+_MOTOR_ENG = "tests/test_data/Loki_M3464LB.eng"
+_LOKI_MOTOR_ENG = "tests/test_data/Loki_M3464LB.eng"
+_MOTOR_RSE = "tests/test_data/Loki_M3464LB.rse"
 
 _SEA_LEVEL_PA = 101325.0
 
@@ -117,22 +118,51 @@ def test_solid_engine_from_csv_integrates_the_thrust_curve() -> None:
     assert engine.burned_fraction(3.0) == pytest.approx(5500.0 / 6000.0)
 
 
-def test_solid_engine_from_eng_starts_the_curve_at_zero() -> None:
-    """The first motor's curve is read, ramping up from an implicit (0, 0)."""
-    engine = SolidEngine.from_eng(_MOTOR_ENG, _GRAIN, _CASING)
+def test_solid_engine_from_eng_reads_the_loki_curve() -> None:
+    """The first motor's thrust curve is read from the Loki file."""
+    engine = SolidEngine.from_eng(_MOTOR_ENG)
 
-    # 100 N*s of ramp, 3800 N*s of hold and 2000 N*s of tail-off
-    assert engine.total_impulse == pytest.approx(5900.0)
-    assert engine.get_thrust(0.05, _SEA_LEVEL_PA) == pytest.approx(1000.0)
-    assert engine.get_thrust(3.0, _SEA_LEVEL_PA) == pytest.approx(1000.0)
+    assert engine.total_impulse == pytest.approx(9399.66, rel=1e-5)
+    assert engine.get_thrust(0.05, _SEA_LEVEL_PA) == pytest.approx(3866.9)
+    assert engine.get_thrust(3.0, _SEA_LEVEL_PA) == pytest.approx(0.0)
+
+
+def test_solid_engine_from_eng_reads_header_masses() -> None:
+    """The motor and casing masses come from the .eng header."""
+    engine = SolidEngine.from_eng(_LOKI_MOTOR_ENG)
+
+    assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
+    assert engine.casing.mass.m_as("kg") == pytest.approx(7.597 - 4.464)
+
+
+def test_solid_engine_from_eng_builds_mass_properties_from_header() -> None:
+    """The .eng header supplies default motor dimensions and mass properties."""
+    engine = SolidEngine.from_eng(_LOKI_MOTOR_ENG)
+
+    assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
+    assert engine.grain.outer_diameter.m_as("m") == pytest.approx(0.076)
+    assert engine.grain.length.m_as("m") == pytest.approx(1.0382)
+    assert engine.grain.cg_location.m_as("m") == pytest.approx([-0.5191, 0.0, 0.0])
+    assert engine.casing.mass.m_as("kg") == pytest.approx(3.133)
 
 
 def test_solid_engine_from_rse_reads_the_first_motor() -> None:
-    """The first motor's curve matches the standard CSV curve."""
-    engine = SolidEngine.from_rse(_MOTOR_RSE, _GRAIN, _CASING)
+    """The first motor's curve is read from the Loki RSE file."""
+    engine = SolidEngine.from_rse(_MOTOR_RSE)
 
-    assert engine.times == pytest.approx([0.0, 2.0, 4.0])
-    assert engine.thrusts == pytest.approx([2000.0, 2000.0, 0.0])
+    assert engine.times[[0, 1, -1]] == pytest.approx([0.0, 0.007, 2.976])
+    assert engine.thrusts[[0, 1, -1]] == pytest.approx([0.0, 4907.49, 0.0])
+
+
+def test_solid_engine_from_rse_reads_header_mass_properties() -> None:
+    """The RSE header supplies the motor dimensions and mass properties."""
+    engine = SolidEngine.from_rse("tests/test_data/Loki_M3464LB.rse")
+
+    assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
+    assert engine.grain.outer_diameter.m_as("m") == pytest.approx(0.076)
+    assert engine.grain.length.m_as("m") == pytest.approx(1.0382)
+    assert engine.grain.cg_location.m_as("m") == pytest.approx([-0.5191, 0.0, 0.0])
+    assert engine.casing.mass.m_as("kg") == pytest.approx(3.133)
 
 
 @pytest.mark.parametrize(
@@ -143,7 +173,7 @@ def test_solid_engine_from_rse_reads_the_first_motor() -> None:
     ],
 )
 def test_solid_engine_rejects_a_motor_file_without_a_curve(
-    loader: Callable[[str, PropellantGrain, MassProperties], SolidEngine],
+    loader: Callable[[str], SolidEngine],
     suffix: str,
     contents: str,
     tmp_path: Path,
@@ -153,7 +183,7 @@ def test_solid_engine_rejects_a_motor_file_without_a_curve(
     motor_file.write_text(contents, encoding="utf-8")
 
     with pytest.raises(ValueError, match="no thrust curve"):
-        loader(str(motor_file), _GRAIN, _CASING)
+        loader(str(motor_file))
 
 
 def test_late_ignition_delays_the_burn() -> None:
