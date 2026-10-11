@@ -1,0 +1,13 @@
+# Sol Invictus on a Loki M3464, with grain and casing read from the .rse file.
+
+extends = "sol_invictus.toml"
+
+# Keys other than motor_file_path pass through to SolidEngine
+[engine]
+type = "flight_sim.vehicle.engine.SolidEngine.from_rse"
+motor_file_path = "../../tests/test_data/Loki_M3464LB.rse"
+reference_pressure = "101325 Pa"
+
+# A fixed time, or a named sim event plus an optional delay
+ignition_time = "0 s"
+# ignition_time = { event = "apogee", delay = "1.5 s" }

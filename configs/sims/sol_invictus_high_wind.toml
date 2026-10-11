@@ -1,0 +1,8 @@
+# Nominal flight in a 20 mph wind out of the west.
+
+extends = "sol_invictus_nominal.toml"
+name = "Sol Invictus - 20 mph west wind"
+
+[config.truth.wind]
+speed = "20 mph"
+from_azimuth = "270 deg"

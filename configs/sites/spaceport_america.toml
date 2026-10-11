@@ -1,0 +1,15 @@
+# TruthConfiguration for the Spaceport America vertical launch area.
+
+launch_latitude = "32.99 deg"
+launch_elevation = "4595 ft"
+
+[atmosphere]
+type = "flight_sim.environment.atmosphere.StandardAtmosphere1976"
+
+[gravity]
+type = "flight_sim.environment.gravity.WGS84Gravity"
+
+[wind]
+type = "flight_sim.environment.wind.UniformWind"
+speed = "0 m/s"
+from_azimuth = "0 deg"
