@@ -1,0 +1,32 @@
+# RocketProperties for Sol Invictus. Mass properties are placeholders:
+# 25 kg at ignition, burning down to 20 kg.
+
+[aero_table]
+type = "flight_sim.utilities.data_loader.aero_table_from_csv"
+filepath = "../../data/aero/estimated_aero.csv"
+reference_area = "0.0182414692 m**2"
+reference_length = "6 in"
+reference_point = { value = [0.0, 0.0, 0.0], units = "m" }
+frame = "missile"
+
+[dry_mass_properties]
+mass = "17 kg"
+cg_location = { value = [-1.0, 0.0, 0.0], units = "m" }
+inertia = { diag = [2.4, 135.0, 135.0], units = "kg*m**2" }
+
+[engine]
+type = "flight_sim.vehicle.engine.solid_engine_from_csv"
+motor_file_path = "../../tests/test_data/standard_motor.csv"
+
+[engine.grain]
+mass = "5 kg"
+length = "0.75 m"
+outer_diameter = "3 in"
+core_diameter = "30 mm"
+cg_location = { value = [-2.6, 0.0, 0.0], units = "m" }
+
+# Thin tube of radius 0.045 m and length 0.9 m
+[engine.casing]
+mass = "3 kg"
+cg_location = { value = [-2.6, 0.0, 0.0], units = "m" }
+inertia = { diag = [0.0061, 0.21, 0.21], units = "kg*m**2" }
