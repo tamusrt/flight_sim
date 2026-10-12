@@ -280,7 +280,7 @@ def main(rocket: str | None = None) -> None:  # pylint: disable=too-many-stateme
 
         if hit is not None:
             print(f"{hit.name} at {current_time:.2f} seconds")
-        if hit is IMPACT:
+        if hit is APOGEE:
             break
 
         state, dt_taken, dt, hit = adaptive_step(
