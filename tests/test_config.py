@@ -69,6 +69,7 @@ def test_changed_type_replaces_base_table_and_passes_kwargs() -> None:
 
     assert isinstance(engine, SolidEngine)
     assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
+    assert engine.grain.cg_location.m_as("m") == pytest.approx([-2.5991, 0.0, 0.0])
     assert engine.reference_pressure.m_as("Pa") == pytest.approx(101325.0)
     assert engine.pending_ignition() is None
 
@@ -83,6 +84,7 @@ def test_event_ignition_builds_from_a_table(tmp_path: Path) -> None:
         """
         type = "flight_sim.vehicle.engine.SolidEngine.from_eng"
         motor_file_path = "motor.eng"
+        forward_end_location = { value = [-2, 0, 0], units = "m" }
         ignition_time = { event = "apogee", delay = "1.5 s" }
         """,
     )
@@ -107,6 +109,7 @@ def test_paths_resolve_relative_to_their_file(tmp_path: Path) -> None:
         """
         type = "flight_sim.vehicle.engine.SolidEngine.from_rse"
         motor_file_path = "motor.rse"
+        forward_end_location = { value = [-2, 0, 0], units = "m" }
         """,
     )
     path = _write(tmp_path, "top.toml", 'engine = { include = "vehicles/engine.toml" }')

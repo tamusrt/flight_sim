@@ -6,6 +6,8 @@ extends = "sol_invictus.toml"
 [engine]
 type = "flight_sim.vehicle.engine.SolidEngine.from_rse"
 motor_file_path = "../../tests/test_data/Loki_M3464LB.rse"
+# Forward end of the motor from the nose tip; its CG is 0.519 m aft of this
+forward_end_location = { value = [-2.08, 0.0, 0.0], units = "m" }
 reference_pressure = "101325 Pa"
 
 # A fixed time, or a named sim event plus an optional delay
