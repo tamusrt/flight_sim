@@ -12,7 +12,7 @@ rockets_dir = Path(__file__).resolve().parent
 
 ras_path = rockets_dir / "FlightTestRAS_SOL.CSV"
 # Written by `uv run python -m flight_sim SOLINV` in the repository root
-jarvis_path = rockets_dir / "jarvis_log_SOLINV.csv"
+jarvis_path = rockets_dir.parent / "jarvis_log_SOLINV.csv"
 or_path = rockets_dir / "OR-COmparsion-Sim-SOL-CORRECT-FULL.csv"
 
 

@@ -37,15 +37,14 @@ def get_properties() -> RocketProperties:
             # .eng files carry no CG, so the motor's CG is its geometric center
             "data/motors/IgnisSET5.eng",
 
-            # Replace 3.10 with the actual distance from the rocket nose
-            # to the FORWARD end of the installed motor.
-            vector((-2.4003, 0.0, 0.0), "m"),
+            # Forward end of the installed motor, from the nose tip
+            vector((-2.542626, 0.0, 0.0), "m"),
         ),
         # RASAero sustainer is 141.31 lb loaded with its CG 129 in aft of the
-        # nose; less the motor (43.68 kg, CG 3.7095 m aft) that leaves:
+        # nose; less the motor (43.68 kg, CG 3.851826 m aft) that leaves:
         dry_mass_properties=MassProperties(
             mass=scalar(20.417, "kg"),
-            cg_location=vector((-2.3505, 0.0, 0.0), "m"),  # 92.54 in aft
+            cg_location=vector((-2.045973, 0.0, 0.0), "m"),  # 80.55 in aft
             # OR: (rotational, longitudinal, longitudinal) moments of inertia
             inertia=matrix(np.diag((5.23, 2602.07, 2602.07)), "lb*ft**2"),  
         ),
