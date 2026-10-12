@@ -15,12 +15,14 @@ ALPHAS = list(range(0, 180))
 # These are the index values for where each item is on the txt fiels from RASAero
 IDX_MACH = 0
 IDX_CD = 2
-#This just tells the code that the CP info is the line after the first main one
-IDX_CP = 1         
-# For this one , it tells the code that the CN info is 2 lines after the main one   
-CN_LINE_OFFSET = 2 
-# On the third line, CN is the third item (index 2)    
+# After each header line RASAero writes, in order:
+#   +1: Mach, CN alpha (0-4 deg), CP (0-4 deg)
+#   +2: Mach, Alpha, CN potential, CN viscous
+#   +3: Mach, Alpha, CN total, CP total
+# CN and CP both come from the "total" line (CP is inches from the nose tip)
+TOTAL_LINE_OFFSET = 3
 IDX_CN = 2
+IDX_CP = 3
 MAX_MACH = 2.0   # we only need up to this mach. Without this there are like 15,000 lines in CSV, it slows things down       
 STEP = 0.1 # This is how much the mach changes by each step, its meant to reduce how many points are in the CSV      
 
@@ -43,7 +45,7 @@ for alpha in ALPHAS:
         #This makes it so it skips a file if its not found, rather than trying to forcefully run it and crashing everything
         continue
 
-    for i in range(len(lines) - CN_LINE_OFFSET):
+    for i in range(len(lines) - TOTAL_LINE_OFFSET):
         line = lines[i].split()
         if len(line) < 12:
             continue
@@ -51,8 +53,9 @@ for alpha in ALPHAS:
         try:
             mach = float(line[IDX_MACH])
             CD = float(line[IDX_CD])
-            CP = float(lines[i + 1].split()[IDX_CP])
-            CN = float(lines[i + CN_LINE_OFFSET].split()[IDX_CN])
+            totals = lines[i + TOTAL_LINE_OFFSET].split()
+            CN = float(totals[IDX_CN])
+            CP = float(totals[IDX_CP])
             # Using the header lines as refrence, we can just pull the rest of the infromation assuming that the placemnt i orignally set was correct
         except (ValueError, IndexError):
             continue

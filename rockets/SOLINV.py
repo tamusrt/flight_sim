@@ -29,7 +29,7 @@ def get_properties() -> RocketProperties:
             "data/ras_alpha_files/converted_aerodynamics-SOLINV.csv",  # Mach,Alpha,Phi,Cx,Cy,Cz,CMx,CMy,CMz
             reference_area=scalar(0.0182414692, "m**2"),  # OR: pi * diameter**2 / 4
             reference_length=scalar(0.1524, "m"),  # OR: body tube diameter
-            reference_point=vector((0.0, 0.0, 0.0), "m"),
+            reference_point=vector((-1.27, 0.0, 0.0), "m"),  # Converter REFPOINT: 50 in aft of nose
             frame="missile",
         ),
         engine=SolidEngine.from_rse(
