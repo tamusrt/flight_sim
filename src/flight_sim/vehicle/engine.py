@@ -26,6 +26,8 @@ def _motor_parts(
     length_mm: float,
     propellant_mass_kg: float,
     total_mass_kg: float,
+    *,
+    forward_end_location: Vector,
     cg_mm: float | None = None,
 ) -> tuple[PropellantGrain, MassProperties]:
     """Build validated propellant and casing properties from motor metadata.
@@ -35,12 +37,14 @@ def _motor_parts(
         length_mm (float): Motor length in millimeters.
         propellant_mass_kg (float): Propellant mass in kilograms.
         total_mass_kg (float): Loaded motor mass in kilograms.
-        cg_mm (float, optional): Motor CG measured from the motor's forward
-            end in millimeters. Defaults to the motor center.
+        forward_end_location (Vector): Motor's forward end from the nose tip
+            in body axes.
+        cg_mm (float, optional): Motor CG aft of its forward end in
+            millimeters. Defaults to the motor center.
 
     Returns:
         tuple[PropellantGrain, MassProperties]: Propellant and casing
-            properties centered at the supplied motor CG.
+            properties centered at the motor CG in rocket body axes.
 
     Raises:
         ValueError: If dimensions or masses are invalid.
@@ -52,7 +56,7 @@ def _motor_parts(
         raise ValueError("Motor header masses must be non-negative")
     if cg_mm is None:
         cg_mm = length_mm / 2.0
-    center = vector((-cg_mm, 0.0, 0.0), "mm")
+    center = forward_end_location - vector((cg_mm, 0.0, 0.0), "mm")
     grain = PropellantGrain(
         mass=scalar(propellant_mass_kg, "kg"),
         length=scalar(length_mm, "mm"),
@@ -235,13 +239,20 @@ class SolidEngine(Engine, UnitChecked):
         object.__setattr__(self, "_impulses", impulses)
 
     @classmethod
-    def from_eng(cls, motor_file_path: str | Path, **kwargs: Any) -> Self:
+    def from_eng(
+        cls,
+        motor_file_path: str | Path,
+        forward_end_location: Annotated[Vector, "m"],
+        **kwargs: Any,
+    ) -> Self:
         """Build a solid motor from the first motor in a RASP .eng file.
 
         Args:
             motor_file_path (str | Path): RASP file whose first motor header is
                 followed by "time thrust" lines, in seconds from ignition and
                 newtons.
+            forward_end_location (Vector): Motor's forward end from the nose
+                tip in body axes, so aft is -X.
             **kwargs (Any): Other ``SolidEngine`` fields, such as
                 ``ignition_time``.
 
@@ -270,6 +281,7 @@ class SolidEngine(Engine, UnitChecked):
             length_mm,
             propellant_mass,
             total_mass,
+            forward_end_location=forward_end_location,
         )
 
         samples = []
@@ -282,12 +294,19 @@ class SolidEngine(Engine, UnitChecked):
         return cls._from_samples(samples, grain, casing, **kwargs)
 
     @classmethod
-    def from_rse(cls, motor_file_path: str | Path, **kwargs: Any) -> Self:
+    def from_rse(
+        cls,
+        motor_file_path: str | Path,
+        forward_end_location: Annotated[Vector, "m"],
+        **kwargs: Any,
+    ) -> Self:
         """Build a solid motor from the first motor in a RockSim .rse file.
 
         Args:
             motor_file_path (str | Path): RockSim XML file whose first engine
                 contains the motor metadata and "eng-data" thrust samples.
+            forward_end_location (Vector): Motor's forward end from the nose
+                tip in body axes, so aft is -X.
             **kwargs (Any): Other ``SolidEngine`` fields, such as
                 ``ignition_time``.
 
@@ -307,7 +326,8 @@ class SolidEngine(Engine, UnitChecked):
                 float(motor.attrib["len"]),
                 float(motor.attrib["propWt"]) / 1000.0,
                 float(motor.attrib["initWt"]) / 1000.0,
-                float(next(motor.iter("eng-data")).attrib["cg"]),
+                forward_end_location=forward_end_location,
+                cg_mm=float(next(motor.iter("eng-data")).attrib["cg"]),
             )
             samples = [
                 (float(point.attrib["t"]), float(point.attrib["f"]))
