@@ -13,11 +13,13 @@ type-check under strict mypy.
 from collections.abc import Sequence
 from dataclasses import fields
 from functools import cache
+from types import UnionType
 from typing import (
     Annotated,
     Any,
     NamedTuple,
     TypeAlias,
+    Union,
     get_args,
     get_origin,
     get_type_hints,
@@ -108,6 +110,7 @@ class _QuantityField(NamedTuple):
     name: str
     units: PlainUnit
     dimensionality: UnitsContainer
+    in_union: bool  # The field also accepts values that are not quantities
 
 
 # Cached per class
@@ -132,13 +135,21 @@ def _expected_fields(cls: type[Any]) -> tuple[_QuantityField, ...]:
     expected = []
     for quantity_field in fields(cls):
         hint = hints[quantity_field.name]
+        in_union = get_origin(hint) in (Union, UnionType)
+        if in_union:
+            annotated = [arg for arg in get_args(hint) if get_origin(arg) is Annotated]
+            if not annotated:
+                continue
+            hint = annotated[0]
         if get_origin(hint) is not Annotated:
             continue
         unit_strings = [meta for meta in get_args(hint)[1:] if isinstance(meta, str)]
         if unit_strings:
             units = parse_units(unit_strings[0])
             expected.append(
-                _QuantityField(quantity_field.name, units, units.dimensionality)
+                _QuantityField(
+                    quantity_field.name, units, units.dimensionality, in_union
+                )
             )
 
     _EXPECTED[cls] = tuple(expected)
@@ -157,6 +168,10 @@ class UnitChecked:
     else. Any Pint unit expression works, such as "kg*m**2" or "rad/s**2".
     Subclasses need no ``__post_init__`` of their own.
 
+    A field may also be a union of an annotated quantity and other types,
+    such as ``Annotated[Scalar, "s"] | EventTime``; it is checked only when it
+    holds a quantity.
+
     Fields without a unit annotation, such as orientations and nested
     dataclasses, are left alone, as are annotated fields holding None. A
     subclass that defines ``__post_init__`` must call
@@ -173,7 +188,11 @@ class UnitChecked:
         cls: type[Any] = type(self)
         for expected in _expected_fields(cls):
             actual: Quantity[Any] | None = getattr(self, expected.name)
-            if actual is not None and actual.dimensionality != expected.dimensionality:
+            if actual is None or (
+                expected.in_union and not isinstance(actual, Quantity)
+            ):
+                continue
+            if actual.dimensionality != expected.dimensionality:
                 raise DimensionalityError(
                     actual.units,
                     expected.units,

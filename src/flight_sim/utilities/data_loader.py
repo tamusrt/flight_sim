@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass, field, fields
+from pathlib import Path
 from typing import Annotated, Literal
 
 import numpy as np
@@ -121,7 +122,7 @@ def _cell_index(axis: np.ndarray, point: float) -> int:
 
 
 def aero_table_from_csv(
-    filepath: str,
+    filepath: str | Path,
     *,
     reference_area: Scalar,
     reference_length: Scalar,
@@ -131,7 +132,7 @@ def aero_table_from_csv(
     """Read a flight sim CSV and build one lookup covering every coefficient.
 
     Args:
-        filepath (str): CSV with "Mach", "Alpha" and "Phi" columns plus one
+        filepath (str | Path): CSV with "Mach", "Alpha" and "Phi" columns plus one
             column per ``AeroCoefficients`` field, with components along the
             axes of ``frame``.
         reference_area (Scalar): Area the coefficients are normalized by.

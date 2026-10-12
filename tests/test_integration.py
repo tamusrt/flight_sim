@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.__main__ import get_default_properties, get_default_state, main
+from flight_sim.__main__ import main
+from flight_sim.config import load
 from flight_sim.environment.atmosphere import StandardAtmosphere1976, VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity, GravityModel, WGS84Gravity
 from flight_sim.environment.launch_rail import LaunchRail
@@ -31,12 +32,12 @@ from flight_sim.vehicle.rocket_state import RocketState
 _CONFIG = IntegrationConfiguration()
 
 
-@patch("flight_sim.__main__.adaptive_step")
+@patch("flight_sim.simulation.adaptive_step")
 def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
     """Verify the executive simulation loop runs from launch to impact."""
 
     # Force the physics step to immediately return an underground state.
-    mock_state = get_default_state()
+    mock_state = RocketState()
     mock_state.position = vector((-10.0, 0.0, 0.0), "m")
     mock_adaptive_step.return_value = (
         mock_state,
@@ -45,18 +46,16 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
         IMPACT,
     )
 
-    main()
+    main([])
 
     # Verify the simulation successfully fired the physics engine before exiting
     mock_adaptive_step.assert_called()
 
 
-@patch("flight_sim.__main__.RocketProperties")
-def test_main_rejects_unknown_argument(mock_properties: MagicMock) -> None:
-    """Verify the module behaves predictably if aerodynamic files are missing."""
-    mock_properties.side_effect = FileNotFoundError("Missing standard_aero.csv")
+def test_main_rejects_missing_sim_file() -> None:
+    """Verify main reports a sim input file that does not exist."""
     with pytest.raises(FileNotFoundError):
-        main()
+        main(["configs/sims/missing.toml"])
 
 
 def test_step_zero_force_keeps_velocity_constant(
@@ -353,7 +352,7 @@ _RAIL = LaunchRail(
 
 def _rail_state() -> RocketState:
     """Return the default rocket at rest on the test rail."""
-    return _RAIL.mount(get_default_state())
+    return _RAIL.mount(RocketState())
 
 
 def test_rail_guides_the_rocket_up_it(
@@ -454,7 +453,7 @@ def test_static_friction_holds_a_rocket_at_rest_on_a_shallow_rail(
         truth=TruthConfiguration(atmosphere=VacuumAtmosphere(), launch_rail=rail)
     )
     # Mount at the origin, then start one metre up the rail
-    state = rail.mount(get_default_state())
+    state = rail.mount(RocketState())
     state.position = vector(rail.direction(), "m")
     after_burnout = 100.0
 
@@ -475,7 +474,7 @@ def test_rail_does_not_affect_a_free_rocket(
 ) -> None:
     """A state off the rail integrates exactly as with no rail configured."""
     state = replace(
-        get_default_state(),
+        RocketState(),
         position=vector((1500.0, 200.0, -100.0), "m"),
         velocity=vector((150.0, 20.0, 10.0), "m/s"),
         angular_velocity=vector((0.1, 0.2, -0.1), "rad/s"),
@@ -501,9 +500,9 @@ def test_rail_does_not_affect_a_free_rocket(
 def test_default_rocket_turns_over_and_lands_nose_first() -> None:
     """With the estimated aero, a tilted launch falls nose-first after apogee."""
     rail = LaunchRail(length=scalar(17.0, "ft"), elevation=scalar(85.0, "deg"))
-    properties = get_default_properties()
+    properties = load("configs/vehicles/sol_invictus.toml", RocketProperties)
     config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
-    state = rail.mount(get_default_state())
+    state = rail.mount(RocketState())
 
     time = 0.0
     dt = scalar(0.01, "s")
@@ -529,7 +528,7 @@ def test_six_dof_aerodynamic_response(
 
     unpowered_rocket_properties.aero_table.values[:] = 1.0
 
-    state = get_default_state()
+    state = RocketState()
     state.position = vector((1000.0, 0.0, 0.0), "m")
     state.velocity = vector((100.0, 50.0, 0.0), "m/s")
 
@@ -555,7 +554,7 @@ def test_aerodynamics_finite_at_zero_and_reversed_angle_of_attack(
 ) -> None:
     """A vertical rocket flying nose-first or tail-first gets finite loads."""
     unpowered_rocket_properties.aero_table.values[:] = 1.0
-    state = get_default_state()
+    state = RocketState()
     state.position = vector((1000.0, 0.0, 0.0), "m")
     state.velocity = vector((vertical_velocity, 0.0, 0.0), "m/s")
 
@@ -688,7 +687,7 @@ def test_uniform_wind_loads_a_rocket_at_rest(
 ) -> None:
     """A rocket at rest feels no drag in still air and is pushed along a wind."""
     properties = baseline_rocket_properties
-    state = get_default_state()
+    state = RocketState()
     state.position = vector((1000.0, 0.0, 0.0), "m")
     coasting = 100.0
 
@@ -733,7 +732,7 @@ def test_table_loads_are_symmetric_about_the_nose(
 
     def loads(crossflow: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Return the accelerations of the pad-attitude rocket in one crossflow."""
-        state = get_default_state()
+        state = RocketState()
         state.position = vector((1000.0, 0.0, 0.0), "m")
         state.velocity = vector(
             speed * (np.cos(alpha_tot) * nose + np.sin(alpha_tot) * crossflow), "m/s"

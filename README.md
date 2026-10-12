@@ -46,10 +46,12 @@ You do not need to manually activate virtual environments. Prefix your commands 
 
 ### Run the Application
 
-To start the simulation:
+To fly a sim input file (defaults to `configs/sims/sol_invictus_nominal.toml`):
 ```bash
-uv run flight_sim [--inputs]
+uv run flight_sim [path/to/sim.toml]
 ```
+
+See [configs/README.md](configs/README.md) for the input file format.
 
 To run something in particular:
 

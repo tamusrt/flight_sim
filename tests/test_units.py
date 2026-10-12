@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
+from flight_sim.flight_event import EventTime
 from flight_sim.integration import (
     SimConfiguration,
     StateDerivative,
@@ -170,3 +171,18 @@ def test_optional_field_accepts_none_and_checks_quantities() -> None:
     assert _OptionalField(vector((1.0, 2.0, 3.0), "m")).start is not None
     with pytest.raises(DimensionalityError, match=re.escape("_OptionalField.start")):
         _OptionalField(vector((1.0, 2.0, 3.0), "s"))
+
+
+@dataclass
+class _UnionField(UnitChecked):
+    """A field holding either a quantity or an event time."""
+
+    ignition: Annotated[Scalar, "s"] | EventTime
+
+
+def test_union_field_checks_only_quantities() -> None:
+    """A quantity in a union field is checked; its other types are left alone."""
+    assert isinstance(_UnionField(EventTime("apogee")).ignition, EventTime)
+    assert _UnionField(scalar(2.0, "min")).ignition.m_as("s") == 120.0  # type: ignore[union-attr]
+    with pytest.raises(DimensionalityError, match=re.escape("_UnionField.ignition")):
+        _UnionField(scalar(1.0, "m"))

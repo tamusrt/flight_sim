@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Annotated, Self
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Annotated, Any, Self
 from xml.etree import ElementTree
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
+from flight_sim.flight_event import EventTime
 from flight_sim.units import Scalar, UnitChecked, Vector, matrix, scalar, vector
 from flight_sim.vehicle.mass_properties import (
     MassProperties,
@@ -92,6 +95,18 @@ class Engine(ABC):
                 axes.
         """
 
+    def pending_ignition(self) -> EventTime | None:
+        """Return the event that lights the motor, or None once it has a time."""
+        return None
+
+    def ignited(self, time: float) -> Engine:
+        """Return a copy of the motor igniting at a simulation time in seconds.
+
+        Raises:
+            NotImplementedError: If the motor cannot be lit by an event.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no event ignition")
+
 
 @dataclass(frozen=True)
 class PropellantGrain(UnitChecked):
@@ -157,7 +172,8 @@ class SolidEngine(Engine, UnitChecked):
 
     The thrust curve is linear between its samples and zero outside them.
     During the burn, the nozzle adds (reference - ambient pressure) * exit
-    area to it.
+    area to it. A motor whose ignition time is an ``EventTime`` stays unlit
+    until the runner calls ``ignited``.
     """
 
     times: np.ndarray  # s from ignition, strictly increasing
@@ -165,7 +181,7 @@ class SolidEngine(Engine, UnitChecked):
     grain: PropellantGrain
     casing: MassProperties  # Everything but the propellant
 
-    ignition_time: Annotated[Scalar, "s"] = field(
+    ignition_time: Annotated[Scalar, "s"] | EventTime = field(
         default_factory=lambda: scalar(0.0, "s")
     )
 
@@ -206,7 +222,12 @@ class SolidEngine(Engine, UnitChecked):
             raise ValueError(
                 f"Nozzle exit area must be non-negative, got {exit_area} m**2"
             )
-        object.__setattr__(self, "_ignition_s", float(self.ignition_time.m_as("s")))
+        ignition_s = (
+            math.inf
+            if isinstance(self.ignition_time, EventTime)
+            else float(self.ignition_time.m_as("s"))
+        )
+        object.__setattr__(self, "_ignition_s", ignition_s)
         object.__setattr__(self, "_exit_area_m2", exit_area)
         object.__setattr__(
             self, "_reference_pressure_pa", float(self.reference_pressure.m_as("Pa"))
@@ -214,15 +235,19 @@ class SolidEngine(Engine, UnitChecked):
         object.__setattr__(self, "_impulses", impulses)
 
     @classmethod
-    def from_eng(cls, motor_file_path: str) -> Self:
+    def from_eng(cls, motor_file_path: str | Path, **kwargs: Any) -> Self:
         """Build a solid motor from the first motor in a RASP .eng file.
 
         Args:
-            motor_file_path (str): RASP file whose first motor header is
+            motor_file_path (str | Path): RASP file whose first motor header is
                 followed by "time thrust" lines, in seconds from ignition and
                 newtons.
+            **kwargs (Any): Other ``SolidEngine`` fields, such as
+                ``ignition_time``.
+
         Returns:
-            SolidEngine: Motor igniting at time zero.
+            SolidEngine: Motor igniting at time zero unless ``kwargs`` say
+                otherwise.
 
         Raises:
             ValueError: If the header is missing or invalid, or the file holds
@@ -254,18 +279,21 @@ class SolidEngine(Engine, UnitChecked):
                 samples.append((float(fields[0]), float(fields[1])))
             except (ValueError, IndexError):
                 break
-        return cls._from_samples(samples, grain, casing)
+        return cls._from_samples(samples, grain, casing, **kwargs)
 
     @classmethod
-    def from_rse(cls, motor_file_path: str) -> Self:
+    def from_rse(cls, motor_file_path: str | Path, **kwargs: Any) -> Self:
         """Build a solid motor from the first motor in a RockSim .rse file.
 
         Args:
-            motor_file_path (str): RockSim XML file whose first engine
+            motor_file_path (str | Path): RockSim XML file whose first engine
                 contains the motor metadata and "eng-data" thrust samples.
+            **kwargs (Any): Other ``SolidEngine`` fields, such as
+                ``ignition_time``.
 
         Returns:
-            SolidEngine: Motor igniting at time zero.
+            SolidEngine: Motor igniting at time zero unless ``kwargs`` say
+                otherwise.
 
         Raises:
             ValueError: If the file holds no thrust curve.
@@ -287,7 +315,7 @@ class SolidEngine(Engine, UnitChecked):
             ]
         except (KeyError, StopIteration, ValueError) as error:
             raise ValueError("Motor file holds an invalid motor header") from error
-        return cls._from_samples(samples, grain, casing)
+        return cls._from_samples(samples, grain, casing, **kwargs)
 
     @classmethod
     def _from_samples(
@@ -295,6 +323,7 @@ class SolidEngine(Engine, UnitChecked):
         samples: list[tuple[float, float]],
         grain: PropellantGrain,
         casing: MassProperties,
+        **kwargs: Any,
     ) -> Self:
         """Build a motor from (time, thrust) samples, adding (0, 0) if they start later.
 
@@ -306,7 +335,7 @@ class SolidEngine(Engine, UnitChecked):
         if samples[0][0] > 0.0:
             samples = [(0.0, 0.0), *samples]
         times, thrusts = np.array(samples, dtype=float).T
-        return cls(times=times, thrusts=thrusts, grain=grain, casing=casing)
+        return cls(times=times, thrusts=thrusts, grain=grain, casing=casing, **kwargs)
 
     @property
     def total_impulse(self) -> float:
@@ -362,20 +391,36 @@ class SolidEngine(Engine, UnitChecked):
             self.casing.si, self.grain.mass_properties(self.burned_fraction(time))
         )
 
+    def pending_ignition(self) -> EventTime | None:
+        """Return the event that lights the motor, or None once it has a time."""
+        if isinstance(self.ignition_time, EventTime):
+            return self.ignition_time
+        return None
+
+    def ignited(self, time: float) -> Self:
+        """Return a copy of the motor igniting at a simulation time in seconds."""
+        return replace(self, ignition_time=scalar(time, "s"))
+
 
 def solid_engine_from_csv(
-    motor_file_path: str, grain: PropellantGrain, casing: MassProperties
+    motor_file_path: str | Path,
+    grain: PropellantGrain,
+    casing: MassProperties,
+    **kwargs: Any,
 ) -> SolidEngine:
     """Build a solid motor from a thrust curve CSV.
 
     Args:
-        motor_file_path (str): CSV with "Time" and "Thrust" columns, in seconds
-            from ignition and newtons.
+        motor_file_path (str | Path): CSV with "Time" and "Thrust" columns, in
+            seconds from ignition and newtons.
         grain (PropellantGrain): Propellant burned over the curve.
         casing (MassProperties): Everything in the motor but the propellant.
+        **kwargs (Any): Other ``SolidEngine`` fields, such as
+            ``ignition_time``.
 
     Returns:
-        SolidEngine: Motor igniting at time zero.
+        SolidEngine: Motor igniting at time zero unless ``kwargs`` say
+            otherwise.
     """
     motor_data = pd.read_csv(motor_file_path)
     return SolidEngine(
@@ -383,4 +428,5 @@ def solid_engine_from_csv(
         thrusts=motor_data["Thrust"].to_numpy(dtype=float),
         grain=grain,
         casing=casing,
+        **kwargs,
     )

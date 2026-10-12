@@ -1,8 +1,10 @@
 """Moments of the flight the integrator can land a step on."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Annotated
 
+from flight_sim.units import Scalar, UnitChecked, scalar
 from flight_sim.vehicle.rocket_state import RocketState
 
 
@@ -40,3 +42,11 @@ class FlightEvent:
                 negative at the end.
         """
         return self.value(start_time, start) > 0.0 >= self.value(end_time, end)
+
+
+@dataclass(frozen=True)
+class EventTime(UnitChecked):
+    """Moment a delay after the named flight event fires."""
+
+    event: str
+    delay: Annotated[Scalar, "s"] = field(default_factory=lambda: scalar(0.0, "s"))
