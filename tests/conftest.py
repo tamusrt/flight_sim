@@ -1,5 +1,6 @@
 """Fixtures shared across the test modules."""
 
+import matplotlib
 import numpy as np
 import pytest
 
@@ -9,6 +10,9 @@ from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.vehicle.engine import Engine
 from flight_sim.vehicle.mass_properties import MassProperties, MassPropertiesSI
 from flight_sim.vehicle.rocket_properties import RocketProperties
+
+# Tests draw figures without a display
+matplotlib.use("Agg")
 
 
 @pytest.fixture(name="baseline_rocket_properties")

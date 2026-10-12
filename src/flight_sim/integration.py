@@ -1,7 +1,8 @@
 """Integration math for 6-DOF simulation.
 
-Public functions take and return quantities. Private functions take and
-return arrays in SI units.
+Public functions take and return quantities, except ``flight_point_si``,
+which returns a ``FlightPointSI`` for recording at every step. Private
+functions take and return arrays in SI units.
 """
 
 import math
@@ -21,6 +22,13 @@ from flight_sim.environment.gravity import GravityModel, WGS84Gravity
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind, WindModel
 from flight_sim.flight_event import FlightEvent
+from flight_sim.flight_point import (
+    AeroPointSI,
+    EnvironmentPointSI,
+    FlightPointSI,
+    RocketStateSI,
+    StateDerivativeSI,
+)
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
 from flight_sim.utilities.dcm import aero_angles, body_to_world
 from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_rates
@@ -221,8 +229,8 @@ def _aero_loads(
     to_body: np.ndarray,
     cg_location: np.ndarray,
     inputs: _StepInputs,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute the aerodynamic force and the torque about the CG, in body axes.
+) -> AeroPointSI:
+    """Compute the flow angles and the aerodynamic loads, in body axes.
 
     The torque is the table's moment about the reference point plus the
     moment of the force through the lever arm from the CG.
@@ -236,27 +244,37 @@ def _aero_loads(
         inputs (_StepInputs): Constants of the step.
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: Force in N and torque in N*m.
+        AeroPointSI: Force in N and torque about the CG in N*m, with the flow
+            angles and coefficients they came from.
     """
     table = inputs.properties.aero_table
     airspeed_body = to_body @ air_velocity
     speed = math.sqrt(float(airspeed_body @ airspeed_body))
     alpha, phi = aero_angles(airspeed_body)
-    coefficients = table(
-        speed / conditions.speed_of_sound, math.degrees(alpha), math.degrees(phi)
-    )
+    mach = speed / conditions.speed_of_sound
+    c = table(mach, math.degrees(alpha), math.degrees(phi))
+    coefficients = np.array([c.cx, c.cy, c.cz, c.cmx, c.cmy, c.cmz])
 
     # Dynamic pressure times reference area gives force per unit coefficient
-    force_scale = 0.5 * conditions.air_density * speed**2 * table.reference_area_m2
-    force_body = force_scale * np.array(
-        [coefficients.cx, coefficients.cy, coefficients.cz]
-    )
+    dynamic_pressure = 0.5 * conditions.air_density * speed**2
+    force_scale = dynamic_pressure * table.reference_area_m2
+    force_body = force_scale * coefficients[:3]
     # Reference length acts as "lever arm" length
     lever_arm = table.reference_point_m - cg_location
-    torque_body = (force_scale * table.reference_length_m) * np.array(
-        [coefficients.cmx, coefficients.cmy, coefficients.cmz]
-    ) + cross(lever_arm, force_body)
-    return force_body, torque_body
+    torque_body = (force_scale * table.reference_length_m) * coefficients[3:] + cross(
+        lever_arm, force_body
+    )
+    return AeroPointSI(
+        air_velocity=airspeed_body,
+        airspeed=speed,
+        mach=mach,
+        alpha=alpha,
+        phi=phi,
+        dynamic_pressure=dynamic_pressure,
+        coefficients=c,
+        force=force_body,
+        torque=torque_body,
+    )
 
 
 def _rail_acceleration(
@@ -301,6 +319,87 @@ def _rail_acceleration(
     return along * direction
 
 
+def _evaluate(time: float, values: np.ndarray, inputs: _StepInputs) -> FlightPointSI:
+    """Evaluate the equations of motion at one state.
+
+    Args:
+        time (float): Simulation time in seconds, for the motor.
+        values (np.ndarray): State in the layout ``_pack`` produces.
+        inputs (_StepInputs): Constants of the step.
+
+    Returns:
+        FlightPointSI: The state, its rates and every load behind them.
+    """
+    altitude = inputs.elevation_m + float(values[_POSITION][0])
+    velocity = values[_VELOCITY]
+    angular_velocity = values[_ANGULAR_VELOCITY]
+    orientation: tuple[float, float, float, float] = tuple(
+        values[_ORIENTATION].tolist()
+    )
+    quaternion = Quaternion(*orientation)
+    to_world = body_to_world(quaternion)
+    mass_properties = inputs.properties.mass_properties(time)
+    conditions = inputs.atmosphere.conditions(altitude)
+    wind = inputs.wind.velocity(altitude)
+    gravity = inputs.gravity.magnitude(inputs.latitude_rad, altitude)
+
+    # Aerodynamics plus thrust along the nose, then gravity along -X
+    aero = _aero_loads(
+        velocity - wind,
+        conditions,
+        to_world.T,
+        mass_properties.cg_location,
+        inputs,
+    )
+    thrust = inputs.properties.engine.get_thrust(time, conditions.pressure)
+    force_body = aero.force.copy()
+    force_body[0] += thrust
+    acceleration = to_world @ force_body / mass_properties.mass
+    acceleration[0] -= gravity
+
+    if inputs.rail is None:
+        # Euler's equations with the full inertia tensor
+        inertia = mass_properties.inertia
+        angular_acceleration = np.linalg.solve(
+            inertia,
+            aero.torque - cross(angular_velocity, inertia @ angular_velocity),
+        )
+    else:
+        acceleration = _rail_acceleration(
+            values[_POSITION], velocity, acceleration, *inputs.rail
+        )
+        angular_acceleration = np.zeros(3)
+
+    # Everything but gravity, including the rail's push
+    specific_force = acceleration.copy()
+    specific_force[0] += gravity
+    return FlightPointSI(
+        time=time,
+        state=RocketStateSI(
+            position=values[_POSITION].copy(),
+            velocity=velocity.copy(),
+            angular_velocity=angular_velocity.copy(),
+            orientation=quaternion,
+            rail_start=inputs.rail[1] if inputs.rail is not None else None,
+        ),
+        derivative=StateDerivativeSI(
+            velocity=velocity.copy(),
+            acceleration=acceleration,
+            angular_acceleration=angular_acceleration,
+            orientation_derivative=Quaternion(
+                *quaternion_rates(*orientation, angular_velocity).tolist()
+            ),
+        ),
+        environment=EnvironmentPointSI(
+            altitude=altitude, atmosphere=conditions, wind=wind, gravity=gravity
+        ),
+        aero=aero,
+        thrust=thrust,
+        mass=mass_properties,
+        specific_force=to_world.T @ specific_force,
+    )
+
+
 def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.ndarray:
     """Compute the time derivative of a state array.
 
@@ -312,47 +411,34 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     Returns:
         np.ndarray: Rate of change of each element of ``values``.
     """
-    altitude = inputs.elevation_m + float(values[_POSITION][0])
-    velocity = values[_VELOCITY]
-    angular_velocity = values[_ANGULAR_VELOCITY]
-    orientation: tuple[float, float, float, float] = tuple(
-        values[_ORIENTATION].tolist()
-    )
-    to_world = body_to_world(Quaternion(*orientation))
-    properties = inputs.properties
-    mass_properties = properties.mass_properties(time)
-    conditions = inputs.atmosphere.conditions(altitude)
-
-    # Aerodynamics plus thrust along the nose, then gravity along -X
-    force_body, torque_body = _aero_loads(
-        velocity - inputs.wind.velocity(altitude),
-        conditions,
-        to_world.T,
-        mass_properties.cg_location,
-        inputs,
-    )
-    force_body[0] += properties.engine.get_thrust(time, conditions.pressure)
-    acceleration = to_world @ force_body / mass_properties.mass
-    acceleration[0] -= inputs.gravity.magnitude(inputs.latitude_rad, altitude)
-
-    if inputs.rail is None:
-        # Euler's equations with the full inertia tensor
-        inertia = mass_properties.inertia
-        angular_acceleration = np.linalg.solve(
-            inertia, torque_body - cross(angular_velocity, inertia @ angular_velocity)
-        )
-    else:
-        acceleration = _rail_acceleration(
-            values[_POSITION], velocity, acceleration, *inputs.rail
-        )
-        angular_acceleration = np.zeros(3)
-
+    derivative = _evaluate(time, values, inputs).derivative
+    q_dot = derivative.orientation_derivative
     rates = np.empty(_STATE_SIZE)
-    rates[_POSITION] = velocity
-    rates[_VELOCITY] = acceleration
-    rates[_ANGULAR_VELOCITY] = angular_acceleration
-    rates[_ORIENTATION] = quaternion_rates(*orientation, angular_velocity)
+    rates[_POSITION] = derivative.velocity
+    rates[_VELOCITY] = derivative.acceleration
+    rates[_ANGULAR_VELOCITY] = derivative.angular_acceleration
+    rates[_ORIENTATION] = (q_dot.q_w, q_dot.q_x, q_dot.q_y, q_dot.q_z)
     return rates
+
+
+def flight_point_si(
+    time: float,
+    state: RocketState,
+    properties: RocketProperties,
+    config: IntegrationConfiguration,
+) -> FlightPointSI:
+    """Evaluate the equations of motion at one state, keeping every load.
+
+    Args:
+        time (float): Simulation time in seconds, for the motor.
+        state (RocketState): State of the vehicle.
+        properties (RocketProperties): Aerodynamic and motor properties.
+        config (IntegrationConfiguration): Truth models.
+
+    Returns:
+        FlightPointSI: The state, its rates and every load behind them.
+    """
+    return _evaluate(time, _pack(state), _step_inputs(state, properties, config))
 
 
 def derivative_computation(

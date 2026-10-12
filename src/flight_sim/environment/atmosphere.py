@@ -4,16 +4,16 @@ import bisect
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Annotated, NamedTuple
 
 
 class AtmosphereConditions(NamedTuple):
-    """Air conditions at one altitude, as plain SI values."""
+    """Air conditions at one altitude, as plain floats in the annotated units."""
 
-    temperature: float  # K
-    pressure: float  # Pa
-    air_density: float  # kg/m**3
-    speed_of_sound: float  # m/s
+    temperature: Annotated[float, "K"]
+    pressure: Annotated[float, "Pa"]
+    air_density: Annotated[float, "kg/m**3"]
+    speed_of_sound: Annotated[float, "m/s"]
 
 
 class AtmosphereModel(ABC):

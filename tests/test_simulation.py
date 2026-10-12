@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+import numpy as np
 import pytest
 
 from flight_sim.environment.gravity import ConstantGravity
@@ -38,18 +39,19 @@ def test_event_ignition_lights_the_motor_after_its_delay(
         stop_event="stop",
     )
 
-    record = simulation.run()
+    flight = simulation.run()
 
-    names = [name for name, _ in record.events]
-    times = [time for _, time in record.events]
-    assert names == ["go", "ignition", "stop"]
+    times = [flight.at(name).time.m_as("s") for name in flight.events]
+    assert list(flight.events) == ["go", "ignition", "stop"]
     assert times == pytest.approx([0.1, 0.3, 0.6], abs=1e-6)
-    telemetry = record.telemetry
-    before = telemetry[telemetry["Time (s)"] <= 0.3]
-    after = telemetry[telemetry["Time (s)"] > 0.35]
-    assert before["Mass (kg)"].nunique() == 1
-    assert after["Mass (kg)"].iloc[-1] < before["Mass (kg)"].iloc[0]
-    assert telemetry["Inertial Position (m)"].iloc[-1][0] > 0.0
+    time = flight.time.m_as("s")
+    mass = flight["mass.mass"].m_as("kg")
+    thrust = flight["thrust"].m_as("N")
+    assert np.unique(mass[time <= 0.3]).size == 1
+    assert np.all(thrust[time < 0.3] == 0.0)
+    assert np.all(thrust[time > 0.3] > 0.0)
+    assert mass[-1] < mass[0]
+    assert flight["state.position"].m_as("m")[-1, 0] > 0.0
     # The unlit motor is restored for the next run
     assert simulation.properties.engine.pending_ignition() is not None
 
@@ -65,10 +67,10 @@ def test_zero_delay_ignition_lights_at_the_event(
         stop_event="stop",
     )
 
-    record = simulation.run()
+    flight = simulation.run()
 
-    assert [name for name, _ in record.events] == ["go", "stop"]
-    assert record.telemetry["Inertial Position (m)"].iloc[-1][0] > 0.0
+    assert list(flight.events) == ["go", "stop"]
+    assert flight["state.position"].m_as("m")[-1, 0] > 0.0
 
 
 def test_unknown_stop_event_is_rejected(
