@@ -2,6 +2,7 @@
 
 from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import IntegrationConfiguration, derivative_computation
+from flight_sim.units import Scalar
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
@@ -33,3 +34,9 @@ def peak_vertical_velocity(
         return float(derivative.acceleration.m_as("m/s**2")[0])
 
     return FlightEvent("peak vertical velocity", vertical_acceleration)
+
+
+def at_time(name: str, time: Scalar) -> FlightEvent:
+    """Build the event at a fixed simulation time."""
+    time_s = float(time.m_as("s"))
+    return FlightEvent(name, lambda current_time, _state: time_s - current_time)

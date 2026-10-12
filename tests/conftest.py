@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from flight_sim.__main__ import get_default_properties
+from flight_sim.config import load
 from flight_sim.units import matrix, scalar, vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
 from flight_sim.vehicle.engine import Engine
@@ -17,7 +17,7 @@ def _baseline_rocket_properties() -> RocketProperties:
 
     The table's center of pressure is 3.048 m aft of the nose tip.
     """
-    properties = get_default_properties()
+    properties = load("configs/vehicles/sol_invictus.toml", RocketProperties)
     properties.aero_table = aero_table_from_csv(
         "tests/test_data/standard_aero.csv",
         reference_area=scalar(0.0182414692, "m**2"),
