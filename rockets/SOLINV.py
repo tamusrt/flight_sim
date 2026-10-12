@@ -20,10 +20,11 @@ from flight_sim.vehicle.engine import SolidEngine
 from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_properties import RocketProperties
 
-# Using "C:\Users\yosep\flight_sim\data\motors\Ignis_RSE.rse"
+# Motor: IgnisSET5.eng, copied from
+# srt_13/3_Dynamics/1_Aeroshaping & Flight Profiles/1_IREC/RasAero/Latest
 
 def get_properties() -> RocketProperties:
-    """Aerodynamics, motor (.rse file) and dry mass for this rocket."""
+    """Aerodynamics, motor (.eng file) and dry mass for this rocket."""
     return RocketProperties(
         aero_table=aero_table_from_csv(
             "data/ras_alpha_files/converted_aerodynamics-SOLINV.csv",  # Mach,Alpha,Phi,Cx,Cy,Cz,CMx,CMy,CMz
@@ -32,8 +33,9 @@ def get_properties() -> RocketProperties:
             reference_point=vector((-1.27, 0.0, 0.0), "m"),  # Converter REFPOINT: 50 in aft of nose
             frame="missile",
         ),
-        engine=SolidEngine.from_rse(
-            "data/motors/Ignis_RSE.rse",
+        engine=SolidEngine.from_eng(
+            # .eng files carry no CG, so the motor's CG is its geometric center
+            "data/motors/IgnisSET5.eng",
 
             # Replace 3.10 with the actual distance from the rocket nose
             # to the FORWARD end of the installed motor.
