@@ -31,7 +31,10 @@ def get_properties() -> RocketProperties:
             reference_point=vector((0.0, 0.0, 0.0), "m"),
             frame="missile",
         ),
-        engine=SolidEngine.from_rse("data/motors/Loki_M3400-LB.rse"),
+        engine=SolidEngine.from_rse(
+            "data/motors/Loki_M3400-LB.rse",
+            vector((-2.0, 0.0, 0.0), "m"),  # OR: motor's forward end, made negative
+        ),
         dry_mass_properties=MassProperties(
             mass=scalar(17.0, "kg"),  # OR: mass with no motor
             cg_location=vector((-1.0, 0.0, 0.0), "m"),  # OR: CG, made negative

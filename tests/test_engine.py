@@ -21,6 +21,9 @@ _MOTOR_ENG = "tests/test_data/Loki_M3464LB.eng"
 _LOKI_MOTOR_ENG = "tests/test_data/Loki_M3464LB.eng"
 _MOTOR_RSE = "tests/test_data/Loki_M3464LB.rse"
 
+# Motor-file motors mount with their forward end here, from the nose tip
+_FORWARD_END = vector((-2.0, 0.0, 0.0), "m")
+
 _SEA_LEVEL_PA = 101325.0
 
 # Grain dimensions in m
@@ -120,7 +123,7 @@ def test_solid_engine_from_csv_integrates_the_thrust_curve() -> None:
 
 def test_solid_engine_from_eng_reads_the_loki_curve() -> None:
     """The first motor's thrust curve is read from the Loki file."""
-    engine = SolidEngine.from_eng(_MOTOR_ENG)
+    engine = SolidEngine.from_eng(_MOTOR_ENG, _FORWARD_END)
 
     assert engine.total_impulse == pytest.approx(9399.66, rel=1e-5)
     assert engine.get_thrust(0.05, _SEA_LEVEL_PA) == pytest.approx(3866.9)
@@ -129,7 +132,7 @@ def test_solid_engine_from_eng_reads_the_loki_curve() -> None:
 
 def test_solid_engine_from_eng_reads_header_masses() -> None:
     """The motor and casing masses come from the .eng header."""
-    engine = SolidEngine.from_eng(_LOKI_MOTOR_ENG)
+    engine = SolidEngine.from_eng(_LOKI_MOTOR_ENG, _FORWARD_END)
 
     assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
     assert engine.casing.mass.m_as("kg") == pytest.approx(7.597 - 4.464)
@@ -137,18 +140,18 @@ def test_solid_engine_from_eng_reads_header_masses() -> None:
 
 def test_solid_engine_from_eng_builds_mass_properties_from_header() -> None:
     """The .eng header supplies default motor dimensions and mass properties."""
-    engine = SolidEngine.from_eng(_LOKI_MOTOR_ENG)
+    engine = SolidEngine.from_eng(_LOKI_MOTOR_ENG, _FORWARD_END)
 
     assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
     assert engine.grain.outer_diameter.m_as("m") == pytest.approx(0.076)
     assert engine.grain.length.m_as("m") == pytest.approx(1.0382)
-    assert engine.grain.cg_location.m_as("m") == pytest.approx([-0.5191, 0.0, 0.0])
+    assert engine.grain.cg_location.m_as("m") == pytest.approx([-2.5191, 0.0, 0.0])
     assert engine.casing.mass.m_as("kg") == pytest.approx(3.133)
 
 
 def test_solid_engine_from_rse_reads_the_first_motor() -> None:
     """The first motor's curve is read from the Loki RSE file."""
-    engine = SolidEngine.from_rse(_MOTOR_RSE)
+    engine = SolidEngine.from_rse(_MOTOR_RSE, _FORWARD_END)
 
     assert engine.times[[0, 1, -1]] == pytest.approx([0.0, 0.007, 2.976])
     assert engine.thrusts[[0, 1, -1]] == pytest.approx([0.0, 4907.49, 0.0])
@@ -156,12 +159,12 @@ def test_solid_engine_from_rse_reads_the_first_motor() -> None:
 
 def test_solid_engine_from_rse_reads_header_mass_properties() -> None:
     """The RSE header supplies the motor dimensions and mass properties."""
-    engine = SolidEngine.from_rse("tests/test_data/Loki_M3464LB.rse")
+    engine = SolidEngine.from_rse("tests/test_data/Loki_M3464LB.rse", _FORWARD_END)
 
     assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
     assert engine.grain.outer_diameter.m_as("m") == pytest.approx(0.076)
     assert engine.grain.length.m_as("m") == pytest.approx(1.0382)
-    assert engine.grain.cg_location.m_as("m") == pytest.approx([-0.5191, 0.0, 0.0])
+    assert engine.grain.cg_location.m_as("m") == pytest.approx([-2.5191, 0.0, 0.0])
     assert engine.casing.mass.m_as("kg") == pytest.approx(3.133)
 
 
@@ -173,7 +176,7 @@ def test_solid_engine_from_rse_reads_header_mass_properties() -> None:
     ],
 )
 def test_solid_engine_rejects_a_motor_file_without_a_curve(
-    loader: Callable[[str], SolidEngine],
+    loader: Callable[..., SolidEngine],
     suffix: str,
     contents: str,
     tmp_path: Path,
@@ -183,7 +186,7 @@ def test_solid_engine_rejects_a_motor_file_without_a_curve(
     motor_file.write_text(contents, encoding="utf-8")
 
     with pytest.raises(ValueError, match="no thrust curve"):
-        loader(str(motor_file))
+        loader(str(motor_file), _FORWARD_END)
 
 
 def test_late_ignition_delays_the_burn() -> None:

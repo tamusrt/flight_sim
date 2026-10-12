@@ -1,4 +1,4 @@
-"""Core FS runner."""
+"""Core FS runner"""
 
 import importlib.util
 import os
@@ -27,7 +27,6 @@ from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
-
 # ============================================================
 # Sol Invictus known OpenRocket locations.
 #
@@ -38,29 +37,27 @@ from flight_sim.vehicle.rocket_state import RocketState
 
 INCH_TO_M = 0.0254
 
-DRY_CG_X_M = -(106.0 * INCH_TO_M)          # -2.6924 m
-LOADED_CG_X_M = -(136.0 * INCH_TO_M)       # -3.4544 m
-OPENROCKET_CP_X_M = -(166.0 * INCH_TO_M)   # -4.2164 m
+DRY_CG_X_M = -(106.0 * INCH_TO_M)  # -2.6924 m
+LOADED_CG_X_M = -(136.0 * INCH_TO_M)  # -3.4544 m
+OPENROCKET_CP_X_M = -(166.0 * INCH_TO_M)  # -4.2164 m
 
 
 def get_default_state() -> RocketState:
-    """Generate the standard initial state."""
+    """Generate the standard initial state for Sol Invictus, at rest off the rail."""
     return RocketState(
         position=vector((0.0, 0.0, 0.0), "m"),
         velocity=vector((0.0, 0.0, 0.0), "m/s"),
         angular_velocity=vector((0.0, 0.0, 0.0), "rad/s"),
-        orientation=Quaternion(
-            q_x=0.0,
-            q_y=0.0,
-            q_z=0.0,
-            q_w=1.0,
-        ),
+        orientation=Quaternion(q_x=0.0, q_y=0.0, q_z=0.0, q_w=1.0),
     )
 
 
 def get_default_properties() -> RocketProperties:
-    """Build fallback/default rocket properties."""
+    """Build the standard aerodynamic, motor and mass properties for Sol Invictus.
 
+    The mass properties are placeholders: 25 kg with its CG about 1.5 m aft of
+    the nose tip at ignition, burning down to 20 kg.
+    """
     grain = PropellantGrain(
         mass=scalar(5.0, "kg"),
         length=scalar(0.75, "m"),
@@ -68,16 +65,12 @@ def get_default_properties() -> RocketProperties:
         core_diameter=scalar(0.03, "m"),
         cg_location=vector((-2.6, 0.0, 0.0), "m"),
     )
-
+    # Thin tube of radius 0.045 m and length 0.9 m
     casing = MassProperties(
         mass=scalar(3.0, "kg"),
         cg_location=vector((-2.6, 0.0, 0.0), "m"),
-        inertia=matrix(
-            np.diag((0.0061, 0.21, 0.21)),
-            "kg*m**2",
-        ),
+        inertia=matrix(np.diag((0.0061, 0.21, 0.21)), "kg*m**2"),
     )
-
     return RocketProperties(
         aero_table=aero_table_from_csv(
             "data/aero/estimated_aero.csv",
@@ -87,17 +80,12 @@ def get_default_properties() -> RocketProperties:
             frame="missile",
         ),
         engine=solid_engine_from_csv(
-            "tests/test_data/standard_motor.csv",
-            grain,
-            casing,
+            "tests/test_data/standard_motor.csv", grain, casing
         ),
         dry_mass_properties=MassProperties(
             mass=scalar(17.0, "kg"),
             cg_location=vector((-1.0, 0.0, 0.0), "m"),
-            inertia=matrix(
-                np.diag((2.4, 135.0, 135.0)),
-                "kg*m**2",
-            ),
+            inertia=matrix(np.diag((2.4, 135.0, 135.0)), "kg*m**2"),
         ),
     )
 
@@ -169,17 +157,11 @@ def get_aero_diagnostics(
     position_m = state.position.m_as("m")
     velocity_mps = state.velocity.m_as("m/s")
 
-    altitude_m = (
-        float(config.truth.launch_elevation.m_as("m"))
-        + float(position_m[0])
-    )
+    altitude_m = float(config.truth.launch_elevation.m_as("m")) + float(position_m[0])
 
     conditions = config.truth.atmosphere.conditions(altitude_m)
 
-    air_velocity_world = (
-        velocity_mps
-        - config.truth.wind.velocity(altitude_m)
-    )
+    air_velocity_world = velocity_mps - config.truth.wind.velocity(altitude_m)
 
     to_world = body_to_world(state.orientation)
     air_velocity_body = to_world.T @ air_velocity_world
@@ -246,91 +228,50 @@ def print_mass_and_cg_check(properties: RocketProperties) -> None:
 
 
 def main(rocket: str | None = None) -> None:  # pylint: disable=too-many-statements
-    """Run the complete flight simulation."""
-
+    """Main function to run entire flight"""
     properties = get_default_properties()
-
     rail = LaunchRail(
         length=scalar(17.0, "ft"),
         elevation=scalar(85.0, "deg"),
         azimuth=scalar(0.0, "deg"),
     )
-
     truth_options: dict[str, Any] = {}
-
     if rocket is not None:
-        properties, rail, truth_options = load_rocket(
-            rocket,
-            properties,
-            rail,
-        )
-
+        properties, rail, truth_options = load_rocket(rocket, properties, rail)
     print_mass_and_cg_check(properties)
-
     state = rail.mount(get_default_state())
-
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            launch_rail=rail,
-            **truth_options,
-        )
+        truth=TruthConfiguration(launch_rail=rail, **truth_options)
     )
+    events = (peak_vertical_velocity(properties, config), APOGEE, IMPACT)
 
-    events = (
-        peak_vertical_velocity(properties, config),
-        APOGEE,
-        IMPACT,
-    )
-
-    dt = scalar(0.01, "s")
+    dt = scalar(0.01, "s")  # First step length to try
     current_time = 0.0
-
     telemetry: list[dict[str, Any]] = []
     step_lengths: list[float] = []
     hit: FlightEvent | None = None
 
     while True:
-        position_m = state.position.m_as("m")
-        velocity_mps = state.velocity.m_as("m/s")
-        angular_rate_rad_s = state.angular_velocity.m_as("rad/s")
+        pos = state.position.m_as("m")
+        vel = state.velocity.m_as("m/s")
+        ang_rate = state.angular_velocity.m_as("rad/s")
 
-        altitude_m = (
-            float(config.truth.launch_elevation.m_as("m"))
-            + float(position_m[0])
-        )
-
-        atmospheric_conditions = config.truth.atmosphere.conditions(
-            altitude_m
-        )
-
+        altitude_m = float(config.truth.launch_elevation.m_as("m")) + float(pos[0])
+        atmospheric_conditions = config.truth.atmosphere.conditions(altitude_m)
         mass_properties = properties.mass_properties(current_time)
-
-        mass_kg = float(mass_properties.mass)
-        cg_now_m = np.asarray(
-            mass_properties.cg_location,
-            dtype=float,
-        )
-
         thrust_n = get_engine_thrust_newtons(
-            properties.engine,
-            current_time,
-            atmospheric_conditions.pressure,
+            properties.engine, current_time, atmospheric_conditions.pressure
         )
-
-        drag_coefficient, cp_x_m = get_aero_diagnostics(
-            state,
-            properties,
-            config,
-        )
+        drag_coefficient, cp_x_m = get_aero_diagnostics(state, properties, config)
 
         telemetry.append(
             {
                 "Time (s)": current_time,
-                "Inertial Position (m)": position_m,
-                "Inertial Velocity (m/s)": velocity_mps,
-                "Angular Rate (rad/s)": angular_rate_rad_s,
-                "Mass (kg)": mass_kg,
-                "CG (m)": cg_now_m,
+                "Inertial Position (m)": pos,
+                "Inertial Velocity (m/s)": vel,
+                "Angular Rate (rad/s)": ang_rate,
+                "Mass (kg)": float(mass_properties.mass),
+                "CG (m)": np.asarray(mass_properties.cg_location, dtype=float),
                 "CP X (m)": cp_x_m,
                 "Thrust (N)": thrust_n,
                 "Drag Coefficient (-)": drag_coefficient,
@@ -339,78 +280,64 @@ def main(rocket: str | None = None) -> None:  # pylint: disable=too-many-stateme
 
         if hit is not None:
             print(f"{hit.name} at {current_time:.2f} seconds")
-
         if hit is IMPACT:
             break
 
         state, dt_taken, dt, hit = adaptive_step(
-            current_time,
-            state,
-            properties,
-            config,
-            dt,
-            events=events,
+            current_time, state, properties, config, dt, events=events
         )
-
         current_time += float(dt_taken.m_as("s"))
         step_lengths.append(float(dt_taken.m_as("s")))
 
     df = pd.DataFrame(telemetry)
+    time = df["Time (s)"]
+    position = np.vstack(df["Inertial Position (m)"])
+    velocity = np.vstack(df["Inertial Velocity (m/s)"])
+    angular_rate = np.vstack(df["Angular Rate (rad/s)"])
+    cg_x = np.vstack(df["CG (m)"])[:, 0]
+    cp_x = df["CP X (m)"].to_numpy(dtype=float)
 
-    time_s = df["Time (s)"].to_numpy(dtype=float)
-
-    position_m = np.vstack(df["Inertial Position (m)"])
-    velocity_mps = np.vstack(df["Inertial Velocity (m/s)"])
-    angular_rate_rad_s = np.vstack(df["Angular Rate (rad/s)"])
-
-    cg_x_m = np.vstack(df["CG (m)"])[:, 0]
-    cp_x_m = df["CP X (m)"].to_numpy(dtype=float)
-
-    print(f"\nApogee: {position_m[:, 0].max():.1f} m")
-    print(
-        f"Max Vertical Velocity: "
-        f"{velocity_mps[:, 0].max():.1f} m/s"
-    )
+    print(f"\nApogee: {position[:, 0].max():.1f} m")
+    print(f"Max Vertical Velocity: {velocity[:, 0].max():.1f} m/s")
     print(f"Peak Thrust: {df['Thrust (N)'].max():.1f} N")
 
     if "PYTEST_CURRENT_TEST" not in os.environ:
         log_path = f"jarvis_log_{rocket or 'default'}.csv"
-
         pd.DataFrame(
             {
-                "Time (s)": time_s,
-                "Altitude (m)": position_m[:, 0],
-                "Vertical Velocity (m/s)": velocity_mps[:, 0],
+                "Time (s)": time,
+                "Altitude (m)": position[:, 0],
+                "Vertical Velocity (m/s)": velocity[:, 0],
                 "Mass (kg)": df["Mass (kg)"],
-                "CG X (m)": cg_x_m,
-                "CP X (m)": cp_x_m,
+                "CG X (m)": cg_x,
+                "CP X (m)": cp_x,
                 "Thrust (N)": df["Thrust (N)"],
                 "Drag Coefficient (-)": df["Drag Coefficient (-)"],
             }
         ).to_csv(log_path, index=False)
-
         print(f"Wrote {log_path}")
 
     world_axes = ["X (up)", "Y (east)", "Z (north)"]
-
-    # Position, velocity, and body rate.
     plt.figure(figsize=(10, 12))
 
+    # Plot 1: Position
     plt.subplot(3, 1, 1)
-    plt.plot(time_s, position_m, linewidth=2)
+    plt.plot(time, position, linewidth=2)
     plt.title("Flight Profile")
     plt.ylabel("Position (m)")
     plt.legend(world_axes)
     plt.grid(True)
 
+    # Plot 2: Velocity
     plt.subplot(3, 1, 2)
-    plt.plot(time_s, velocity_mps, linewidth=2)
+    plt.plot(time, velocity, linewidth=2)
     plt.ylabel("Velocity (m/s)")
     plt.legend(world_axes)
     plt.grid(True)
 
+    # Plot 3: Body angular rate
     plt.subplot(3, 1, 3)
-    plt.plot(time_s, angular_rate_rad_s, linewidth=2)
+    plt.plot(time, angular_rate, linewidth=2)
     plt.xlabel("Time (s)")
     plt.ylabel("Angular Rate (rad/s)")
     plt.legend(["Body X (roll)", "Body Y", "Body Z"])
@@ -430,7 +357,7 @@ def main(rocket: str | None = None) -> None:  # pylint: disable=too-many-stateme
     # Thrust plot.
     plt.figure(figsize=(10, 5))
     plt.plot(
-        time_s,
+        time,
         df["Thrust (N)"],
         linewidth=2,
         color="tab:red",
@@ -446,7 +373,7 @@ def main(rocket: str | None = None) -> None:  # pylint: disable=too-many-stateme
     # Drag coefficient plot.
     plt.figure(figsize=(10, 5))
     plt.plot(
-        time_s,
+        time,
         df["Drag Coefficient (-)"],
         linewidth=2,
         color="tab:purple",
@@ -464,16 +391,16 @@ def main(rocket: str | None = None) -> None:  # pylint: disable=too-many-stateme
 
     # Negate body coordinates so the chart shows positive distance aft of nose.
     plt.plot(
-        time_s,
-        -cg_x_m,
+        time,
+        -cg_x,
         linewidth=2,
         color="tab:blue",
         label="CG (simulation)",
     )
 
     plt.plot(
-        time_s,
-        -cp_x_m,
+        time,
+        -cp_x,
         linewidth=2,
         color="tab:green",
         linestyle="--",

@@ -37,7 +37,7 @@ def get_properties() -> RocketProperties:
 
             # Replace 3.10 with the actual distance from the rocket nose
             # to the FORWARD end of the installed motor.
-            motor_front_location=vector((-2.4003, 0.0, 0.0), "m"),
+            vector((-2.4003, 0.0, 0.0), "m"),
         ),
         dry_mass_properties=MassProperties(
             mass=scalar(25.37, "kg"),  # OR: mass with no motor
