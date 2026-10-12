@@ -1,6 +1,7 @@
 """Integration kernel tests."""
 
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -33,7 +34,7 @@ _CONFIG = IntegrationConfiguration()
 
 
 @patch("flight_sim.simulation.adaptive_step")
-def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
+def test_main_echoes_test_input(mock_adaptive_step: MagicMock, tmp_path: Path) -> None:
     """Verify the executive simulation loop runs from launch to impact."""
 
     # Force the physics step to immediately return an underground state.
@@ -46,10 +47,12 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock) -> None:
         IMPACT,
     )
 
-    main([])
+    main(["--no-show", "--output-dir", str(tmp_path)])
 
     # Verify the simulation successfully fired the physics engine before exiting
     mock_adaptive_step.assert_called()
+    assert (tmp_path / "telemetry.csv").is_file()
+    assert (tmp_path / "trajectory.png").is_file()
 
 
 def test_main_rejects_missing_sim_file() -> None:

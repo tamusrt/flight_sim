@@ -42,3 +42,10 @@ ref = "flight_sim.events.APOGEE"
 
 [[events]]
 ref = "flight_sim.events.IMPACT"
+
+[output]
+directory = "../../out/{name}"
+formats = ["csv"]
+channels = ["*"]
+sample_interval = "0.01 s"
+plots = ["trajectory", "attitude", "aero", "propulsion", "step_length"]

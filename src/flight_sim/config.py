@@ -63,10 +63,44 @@ def load(path: str | Path, cls: type[T]) -> T:
     Raises:
         ConfigError: If the file cannot be read or does not build a ``cls``.
     """
-    result = build(load_toml(path), cls)
+    return load_with_input(path, cls)[0]
+
+
+def load_with_input(path: str | Path, cls: type[T]) -> tuple[T, dict[str, Any]]:
+    """Build an object from a TOML file, and return the input it was built from.
+
+    Args:
+        path (str | Path): TOML file whose top-level table builds the object.
+        cls (type[T]): Class of the object, used when the file names no
+            ``type``.
+
+    Returns:
+        tuple[T, dict[str, Any]]: The built object, and the file's table with
+            its includes and base file merged in. Strings naming existing
+            files are made absolute, so the table rebuilds the object from
+            anywhere.
+
+    Raises:
+        ConfigError: If the file cannot be read or does not build a ``cls``.
+    """
+    table = load_toml(path)
+    result = build(table, cls)
     if not isinstance(result, cls):
         raise ConfigError(f"{path} builds a {type(result).__name__}, not a {cls}")
-    return result
+    return result, _absolute(table)
+
+
+def _absolute(node: Any) -> Any:
+    """Return a table with its strings untagged, those naming files made absolute."""
+    if isinstance(node, dict):
+        return {key: _absolute(item) for key, item in node.items()}
+    if isinstance(node, list):
+        return [_absolute(item) for item in node]
+    if isinstance(node, _SourceStr) and node and (node.base / node).is_file():
+        return (node.base / node).resolve().as_posix()
+    if isinstance(node, str):
+        return str(node)
+    return node
 
 
 def load_toml(path: str | Path, chain: Sequence[Path] = ()) -> dict[str, Any]:

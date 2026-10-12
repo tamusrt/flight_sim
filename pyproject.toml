@@ -12,8 +12,10 @@ dependencies = [
     "numpy>=2.4.6",
     "pandas>=3.0.5",
     "pint>=0.25.3",
+    "pyarrow>=26.0.0",
     "r3f>=2.2.1",
     "scipy>=1.17.1",
+    "tomli-w>=1.0",
 ]
 
 [project.scripts]
