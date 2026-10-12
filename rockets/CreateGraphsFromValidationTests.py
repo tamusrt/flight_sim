@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -6,9 +8,12 @@ import matplotlib.pyplot as plt
 # 1. SETUP & FILE PATHS
 # ==========================================
 
-ras_path = r"C:\Users\yosep\flight_sim\rockets\FlightTestRAS_SOL.CSV"
-jarvis_path = r"C:\Users\yosep\flight_sim\rockets\jarvis_log_SOLINV.csv"
-or_path = r"C:\Users\yosep\flight_sim\rockets\OR-COmparsion-Sim-SOL-CORRECT-FULL.csv"
+rockets_dir = Path(__file__).resolve().parent
+
+ras_path = rockets_dir / "FlightTestRAS_SOL.CSV"
+# Written by `uv run python -m flight_sim SOLINV` in the repository root
+jarvis_path = rockets_dir / "jarvis_log_SOLINV.csv"
+or_path = rockets_dir / "OR-COmparsion-Sim-SOL-CORRECT-FULL.csv"
 
 
 # ==========================================
