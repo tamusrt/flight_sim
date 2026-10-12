@@ -1,0 +1,2 @@
+Warnings,Name,Configuration,Velocity off rod (ft/s),Apogee (ft),Velocity at deployment (ft/s),Optimum delay (s),Max. velocity (ft/s),Max. acceleration (ft/s²),Time to apogee (s),Flight time (s),Ground hit velocity (ft/s)
+"Body calculations may not be entirely accurate at supersonic speeds. | Recovery device deployment at high speed (73.5 ft/s):  ""Main Chute + Pilot""",Simulation 4,[O2326-P],28.609,2.341e4,73.547,24.504,1253.465,154.235,40.354,367.184,20.131
