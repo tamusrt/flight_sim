@@ -1,4 +1,5 @@
-# TruthConfiguration for the Spaceport America vertical launch area.
+# TruthConfiguration for the Spaceport America vertical launch area, without
+# the rail.
 
 launch_latitude = "32.99 deg"
 launch_elevation = "4595 ft"
