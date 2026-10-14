@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, get_args
 
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
@@ -16,7 +16,7 @@ from flight_sim import plots
 from flight_sim.config import InputSource, write_toml
 from flight_sim.plots import ChannelSource
 from flight_sim.telemetry import channel_names
-from flight_sim.units import Scalar, UnitChecked
+from flight_sim.units import Scalar, UnitChecked, UnitSystem
 
 if TYPE_CHECKING:
     from flight_sim.simulation import Flight
@@ -32,6 +32,10 @@ class OutputConfiguration(UnitChecked):
     directory: Path | None = None
     formats: Sequence[str] = ("csv",)
 
+    # Units of the telemetry, plots and summary: "metric" for the SI units
+    # quantities are declared in, or "imperial"
+    units: UnitSystem = "metric"
+
     # Glob patterns of the channels in the telemetry files
     channels: Sequence[str] = ("*",)
 
@@ -43,7 +47,7 @@ class OutputConfiguration(UnitChecked):
     plots: Sequence[str] = ("trajectory", "step_length")
 
     def __post_init__(self) -> None:
-        """Check the formats, channel patterns and plot names.
+        """Check the formats, unit system, channel patterns and plot names.
 
         Raises:
             ValueError: If any of them names something that does not exist, or
@@ -54,6 +58,10 @@ class OutputConfiguration(UnitChecked):
         if unknown_formats:
             raise ValueError(
                 f"Unknown formats {sorted(unknown_formats)}; use {FORMATS}"
+            )
+        if self.units not in get_args(UnitSystem):
+            raise ValueError(
+                f"Unknown units {self.units!r}; use {get_args(UnitSystem)}"
             )
         known_plots = plot_names()
         unknown_plots = set(self.plots) - set(known_plots)
@@ -109,7 +117,8 @@ def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path
 
     The directory gets the telemetry, "run.toml" with the summary,
     diagnostics, event times and source revision, "resolved_input.toml"
-    when the simulation came from a file, and a PNG of each figure.
+    when the simulation came from a file, and a PNG of each figure. The
+    telemetry, figures and summary are in the flight's ``units``.
 
     Args:
         flight (Flight): The flight to write.
@@ -150,6 +159,7 @@ def _run_table(flight: "Flight") -> dict[str, Any]:
     times = flight.time.m_as("s")
     run: dict[str, Any] = {
         "name": flight.simulation.name,
+        "units": flight.units,
         "written": datetime.now().astimezone().replace(microsecond=0),
         **git_revision(),
         "summary": flight.summary(),

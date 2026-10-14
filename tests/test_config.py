@@ -18,8 +18,7 @@ from flight_sim.vehicle.engine import SolidEngine
 from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_properties import RocketProperties
 
-_SIMS = Path("configs/sims")
-_VEHICLES = Path("configs/vehicles")
+_EXAMPLE = Path("examples/sol_invictus")
 
 
 def _write(directory: Path, name: str, text: str) -> Path:
@@ -29,15 +28,15 @@ def _write(directory: Path, name: str, text: str) -> Path:
     return path
 
 
-def test_nominal_sim_builds_every_part() -> None:
-    """The nominal sim file builds the vehicle, world, rail and events."""
-    simulation = load(_SIMS / "sol_invictus_nominal.toml", Simulation)
+def test_example_sim_builds_every_part() -> None:
+    """The example sim file builds the vehicle, world, rail and events."""
+    simulation = load(_EXAMPLE / "sim.toml", Simulation)
 
-    assert simulation.name == "Sol Invictus - nominal"
+    assert simulation.name == "Sol Invictus example"
     assert simulation.stop_event == "impact"
     assert simulation.initial_time_step.m_as("s") == pytest.approx(0.01)
     assert isinstance(simulation.properties.engine, SolidEngine)
-    assert simulation.properties.engine.grain.mass.m_as("kg") == pytest.approx(5.0)
+    assert simulation.properties.engine.grain.mass.m_as("kg") == pytest.approx(4.464)
     rail = simulation.config.truth.launch_rail
     assert rail is not None
     assert rail.length.m_as("m") == pytest.approx(17 * 0.3048)
@@ -52,9 +51,21 @@ def test_nominal_sim_builds_every_part() -> None:
     )
 
 
-def test_extends_overrides_only_what_it_names() -> None:
-    """The high wind sim changes the wind and keeps the rest of the nominal sim."""
-    simulation = load(_SIMS / "sol_invictus_high_wind.toml", Simulation)
+def test_extends_overrides_only_what_it_names(tmp_path: Path) -> None:
+    """A sim extending the example changes the wind and keeps the rest."""
+    base = (_EXAMPLE / "sim.toml").resolve().as_posix()
+    path = _write(
+        tmp_path,
+        "high_wind.toml",
+        f"""
+        extends = "{base}"
+
+        [config.truth.wind]
+        speed = "20 mph"
+        from_azimuth = "270 deg"
+        """,
+    )
+    simulation = load(path, Simulation)
     wind = simulation.config.truth.wind
 
     assert isinstance(wind, UniformWind)
@@ -64,9 +75,24 @@ def test_extends_overrides_only_what_it_names() -> None:
     assert simulation.config.sim.relative_tolerance == pytest.approx(1e-6)
 
 
-def test_changed_type_replaces_base_table_and_passes_kwargs() -> None:
-    """A new engine type drops the base's grain and casing; extras reach the class."""
-    properties = load(_VEHICLES / "sol_invictus_loki.toml", RocketProperties)
+def test_changed_type_replaces_base_table_and_passes_kwargs(tmp_path: Path) -> None:
+    """A new engine type drops the base's keys; extras reach the class."""
+    base = (_EXAMPLE / "vehicle.toml").resolve().as_posix()
+    motor = Path("tests/test_data/Loki_M3464LB.rse").resolve().as_posix()
+    path = _write(
+        tmp_path,
+        "vehicle.toml",
+        f"""
+        extends = "{base}"
+
+        [engine]
+        type = "flight_sim.vehicle.engine.SolidEngine.from_rse"
+        motor_file_path = "{motor}"
+        forward_end_location = {{ value = [-2.08, 0.0, 0.0], units = "m" }}
+        reference_pressure = "101325 Pa"
+        """,
+    )
+    properties = load(path, RocketProperties)
     engine = properties.engine
 
     assert isinstance(engine, SolidEngine)
@@ -349,14 +375,14 @@ def test_literal_fields_name_their_options() -> None:
 
 def test_defaults_are_recorded_in_the_resolved_input() -> None:
     """Arguments left to their defaults are filled into the resolved input."""
-    _, source = load_with_source(_SIMS / "sol_invictus_nominal.toml", Simulation)
+    _, source = load_with_source(_EXAMPLE / "sim.toml", Simulation)
     table = source.table
 
     assert "properties.engine.ignition_time" in source.defaults
     assert table["properties"]["engine"]["ignition_time"] == "0.0 s"
     assert table["initial_state"]["orientation"]["type"].endswith("Quaternion")
     assert "properties.engine.grain" not in source.defaults
-    assert source.path == (_SIMS / "sol_invictus_nominal.toml").resolve()
+    assert source.path == (_EXAMPLE / "sim.toml").resolve()
     # Only arguments built as paths are made absolute
     assert Path(table["properties"]["engine"]["motor_file_path"]).is_absolute()
-    assert table["name"] == "Sol Invictus - nominal"
+    assert table["name"] == "Sol Invictus example"

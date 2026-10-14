@@ -17,6 +17,7 @@ from types import UnionType
 from typing import (
     Annotated,
     Any,
+    Literal,
     NamedTuple,
     TypeAlias,
     Union,
@@ -54,6 +55,36 @@ def parse_units(units: str) -> PlainUnit:
     """
     result: PlainUnit = ureg.Unit(units)
     return result
+
+
+# Units output is shown in: "metric" keeps the SI units quantities are declared
+# in, and "imperial" converts those it has a unit for
+UnitSystem: TypeAlias = Literal["metric", "imperial"]
+
+# Imperial units, by the dimensionality they show; angles, times and the like
+# keep their own
+_IMPERIAL = {
+    parse_units(units).dimensionality: units
+    for units in (
+        "ft",
+        "ft/s",
+        "ft/s**2",
+        "lb",
+        "lb*ft**2",
+        "lbf",
+        "ft*lbf",
+        "psi",
+        "lb/ft**3",
+        "degF",
+    )
+}
+
+
+def system_units(units: str, system: UnitSystem) -> str:
+    """Return the units a unit system shows a quantity declared in ``units`` in."""
+    if system == "metric":
+        return units
+    return _IMPERIAL.get(parse_units(units).dimensionality, units)
 
 
 def scalar(magnitude: float, units: str) -> Scalar:

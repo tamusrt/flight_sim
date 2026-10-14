@@ -48,7 +48,7 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock, tmp_path: Path) -
         IMPACT,
     )
 
-    main(["--no-show", "--output-dir", str(tmp_path)])
+    main(["examples/sol_invictus/sim.toml", "--no-show", "--output-dir", str(tmp_path)])
 
     # Verify the simulation successfully fired the physics engine before exiting
     mock_adaptive_step.assert_called()
@@ -56,10 +56,21 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock, tmp_path: Path) -
     assert (tmp_path / "trajectory.png").is_file()
 
 
+def test_main_needs_a_sim_file(capsys: pytest.CaptureFixture[str]) -> None:
+    """Without arguments, main prints its help and exits with an error."""
+    with pytest.raises(SystemExit) as exit_info:
+        main([])
+
+    assert exit_info.value.code == 2
+    help_text = capsys.readouterr().err
+    assert help_text.startswith("usage: flight_sim [-h]")
+    assert "--output-dir" in help_text and "Sim input file" in help_text
+
+
 def test_main_rejects_missing_sim_file() -> None:
     """Verify main reports a sim input file that does not exist."""
     with pytest.raises(SystemExit, match=r"cannot read .*missing\.toml"):
-        main(["configs/sims/missing.toml"])
+        main(["examples/missing.toml"])
 
 
 def test_step_zero_force_keeps_velocity_constant(
@@ -508,9 +519,9 @@ def test_rail_does_not_affect_a_free_rocket(
 
 
 def test_default_rocket_turns_over_and_lands_nose_first() -> None:
-    """With the estimated aero, a tilted launch falls nose-first after apogee."""
+    """The example rocket, launched tilted, falls nose-first after apogee."""
     rail = LaunchRail(length=scalar(17.0, "ft"), elevation=scalar(85.0, "deg"))
-    properties = load("configs/vehicles/sol_invictus.toml", RocketProperties)
+    properties = load("examples/sol_invictus/vehicle.toml", RocketProperties)
     config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
     state = rail.mount(RocketState())
 

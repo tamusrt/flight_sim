@@ -30,9 +30,11 @@ from flight_sim.integration import StateDerivative
 from flight_sim.units import (
     Scalar,
     UnitChecked,
+    UnitSystem,
     Vector,
     annotated_units,
     parse_units,
+    system_units,
     ureg,
 )
 from flight_sim.utilities.data_loader import AeroCoefficients
@@ -217,16 +219,19 @@ def channel_names(patterns: Sequence[str] = ("*",)) -> list[str]:
     ]
 
 
-def column(points: Sequence[FlightPointSI], name: str) -> Any:
+def column(
+    points: Sequence[FlightPointSI], name: str, system: UnitSystem = "metric"
+) -> Any:
     """Read one channel at every point.
 
     Args:
         points (Sequence[FlightPointSI]): Recorded points.
         name (str): Channel name, a key of ``CHANNELS``.
+        system (UnitSystem, optional): Unit system to read it in. Defaults to
+            the channel's own units.
 
     Returns:
-        Quantity: Shape (points,) or (points, *field shape), in the channel's
-            units.
+        Quantity: Shape (points,) or (points, *field shape).
 
     Raises:
         KeyError: If no channel has that name.
@@ -235,7 +240,8 @@ def column(points: Sequence[FlightPointSI], name: str) -> Any:
         raise KeyError(f"No channel {name!r}; see telemetry.CHANNELS")
     channel = CHANNELS[name]
     values = np.array([channel.read(point) for point in points], dtype=float)
-    return ureg.Quantity(values, parse_units(channel.units))
+    quantity = ureg.Quantity(values, parse_units(channel.units))
+    return quantity.to(parse_units(system_units(channel.units, system)))
 
 
 class _Resampling(NamedTuple):
@@ -302,6 +308,7 @@ def table(
     events: Mapping[str, int],
     patterns: Sequence[str] = ("*",),
     interval_s: float | None = None,
+    system: UnitSystem = "metric",
 ) -> pd.DataFrame:
     """Lay recorded points out as one column per channel component.
 
@@ -315,6 +322,8 @@ def table(
             with a row kept at each event and at the end. Between points,
             orientations are slerped and other values blended linearly.
             Defaults to one row per point.
+        system (UnitSystem, optional): Unit system of the columns. Defaults
+            to each channel's own units.
 
     Returns:
         pd.DataFrame: Columns such as "aero.force_x [N]", plus "event".
@@ -324,16 +333,18 @@ def table(
     )
     data: dict[str, Any] = {}
     for name in channel_names(patterns):
+        channel = CHANNELS[name]
         values = column(points, name).magnitude
         if resampling is not None:
-            values = _resample(CHANNELS[name], values, resampling)
-        units = CHANNELS[name].units or "-"
+            values = _resample(channel, values, resampling)
+        units = system_units(channel.units, system)
+        values = ureg.Quantity(values, parse_units(channel.units)).m_as(units)
         if values.ndim == 1:
-            data[f"{name} [{units}]"] = values
+            data[f"{name} [{units or '-'}]"] = values
             continue
         flat = values.reshape(len(values), -1)
         for index, suffix in enumerate(_component_names(values.shape[1:])):
-            data[f"{name}_{suffix} [{units}]"] = flat[:, index]
+            data[f"{name}_{suffix} [{units or '-'}]"] = flat[:, index]
     rows = events if resampling is None else resampling.rows
     labels = [""] * (len(points) if resampling is None else len(resampling.times))
     for name, row in rows.items():

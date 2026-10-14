@@ -1,5 +1,6 @@
 """One flight from launch to its stop event, as a sim input file describes it."""
 
+import re
 import time as clock
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from flight_sim.integration import (
 )
 from flight_sim.output import OutputConfiguration
 from flight_sim.telemetry import FlightPoint
-from flight_sim.units import Scalar, UnitChecked, scalar
+from flight_sim.units import Scalar, UnitChecked, UnitSystem, scalar
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
@@ -138,7 +139,14 @@ class Simulation(UnitChecked):
         finally:
             self.properties.engine = engine
 
-        return Flight(self, points, event_rows, stats, clock.perf_counter() - start)
+        return Flight(
+            self,
+            points,
+            event_rows,
+            stats,
+            run_time_s=clock.perf_counter() - start,
+            units=self.output.units,
+        )
 
 
 @dataclass(frozen=True)
@@ -148,6 +156,7 @@ class Flight:
     ``flight["aero.force"]`` reads a channel of ``telemetry.CHANNELS`` at
     every point, as a quantity array. ``at`` and ``point`` give one moment as
     a ``FlightPoint``, and ``to_dataframe`` lays channels out as columns.
+    Channels, tables, figures and the summary are in the flight's ``units``.
     """
 
     simulation: Simulation
@@ -160,6 +169,8 @@ class Flight:
 
     # Wall time the run took, in seconds
     run_time_s: float = 0.0
+
+    units: UnitSystem = "metric"
 
     _columns: dict[str, Any] = field(
         default_factory=dict, init=False, repr=False, compare=False
@@ -176,7 +187,7 @@ class Flight:
             KeyError: If no channel has that name.
         """
         if channel not in self._columns:
-            self._columns[channel] = telemetry.column(self.points, channel)
+            self._columns[channel] = telemetry.column(self.points, channel, self.units)
         return self._columns[channel]
 
     @property
@@ -255,18 +266,22 @@ class Flight:
         interval_s = (
             float(sample_interval.m_as("s")) if sample_interval is not None else None
         )
-        return telemetry.table(self.points, self.events, channels, interval_s)
+        return telemetry.table(
+            self.points, self.events, channels, interval_s, self.units
+        )
 
-    def summary(self) -> dict[str, Any]:
-        """Return headline numbers of the flight, in SI units."""
+    def summary(self) -> dict[str, float]:
+        """Return headline numbers of the flight, keyed with their units."""
+        headline = {
+            "flight_time": self.time[-1],
+            "apogee": self["state.position"][:, 0].max(),
+            "max_speed": self["derived.speed"].max(),
+            "max_mach": self["aero.mach"].max(),
+            "max_dynamic_pressure": self["aero.dynamic_pressure"].max(),
+        }
         return {
-            "flight_time_s": float(self.time.m_as("s")[-1]),
-            "apogee_m": float(self["state.position"].m_as("m")[:, 0].max()),
-            "max_speed_m_s": float(self["derived.speed"].m_as("m/s").max()),
-            "max_mach": float(self["aero.mach"].magnitude.max()),
-            "max_dynamic_pressure_pa": float(
-                self["aero.dynamic_pressure"].m_as("Pa").max()
-            ),
+            _with_units(name, value): float(value.magnitude)
+            for name, value in headline.items()
         }
 
     def diagnostics(self) -> dict[str, Any]:
@@ -308,3 +323,9 @@ class Flight:
             name: output.plot_function(name)(self, self.simulation.name)
             for name in names
         }
+
+
+def _with_units(name: str, value: Any) -> str:
+    """Return a key naming a quantity's units, such as "max_speed_ft_s"."""
+    suffix = re.sub(r"[^a-z0-9]+", "_", f"{value.units:~}".lower()).strip("_")
+    return f"{name}_{suffix}" if suffix else name

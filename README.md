@@ -46,16 +46,22 @@ You do not need to manually activate virtual environments. Prefix your commands 
 
 ### Run the Application
 
-To fly a sim input file (defaults to `configs/sims/sol_invictus_nominal.toml`):
+To fly a sim input file:
 ```bash
-uv run flight_sim [path/to/sim.toml]
+uv run flight_sim path/to/sim.toml [--output-dir DIR] [--no-show] [--profile]
 ```
 
-See [configs/README.md](configs/README.md) for the input file format, and
-[examples/](examples/) for self-contained sims with every file they read, such as:
-```bash
-uv run flight_sim examples/sol_invictus/sim.toml
-```
+- `--output-dir DIR` writes to `DIR` instead of the sim's `[output] directory`;
+  `{name}` in it becomes the sim name.
+- `--no-show` saves the plots without opening their windows.
+- `--profile` times every function during the run, prints the slowest and saves
+  `profile.prof`.
+
+`uv run flight_sim` with no arguments, or with `--help`, lists the same. For example,
+`uv run flight_sim examples/sol_invictus/sim.toml`.
+
+See [examples/README.md](examples/README.md) for the input file format, and
+[examples/](examples/) for self-contained sims with every file they read.
 
 To run something in particular:
 

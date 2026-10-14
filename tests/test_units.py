@@ -21,6 +21,7 @@ from flight_sim.units import (
     Vector,
     matrix,
     scalar,
+    system_units,
     vector,
 )
 from flight_sim.utilities.data_loader import AeroTable
@@ -186,3 +187,23 @@ def test_union_field_checks_only_quantities() -> None:
     assert _UnionField(scalar(2.0, "min")).ignition.m_as("s") == 120.0  # type: ignore[union-attr]
     with pytest.raises(DimensionalityError, match=re.escape("_UnionField.ignition")):
         _UnionField(scalar(1.0, "m"))
+
+
+@pytest.mark.parametrize(
+    ("units", "imperial"),
+    [
+        ("m", "ft"),
+        ("m/s**2", "ft/s**2"),
+        ("N*m", "ft*lbf"),
+        ("kg*m**2", "lb*ft**2"),
+        ("K", "degF"),
+        ("rad/s", "rad/s"),
+        ("deg", "deg"),
+        ("s", "s"),
+        ("", ""),
+    ],
+)
+def test_system_units(units: str, imperial: str) -> None:
+    """Imperial maps what it has a unit for; metric keeps the declared units."""
+    assert system_units(units, "imperial") == imperial
+    assert system_units(units, "metric") == units

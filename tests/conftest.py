@@ -4,10 +4,9 @@ import matplotlib
 import numpy as np
 import pytest
 
-from flight_sim.config import load
 from flight_sim.units import matrix, scalar, vector
 from flight_sim.utilities.data_loader import aero_table_from_csv
-from flight_sim.vehicle.engine import Engine
+from flight_sim.vehicle.engine import Engine, PropellantGrain, solid_engine_from_csv
 from flight_sim.vehicle.mass_properties import MassProperties, MassPropertiesSI
 from flight_sim.vehicle.rocket_properties import RocketProperties
 
@@ -19,16 +18,38 @@ matplotlib.use("Agg")
 def _baseline_rocket_properties() -> RocketProperties:
     """Provides the standard rocket with the hand-made test aero table.
 
-    The table's center of pressure is 3.048 m aft of the nose tip.
+    The table's center of pressure is 3.048 m aft of the nose tip. The motor
+    is the standard test curve, 25 kg at ignition burning down to 20 kg.
     """
-    properties = load("configs/vehicles/sol_invictus.toml", RocketProperties)
-    properties.aero_table = aero_table_from_csv(
-        "tests/test_data/standard_aero.csv",
-        reference_area=scalar(0.0182414692, "m**2"),
-        reference_length=scalar(0.1524, "m"),
-        reference_point=vector((0.0, 0.0, 0.0), "m"),
+    grain = PropellantGrain(
+        mass=scalar(5.0, "kg"),
+        length=scalar(0.75, "m"),
+        outer_diameter=scalar(3.0, "in"),
+        core_diameter=scalar(30.0, "mm"),
+        cg_location=vector((-2.6, 0.0, 0.0), "m"),
     )
-    return properties
+    # Thin tube of radius 0.045 m and length 0.9 m
+    casing = MassProperties(
+        mass=scalar(3.0, "kg"),
+        cg_location=vector((-2.6, 0.0, 0.0), "m"),
+        inertia=matrix(np.diag((0.0061, 0.21, 0.21)), "kg*m**2"),
+    )
+    return RocketProperties(
+        aero_table=aero_table_from_csv(
+            "tests/test_data/standard_aero.csv",
+            reference_area=scalar(0.0182414692, "m**2"),
+            reference_length=scalar(0.1524, "m"),
+            reference_point=vector((0.0, 0.0, 0.0), "m"),
+        ),
+        engine=solid_engine_from_csv(
+            "tests/test_data/standard_motor.csv", grain, casing
+        ),
+        dry_mass_properties=MassProperties(
+            mass=scalar(17.0, "kg"),
+            cg_location=vector((-1.0, 0.0, 0.0), "m"),
+            inertia=matrix(np.diag((2.4, 135.0, 135.0)), "kg*m**2"),
+        ),
+    )
 
 
 class _InertEngine(Engine):
