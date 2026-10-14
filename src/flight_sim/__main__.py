@@ -3,6 +3,7 @@
 import argparse
 import cProfile
 import pstats
+import sys
 import time as clock
 from collections.abc import Sequence
 from dataclasses import replace
@@ -13,11 +14,6 @@ import matplotlib.pyplot as plt
 from flight_sim import output
 from flight_sim.config import ConfigError
 from flight_sim.simulation import Flight, Simulation
-
-# The nominal sim of the repository this package sits in
-DEFAULT_SIM = (
-    Path(__file__).resolve().parents[2] / "configs/sims/sol_invictus_nominal.toml"
-)
 
 # Functions listed by --profile
 PROFILE_LINES = 20
@@ -30,12 +26,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         argv (Sequence[str] | None, optional): Command-line arguments.
             Defaults to those the program was run with.
     """
-    parser = argparse.ArgumentParser(description="Fly a sim input file.")
+    parser = argparse.ArgumentParser(
+        prog="flight_sim", description="Fly a sim input file."
+    )
     parser.add_argument(
-        "sim",
-        nargs="?",
-        default=DEFAULT_SIM,
-        help="Defaults to configs/sims/sol_invictus_nominal.toml",
+        "sim", help="Sim input file, such as examples/sol_invictus/sim.toml"
     )
     parser.add_argument(
         "--output-dir",
@@ -50,6 +45,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         action="store_true",
         help="Time each function during the run, and save profile.prof",
     )
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv:
+        parser.print_help(sys.stderr)
+        raise SystemExit(2)
     args = parser.parse_args(argv)
 
     try:

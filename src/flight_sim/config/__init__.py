@@ -1,4 +1,4 @@
-"""Build objects from TOML input files, in the format configs/README.md describes."""
+"""Build objects from TOML input files, in the format examples/README.md describes."""
 
 from flight_sim.config.building import build
 from flight_sim.config.errors import ConfigError

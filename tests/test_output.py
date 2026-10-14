@@ -18,7 +18,8 @@ from flight_sim.simulation import Flight, Simulation
 from flight_sim.units import scalar
 from flight_sim.vehicle.engine import SolidEngine
 
-_VEHICLE = Path("configs/vehicles/sol_invictus.toml").resolve().as_posix()
+_EXAMPLE = Path("examples/sol_invictus/sim.toml")
+_VEHICLE = (_EXAMPLE.parent / "vehicle.toml").resolve().as_posix()
 
 
 def _sim_file(directory: Path, output_table: str = "") -> Path:
@@ -83,6 +84,7 @@ def _flight(tmp_path: Path) -> Flight:
     ("table", "message"),
     [
         ({"formats": ["xlsx"]}, "Unknown formats"),
+        ({"units": "cubits"}, "Unknown units"),
         ({"plots": ["polar"]}, "Unknown plots"),
         ({"channels": ["drag"]}, "No channel matches"),
         ({"sample_interval": scalar(0.0, "s")}, "must be positive"),
@@ -130,6 +132,66 @@ def test_sampled_table_keeps_events_on_their_rows(flight: Flight) -> None:
     assert set(frame["derived.on_rail [-]"]) <= {0.0, 1.0}
 
 
+def test_imperial_flight_reads_tables_and_summary_in_imperial(flight: Flight) -> None:
+    """Imperial converts what it has a unit for; angles and Mach stay as they are."""
+    imperial = replace(flight, units="imperial")
+    channels = ["state.position", "aero.dynamic_pressure", "aero.alpha"]
+
+    metric_frame = flight.to_dataframe(channels)
+    frame = imperial.to_dataframe(channels)
+
+    assert list(frame.columns) == [
+        "state.position_x [ft]",
+        "state.position_y [ft]",
+        "state.position_z [ft]",
+        "aero.alpha [rad]",
+        "aero.dynamic_pressure [psi]",
+        "event",
+    ]
+    assert frame["state.position_x [ft]"].to_numpy() == pytest.approx(
+        metric_frame["state.position_x [m]"].to_numpy() / 0.3048
+    )
+    assert frame["aero.alpha [rad]"].equals(metric_frame["aero.alpha [rad]"])
+    assert imperial["state.position"].units == "foot"
+    assert list(imperial.summary()) == [
+        "flight_time_s",
+        "apogee_ft",
+        "max_speed_ft_s",
+        "max_mach",
+        "max_dynamic_pressure_psi",
+    ]
+    assert list(flight.summary()) == [
+        "flight_time_s",
+        "apogee_m",
+        "max_speed_m_s",
+        "max_mach",
+        "max_dynamic_pressure_pa",
+    ]
+    assert imperial.summary()["max_mach"] == flight.summary()["max_mach"]
+
+
+def test_output_units_set_the_written_units(tmp_path: Path) -> None:
+    """A sim whose output table asks for imperial writes imperial."""
+    table = """
+        [output]
+        directory = "out"
+        units = "imperial"
+        channels = ["time", "state.position"]
+        plots = []
+    """
+    flight = Simulation.from_file(_sim_file(tmp_path, table)).run()
+
+    directory = output.write(flight)
+
+    assert directory is not None
+    assert flight.units == "imperial"
+    frame = pd.read_csv(directory / "telemetry.csv")
+    assert "state.position_x [ft]" in frame.columns
+    run = tomllib.loads((directory / "run.toml").read_text(encoding="utf-8"))
+    assert run["units"] == "imperial"
+    assert "apogee_ft" in run["summary"]
+
+
 def test_write_lays_out_the_run(flight: Flight, tmp_path: Path) -> None:
     """The directory gets telemetry, the run summary, the input and the plots."""
     directory = output.write(flight)
@@ -169,9 +231,9 @@ def test_resolved_input_reruns_the_same_sim(flight: Flight) -> None:
     assert rerun.event_names() == flight.simulation.event_names()
 
 
-def test_nominal_resolved_input_is_absolute_and_rebuilds(tmp_path: Path) -> None:
-    """The nominal sim's resolved input names its data files absolutely."""
-    simulation = Simulation.from_file("configs/sims/sol_invictus_nominal.toml")
+def test_example_resolved_input_is_absolute_and_rebuilds(tmp_path: Path) -> None:
+    """The example sim's resolved input names its data files absolutely."""
+    simulation = Simulation.from_file(_EXAMPLE)
     assert simulation.source is not None
     resolved = simulation.source.table
     aero_file = Path(resolved["properties"]["aero_table"]["filepath"])
