@@ -41,6 +41,11 @@ The directory gets `telemetry.csv`, `run.toml` (summary, event times, git commit
 PNG per plot. `uv run flight_sim <sim> --output-dir <dir> --no-show` overrides the
 directory and skips the plot windows.
 
+Each run prints, and `run.toml` keeps under `[diagnostics]`, the steps accepted and
+rejected, RKF45 evaluations, event-search iterations, step length range and wall
+times. `--profile` also times every function during the run, prints the slowest
+and saves `profile.prof` (open it with `uvx snakeviz profile.prof`).
+
 From a script, `Simulation.from_file(path).run()` returns a `Flight`:
 `flight["aero.force"]` is a quantity array, `flight.at("apogee")` a typed
 `FlightPoint`, and `flight.to_dataframe(["aero.*"])` a table.

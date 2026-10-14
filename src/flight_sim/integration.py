@@ -124,6 +124,20 @@ class IntegrationConfiguration:
 
 
 @dataclass
+class IntegrationStats:
+    """Work the integrator did, counted across the calls it is passed to."""
+
+    # Steps thrown away for exceeding the error tolerance
+    rejected_steps: int = 0
+
+    # Equation of motion evaluations, six per RKF45 attempt
+    rkf45_evaluations: int = 0
+
+    # Trial steps taken to land on events
+    event_iterations: int = 0
+
+
+@dataclass
 class StateDerivative(UnitChecked):
     """Rate of change of a RocketState with respect to time."""
 
@@ -498,7 +512,11 @@ def rkf45_step(
 
 
 def _adaptive_step(
-    time: float, values: np.ndarray, dt: float, inputs: _StepInputs
+    time: float,
+    values: np.ndarray,
+    dt: float,
+    inputs: _StepInputs,
+    stats: IntegrationStats | None = None,
 ) -> tuple[np.ndarray, float, float]:
     """Take one RKF45 step, shrinking it until its error is within tolerance.
 
@@ -507,6 +525,8 @@ def _adaptive_step(
         values (np.ndarray): State in the layout ``_pack`` produces.
         dt (float): Step length to try first, in seconds.
         inputs (_StepInputs): Constants of the step.
+        stats (IntegrationStats | None, optional): Counts the attempts.
+            Defaults to none.
 
     Returns:
         tuple[np.ndarray, float, float]: The new state, the length of the
@@ -522,6 +542,8 @@ def _adaptive_step(
     while True:
         # Look into future with 4th and 5th order RKF45 steps
         values_5th, values_4th = rkf45_step(time, values, dt, inputs)
+        if stats is not None:
+            stats.rkf45_evaluations += len(_RKF_NODES)
 
         # Largest difference between the two estimates, in units of its
         # component's tolerance
@@ -544,6 +566,8 @@ def _adaptive_step(
                 stacklevel=2,
             )
             break
+        if stats is not None:
+            stats.rejected_steps += 1
         dt = max(dt * max(0.9 * error**-0.2, 0.1), inputs.min_dt_s)
 
     # Keep the orientation a unit quaternion
@@ -562,6 +586,7 @@ def adaptive_step(
     dt: Scalar,
     *,
     events: Sequence[FlightEvent] = (),
+    stats: IntegrationStats | None = None,
 ) -> tuple[RocketState, Scalar, Scalar, FlightEvent | None]:
     """Advance the rocket state by one step whose length the error sets.
 
@@ -581,6 +606,8 @@ def adaptive_step(
         config (IntegrationConfiguration): Truth models and sim settings.
         dt (Scalar): Step length to try, in any unit of time.
         events (Sequence[FlightEvent]): Events to land on, checked in order.
+        stats (IntegrationStats | None, optional): Counts the work done.
+            Defaults to none.
 
     Returns:
         tuple[RocketState, Scalar, Scalar, FlightEvent | None]: The new state,
@@ -589,7 +616,7 @@ def adaptive_step(
     """
     inputs = _step_inputs(state, properties, config)
     values, dt_taken, next_dt = _adaptive_step(
-        time, _pack(state), float(dt.m_as("s")), inputs
+        time, _pack(state), float(dt.m_as("s")), inputs, stats
     )
     next_state = _unpack(values, state)
     rail_events = (inputs.rail[0].exit_event,) if inputs.rail is not None else ()
@@ -603,6 +630,7 @@ def adaptive_step(
                 config,
                 dt=scalar(dt_taken, "s"),
                 event=event.value,
+                stats=stats,
             )
             if event in rail_events:
                 next_state = replace(next_state, rail_start=None)
@@ -616,6 +644,8 @@ def step(
     properties: RocketProperties,
     config: IntegrationConfiguration,
     dt: Scalar,
+    *,
+    stats: IntegrationStats | None = None,
 ) -> RocketState:
     """Advance the rocket state by exactly ``dt`` using adaptive RKF45 steps.
 
@@ -627,6 +657,8 @@ def step(
         properties (RocketProperties): Aerodynamic and motor properties.
         config (IntegrationConfiguration): Truth models and sim settings.
         dt (Scalar): Length of the step, in any unit of time.
+        stats (IntegrationStats | None, optional): Counts the work done.
+            Defaults to none.
 
     Returns:
         RocketState: The state after advancing by one step.
@@ -643,14 +675,14 @@ def step(
         # Prevents the final step from overshooting the target time
         current_dt = min(current_dt, target_time - time_simulated)
         current_values, dt_taken, current_dt = _adaptive_step(
-            time + time_simulated, current_values, current_dt, inputs
+            time + time_simulated, current_values, current_dt, inputs, stats
         )
         time_simulated += dt_taken
 
     return _unpack(current_values, state)
 
 
-def locate_event(
+def locate_event(  # pylint: disable=too-many-arguments
     time: float,
     start: RocketState,
     end: RocketState,
@@ -659,6 +691,7 @@ def locate_event(
     *,
     dt: Scalar,
     event: Callable[[float, RocketState], float],
+    stats: IntegrationStats | None = None,
 ) -> tuple[RocketState, Scalar]:
     """Integrate from the start of a step to where an event quantity reaches zero.
 
@@ -676,6 +709,8 @@ def locate_event(
         event (Callable[[float, RocketState], float]): Quantity, given the
             time in seconds and the state, whose crossing from positive to
             zero or negative marks the event.
+        stats (IntegrationStats | None, optional): Counts the work done.
+            Defaults to none.
 
     Returns:
         tuple[RocketState, Scalar]: The state at the event, on or just past
@@ -694,7 +729,11 @@ def locate_event(
         trial_time = (low_time * high_value - high_time * low_value) / (
             high_value - low_value
         )
-        trial_state = step(time, start, properties, config, scalar(trial_time, "s"))
+        if stats is not None:
+            stats.event_iterations += 1
+        trial_state = step(
+            time, start, properties, config, scalar(trial_time, "s"), stats=stats
+        )
         trial_value = event(time + trial_time, trial_state)
 
         if trial_value == 0.0:
