@@ -51,7 +51,11 @@ To fly a sim input file (defaults to `configs/sims/sol_invictus_nominal.toml`):
 uv run flight_sim [path/to/sim.toml]
 ```
 
-See [configs/README.md](configs/README.md) for the input file format.
+See [configs/README.md](configs/README.md) for the input file format, and
+[examples/](examples/) for self-contained sims with every file they read, such as:
+```bash
+uv run flight_sim examples/sol_invictus/sim.toml
+```
 
 To run something in particular:
 

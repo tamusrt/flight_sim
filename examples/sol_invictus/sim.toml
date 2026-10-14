@@ -1,0 +1,32 @@
+# Sol Invictus on a Loki M3464 off a 17 ft rail, flown to impact. Everything
+# this sim reads is in this folder. Run it with:
+#
+#   uv run flight_sim examples/sol_invictus/sim.toml
+
+name = "Sol Invictus example"
+stop_event = "impact"
+
+properties = { include = "vehicle.toml" }
+
+[config.truth]
+include = "site.toml"
+
+[config.truth.launch_rail]
+length = "17 ft"
+elevation = "85 deg"
+azimuth = "0 deg"
+
+# properties and config are filled in from the tables above
+[[events]]
+type = "flight_sim.events.peak_vertical_velocity"
+
+[[events]]
+ref = "flight_sim.events.APOGEE"
+
+[[events]]
+ref = "flight_sim.events.IMPACT"
+
+[output]
+directory = "out/{name}"
+sample_interval = "0.01 s"
+plots = ["trajectory", "attitude", "aero", "propulsion"]

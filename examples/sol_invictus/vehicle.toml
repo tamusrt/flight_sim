@@ -1,0 +1,21 @@
+# RocketProperties for Sol Invictus. The dry mass properties are placeholders.
+
+[aero_table]
+type = "flight_sim.utilities.data_loader.aero_table_from_csv"
+filepath = "aero.csv"
+reference_area = "0.0182414692 m**2"
+reference_length = "6 in"
+reference_point = { value = [0.0, 0.0, 0.0], units = "m" }
+frame = "missile"
+
+[dry_mass_properties]
+mass = "17 kg"
+cg_location = { value = [-1.0, 0.0, 0.0], units = "m" }
+inertia = { diag = [2.4, 135.0, 135.0], units = "kg*m**2" }
+
+# Grain and casing come from the .eng header: diameter, length and masses
+[engine]
+type = "flight_sim.vehicle.engine.SolidEngine.from_eng"
+motor_file_path = "Loki_M3464LB.eng"
+# Forward end of the motor from the nose tip; aft is -X
+forward_end_location = { value = [-2.08, 0.0, 0.0], units = "m" }
