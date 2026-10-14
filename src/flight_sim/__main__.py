@@ -7,6 +7,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from flight_sim.config import ConfigError
 from flight_sim.simulation import Simulation
 
 DEFAULT_SIM = "configs/sims/sol_invictus_nominal.toml"
@@ -33,7 +34,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    simulation = Simulation.from_file(args.sim)
+    try:
+        simulation = Simulation.from_file(args.sim)
+    except ConfigError as error:
+        raise SystemExit(f"Cannot build {args.sim}:\n  {error}") from None
     if args.output_dir is not None:
         simulation.output = replace(simulation.output, directory=args.output_dir)
     flight = simulation.run()

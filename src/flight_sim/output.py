@@ -3,13 +3,12 @@
 import inspect
 import re
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any
 
 import pandas as pd  # type: ignore[import-untyped]
-import tomli_w
 from matplotlib.figure import Figure
 
 from flight_sim import plots
@@ -109,11 +108,6 @@ def write_tables(frame: pd.DataFrame, directory: Path, formats: Sequence[str]) -
         frame.to_csv(directory / "telemetry.csv", index=False)
     if "parquet" in formats:
         frame.to_parquet(directory / "telemetry.parquet", index=False)
-
-
-def write_toml(path: Path, table: Mapping[str, Any]) -> None:
-    """Write a table as a TOML file."""
-    path.write_text(tomli_w.dumps(table), encoding="utf-8")
 
 
 def git_revision() -> dict[str, Any]:

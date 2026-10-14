@@ -12,7 +12,7 @@ import pandas as pd  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
 
 from flight_sim import output, telemetry
-from flight_sim.config import load_with_input
+from flight_sim.config import load_with_input, write_toml
 from flight_sim.events import at_time
 from flight_sim.flight_event import FlightEvent
 from flight_sim.flight_point import FlightPointSI
@@ -57,6 +57,11 @@ class Simulation(UnitChecked):
         default=None, init=False, repr=False, compare=False
     )
 
+    # Key paths in resolved_input that were left to their defaults
+    input_defaults: frozenset[str] = field(
+        default=frozenset(), init=False, repr=False, compare=False
+    )
+
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
         """Build a simulation from a sim input file, keeping the resolved input.
@@ -64,9 +69,10 @@ class Simulation(UnitChecked):
         Raises:
             ConfigError: If the file cannot be read or built.
         """
-        simulation, table = load_with_input(path, cls)
+        simulation, table, defaults = load_with_input(path, cls)
         simulation.source_file = Path(path).resolve()
         simulation.resolved_input = table
+        simulation.input_defaults = defaults
         return simulation
 
     def __post_init__(self) -> None:
@@ -333,7 +339,7 @@ class Flight:
         }
         if self.simulation.source_file is not None:
             run["source"] = self.simulation.source_file.as_posix()
-        output.write_toml(directory / "run.toml", run)
+        write_toml(directory / "run.toml", run)
         resolved = self.simulation.resolved_input
         if resolved is not None:
             # Rerunning the copy writes back to this directory
@@ -341,9 +347,14 @@ class Flight:
                 **resolved.get("output", {}),
                 "directory": directory.as_posix(),
             }
-            output.write_toml(
+            write_toml(
                 directory / "resolved_input.toml",
                 {**resolved, "output": written_output},
+                {
+                    key_path: "pulled from default"
+                    for key_path in self.simulation.input_defaults
+                    if key_path not in ("output", "output.directory")
+                },
             )
 
         drawn = self.figures() if figures is None else figures

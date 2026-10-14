@@ -11,8 +11,8 @@ import pandas as pd  # type: ignore[import-untyped]
 import pytest
 
 from flight_sim import output
-from flight_sim.config import ConfigError
-from flight_sim.output import OutputConfiguration, file_name, write_toml
+from flight_sim.config import ConfigError, write_toml
+from flight_sim.output import OutputConfiguration, file_name
 from flight_sim.simulation import Flight, Simulation
 from flight_sim.units import scalar
 from flight_sim.vehicle.engine import SolidEngine
@@ -97,7 +97,7 @@ def test_bad_output_table_fails_at_load(tmp_path: Path) -> None:
     """A bad output table is reported when the sim file loads."""
     path = _sim_file(tmp_path, '[output]\nplots = ["polar"]')
 
-    with pytest.raises(ConfigError, match="output: Unknown plots"):
+    with pytest.raises(ConfigError, match=r"output in .*short\.toml: Unknown plots"):
         Simulation.from_file(path)
 
 
@@ -252,3 +252,27 @@ def test_only_public_plot_functions_are_plots(name: str) -> None:
     assert name not in output.plot_names()
     with pytest.raises(KeyError, match="No plot"):
         output.plot_function(name)
+
+
+def test_write_toml_comments_keys_and_comments_out_none(tmp_path: Path) -> None:
+    """Comments land on their key paths; None is written commented out."""
+    path = tmp_path / "out.toml"
+    write_toml(
+        path,
+        {
+            "name": "hop",
+            "rail": {"length": "17 ft", "start": None},
+            "events": [{"ref": "flight_sim.events.APOGEE"}],
+        },
+        {"rail.length": "pulled from default", "events[0]": "first event"},
+    )
+    text = path.read_text(encoding="utf-8")
+
+    assert 'length = "17 ft"  # pulled from default' in text
+    assert "# start = None" in text
+    assert "[[events]]  # first event" in text
+    assert tomllib.loads(text) == {
+        "name": "hop",
+        "rail": {"length": "17 ft"},
+        "events": [{"ref": "flight_sim.events.APOGEE"}],
+    }

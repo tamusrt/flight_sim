@@ -19,6 +19,8 @@ Run a sim with `uv run flight_sim configs/sims/<name>.toml`. A sim file builds a
 - **Motor files** (`SolidEngine.from_rse`, `SolidEngine.from_eng`) need `forward_end_location`, the motor's forward end from the nose tip, e.g. `{ value = [-2.08, 0, 0], units = "m" }`. Aft is -X.
 - **Ignition** is either a time, `ignition_time = "0 s"`, or an event, `ignition_time = { event = "rail exit", delay = "0.5 s" }`. The event is named, and must be one of the sim's `[[events]]` or the rail's `"rail exit"`. `delay` is optional and defaults to `"0 s"`.
 - **Missing required arguments** are filled from already-built objects with the same name, so `peak_vertical_velocity` receives the sim's `properties` and `config`.
+- **Checks**: unknown keys, missing required arguments, quantities without units or of the wrong dimension, and plain values of the wrong type (`friction_coefficient = "abc"`) are errors naming the key. A missing argument is reported against the callable used, so `SolidEngine.from_rse` asks for `forward_end_location` but never `grain`.
+- **Defaults**: arguments left out take their defaults silently. `resolved_input.toml` lists each one, marked `# pulled from default`.
 
 ## Output
 
@@ -35,7 +37,7 @@ plots = ["trajectory", "attitude", "aero", "propulsion", "step_length"]
 ```
 
 The directory gets `telemetry.csv`, `run.toml` (summary, event times, git commit),
-`resolved_input.toml` (the merged input with absolute paths, which reruns as-is) and a
+`resolved_input.toml` (the merged input with absolute paths and every default filled in, which reruns as-is) and a
 PNG per plot. `uv run flight_sim <sim> --output-dir <dir> --no-show` overrides the
 directory and skips the plot windows.
 
