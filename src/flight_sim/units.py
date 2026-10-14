@@ -135,17 +135,10 @@ def _expected_fields(cls: type[Any]) -> tuple[_QuantityField, ...]:
     expected = []
     for quantity_field in fields(cls):
         hint = hints[quantity_field.name]
-        in_union = get_origin(hint) in (Union, UnionType)
-        if in_union:
-            annotated = [arg for arg in get_args(hint) if get_origin(arg) is Annotated]
-            if not annotated:
-                continue
-            hint = annotated[0]
-        if get_origin(hint) is not Annotated:
-            continue
-        unit_strings = [meta for meta in get_args(hint)[1:] if isinstance(meta, str)]
-        if unit_strings:
-            units = parse_units(unit_strings[0])
+        unit_string = annotated_units(hint)
+        if unit_string is not None:
+            units = parse_units(unit_string)
+            in_union = get_origin(get_args(hint)[0]) in (Union, UnionType)
             expected.append(
                 _QuantityField(
                     quantity_field.name, units, units.dimensionality, in_union
@@ -154,6 +147,13 @@ def _expected_fields(cls: type[Any]) -> tuple[_QuantityField, ...]:
 
     _EXPECTED[cls] = tuple(expected)
     return _EXPECTED[cls]
+
+
+def annotated_units(hint: Any) -> str | None:
+    """Return the unit string of an ``Annotated`` hint, or None without one."""
+    if get_origin(hint) is not Annotated:
+        return None
+    return next((meta for meta in get_args(hint)[1:] if isinstance(meta, str)), None)
 
 
 class UnitChecked:
@@ -168,9 +168,9 @@ class UnitChecked:
     else. Any Pint unit expression works, such as "kg*m**2" or "rad/s**2".
     Subclasses need no ``__post_init__`` of their own.
 
-    A field may also be a union of an annotated quantity and other types,
-    such as ``Annotated[Scalar, "s"] | EventTime``; it is checked only when it
-    holds a quantity.
+    A field may also take other types, such as
+    ``Annotated[Scalar | EventTime, "s"]``; it is checked only when it holds a
+    quantity.
 
     Fields without a unit annotation, such as orientations and nested
     dataclasses, are left alone, as are annotated fields holding None. A

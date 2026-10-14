@@ -16,7 +16,7 @@ inertia = { diag = [2.4, 135.0, 135.0], units = "kg*m**2" }
 
 [engine]
 type = "flight_sim.vehicle.engine.solid_engine_from_csv"
-motor_file_path = "../../tests/test_data/standard_motor.csv"
+motor_file_path = "../../data/motors/standard_motor.csv"
 
 [engine.grain]
 mass = "5 kg"

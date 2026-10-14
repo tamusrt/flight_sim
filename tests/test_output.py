@@ -2,6 +2,7 @@
 
 import subprocess
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -113,23 +114,25 @@ def test_directory_names_the_sim() -> None:
     assert OutputConfiguration().resolve_directory("Short Hop") is None
 
 
-def test_resampled_keeps_events_on_their_rows(flight: Flight) -> None:
+def test_sampled_table_keeps_events_on_their_rows(flight: Flight) -> None:
     """Rows fall every interval, plus exactly at each event and the end."""
-    resampled = flight.resampled(scalar(10.0, "ms"))
-    times = resampled.time.m_as("s")
+    frame = flight.to_dataframe(
+        ["time", "state.orientation.*", "derived.on_rail"], scalar(10.0, "ms")
+    )
+    times = frame["time [s]"].to_numpy()
 
     assert times == pytest.approx([0.0, 0.01, 0.02, 0.025, 0.03, 0.04, 0.05])
-    assert resampled.at("half").time.m_as("s") == pytest.approx(0.025)
-    assert resampled.at("end").time == flight.at("end").time
-    orientation = np.column_stack(
-        [resampled[f"state.orientation.q_{axis}"].magnitude for axis in "wxyz"]
-    )
-    assert np.linalg.norm(orientation, axis=1) == pytest.approx(1.0)
+    assert frame["event"].tolist()[3:] == ["half", "", "", "end"]
+    assert times[3] == flight.at("half").time.m_as("s")
+    assert times[-1] == flight.at("end").time.m_as("s")
+    orientation = frame[[f"state.orientation.q_{axis} [-]" for axis in "wxyz"]]
+    assert np.linalg.norm(orientation.to_numpy(), axis=1) == pytest.approx(1.0)
+    assert set(frame["derived.on_rail [-]"]) <= {0.0, 1.0}
 
 
 def test_write_lays_out_the_run(flight: Flight, tmp_path: Path) -> None:
     """The directory gets telemetry, the run summary, the input and the plots."""
-    directory = flight.write()
+    directory = output.write(flight)
 
     assert directory == (tmp_path / "out" / "short_hop").resolve()
     frame = pd.read_csv(directory / "telemetry.csv")
@@ -155,7 +158,7 @@ def test_write_lays_out_the_run(flight: Flight, tmp_path: Path) -> None:
 
 def test_resolved_input_reruns_the_same_sim(flight: Flight) -> None:
     """The copied input rebuilds the sim, writing back to the same place."""
-    directory = flight.write()
+    directory = output.write(flight)
     assert directory is not None
 
     rerun = Simulation.from_file(directory / "resolved_input.toml")
@@ -169,8 +172,8 @@ def test_resolved_input_reruns_the_same_sim(flight: Flight) -> None:
 def test_nominal_resolved_input_is_absolute_and_rebuilds(tmp_path: Path) -> None:
     """The nominal sim's resolved input names its data files absolutely."""
     simulation = Simulation.from_file("configs/sims/sol_invictus_nominal.toml")
-    resolved = simulation.resolved_input
-    assert resolved is not None
+    assert simulation.source is not None
+    resolved = simulation.source.table
     aero_file = Path(resolved["properties"]["aero_table"]["filepath"])
 
     write_toml(tmp_path / "copy.toml", resolved)
@@ -186,14 +189,14 @@ def test_write_without_directory_writes_nothing(tmp_path: Path) -> None:
     """A sim whose output table names no directory writes nothing."""
     flight = Simulation.from_file(_sim_file(tmp_path)).run()
 
-    assert flight.write() is None
+    assert output.write(flight) is None
 
 
 def test_write_saves_given_figures_and_leaves_them_open(flight: Flight) -> None:
     """Figures passed in are saved and left for the caller to show."""
     figures = flight.figures(["step_length"])
 
-    directory = flight.write(figures)
+    directory = output.write(flight, figures)
 
     assert directory is not None
     assert (directory / "step_length.png").is_file()
@@ -202,20 +205,16 @@ def test_write_saves_given_figures_and_leaves_them_open(flight: Flight) -> None:
     plt.close("all")
 
 
-def test_parquet_needs_an_engine(
-    flight: Flight, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Asking for parquet without an engine installed fails."""
+def test_parquet_holds_the_csv_table(flight: Flight) -> None:
+    """Both formats hold the same telemetry."""
+    simulation = flight.simulation
+    simulation.output = replace(simulation.output, formats=["csv", "parquet"])
 
-    def no_engine(*_args: Any, **_kwargs: Any) -> None:
-        raise ImportError("no pyarrow")
+    directory = output.write(flight, figures={})
 
-    monkeypatch.setattr(pd.DataFrame, "to_parquet", no_engine)
-    settings = OutputConfiguration(directory=tmp_path, formats=["parquet"])
-    flight.simulation.output = settings
-
-    with pytest.raises(ImportError, match="no pyarrow"):
-        flight.write()
+    assert directory is not None
+    csv = pd.read_csv(directory / "telemetry.csv", keep_default_na=False)
+    pd.testing.assert_frame_equal(pd.read_parquet(directory / "telemetry.parquet"), csv)
 
 
 def test_every_plot_draws(flight: Flight) -> None:

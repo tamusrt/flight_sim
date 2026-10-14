@@ -3,18 +3,23 @@
 import inspect
 import re
 import subprocess
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
 from flight_sim import plots
+from flight_sim.config import InputSource, write_toml
 from flight_sim.plots import ChannelSource
 from flight_sim.telemetry import channel_names
 from flight_sim.units import Scalar, UnitChecked
+
+if TYPE_CHECKING:
+    from flight_sim.simulation import Flight
 
 FORMATS = ("csv", "parquet")
 
@@ -32,10 +37,10 @@ class OutputConfiguration(UnitChecked):
 
     # Telemetry spacing; None keeps one row per integrator step. Events keep
     # their exact rows either way.
-    sample_interval: Annotated[Scalar, "s"] | None = None
+    sample_interval: Annotated[Scalar | None, "s"] = None
 
     # Names of functions in flight_sim.plots, drawn and saved as PNGs
-    plots: Sequence[str] = field(default_factory=lambda: ("trajectory", "step_length"))
+    plots: Sequence[str] = ("trajectory", "step_length")
 
     def __post_init__(self) -> None:
         """Check the formats, channel patterns and plot names.
@@ -50,10 +55,11 @@ class OutputConfiguration(UnitChecked):
             raise ValueError(
                 f"Unknown formats {sorted(unknown_formats)}; use {FORMATS}"
             )
-        unknown_plots = set(self.plots) - set(plot_names())
+        known_plots = plot_names()
+        unknown_plots = set(self.plots) - set(known_plots)
         if unknown_plots:
             raise ValueError(
-                f"Unknown plots {sorted(unknown_plots)}; use {plot_names()}"
+                f"Unknown plots {sorted(unknown_plots)}; use {known_plots}"
             )
         try:
             channel_names(self.channels)
@@ -86,8 +92,9 @@ def plot_function(name: str) -> Callable[[ChannelSource, str], Figure]:
     Raises:
         KeyError: If no plot has that name.
     """
-    if name not in plot_names():
-        raise KeyError(f"No plot {name!r}; use {plot_names()}")
+    known_plots = plot_names()
+    if name not in known_plots:
+        raise KeyError(f"No plot {name!r}; use {known_plots}")
     function: Callable[[ChannelSource, str], Figure] = getattr(plots, name)
     return function
 
@@ -97,17 +104,77 @@ def file_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "flight"
 
 
-def write_tables(frame: pd.DataFrame, directory: Path, formats: Sequence[str]) -> None:
-    """Write telemetry as "telemetry.<format>" in each format.
+def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path | None:
+    """Write a flight as its simulation's output table says.
 
-    Raises:
-        ImportError: If parquet is asked for without pyarrow or fastparquet
-            installed.
+    The directory gets the telemetry, "run.toml" with the summary,
+    diagnostics, event times and source revision, "resolved_input.toml"
+    when the simulation came from a file, and a PNG of each figure.
+
+    Args:
+        flight (Flight): The flight to write.
+        figures (Mapping[str, Figure] | None, optional): Figures to save.
+            Defaults to drawing, saving and closing ``output.plots``.
+
+    Returns:
+        Path | None: The directory written, or None if the output table
+            names none.
     """
-    if "csv" in formats:
+    simulation = flight.simulation
+    settings = simulation.output
+    directory = settings.resolve_directory(simulation.name)
+    if directory is None:
+        return None
+    directory.mkdir(parents=True, exist_ok=True)
+
+    frame = flight.to_dataframe(settings.channels, settings.sample_interval)
+    if "csv" in settings.formats:
         frame.to_csv(directory / "telemetry.csv", index=False)
-    if "parquet" in formats:
+    if "parquet" in settings.formats:
         frame.to_parquet(directory / "telemetry.parquet", index=False)
+    write_toml(directory / "run.toml", _run_table(flight))
+    if simulation.source is not None:
+        _write_resolved_input(simulation.source, directory)
+
+    drawn = flight.figures() if figures is None else figures
+    for name, figure in drawn.items():
+        figure.savefig(directory / f"{name}.png", dpi=150)
+    if figures is None:
+        for figure in drawn.values():
+            plt.close(figure)
+    return directory
+
+
+def _run_table(flight: "Flight") -> dict[str, Any]:
+    """Return the summary, diagnostics, event times and source of a run."""
+    times = flight.time.m_as("s")
+    run: dict[str, Any] = {
+        "name": flight.simulation.name,
+        "written": datetime.now().astimezone().replace(microsecond=0),
+        **git_revision(),
+        "summary": flight.summary(),
+        "diagnostics": flight.diagnostics(),
+        "event_times_s": {
+            name: float(times[row]) for name, row in flight.events.items()
+        },
+    }
+    if flight.simulation.source is not None:
+        run["source"] = flight.simulation.source.path.as_posix()
+    return run
+
+
+def _write_resolved_input(source: InputSource, directory: Path) -> None:
+    """Write the resolved input so that rerunning it writes back to ``directory``."""
+    table = {
+        **source.table,
+        "output": {**source.table.get("output", {}), "directory": directory.as_posix()},
+    }
+    comments = {
+        default: "pulled from default"
+        for default in source.defaults
+        if default not in ("output", "output.directory")
+    }
+    write_toml(directory / "resolved_input.toml", table, comments)
 
 
 def git_revision() -> dict[str, Any]:

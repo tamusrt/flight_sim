@@ -1,10 +1,17 @@
 """Quaternion module tests."""
 
+import math
+
 import numpy as np
 import pytest
 
 from flight_sim.units import vector
-from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_kinematics
+from flight_sim.utilities.quaternion import (
+    Quaternion,
+    cross,
+    quaternion_kinematics,
+    slerp,
+)
 
 
 def test_quaternion_normalized_returns_unit_length() -> None:
@@ -43,3 +50,20 @@ def test_quaternion_kinematics_accepts_any_angular_rate_unit() -> None:
     from_deg = quaternion_kinematics(Quaternion(), vector((0.0, 0.0, 180.0), "deg/s"))
 
     assert from_deg.q_z == pytest.approx(np.pi / 2)
+
+
+def test_slerp_follows_the_short_arc() -> None:
+    """Halfway between identity and a quarter turn is an eighth turn."""
+    identity = Quaternion()
+    quarter = Quaternion(math.cos(math.pi / 4), 0.0, 0.0, math.sin(math.pi / 4))
+    flipped = Quaternion(*(-quarter.components()).tolist())
+    eighth = [math.cos(math.pi / 8), 0.0, 0.0, math.sin(math.pi / 8)]
+
+    assert slerp(identity, quarter, 0.5).components() == pytest.approx(eighth)
+    # The same rotation written with the opposite sign
+    assert slerp(identity, flipped, 0.5).components() == pytest.approx(eighth)
+    # Nearly equal quaternions still give a unit quaternion
+    nearby = Quaternion(1.0, 0.0, 0.0, 1e-4).normalized()
+    assert np.linalg.norm(slerp(identity, nearby, 0.3).components()) == pytest.approx(
+        1.0
+    )

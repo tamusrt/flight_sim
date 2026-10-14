@@ -99,6 +99,7 @@ class Engine(ABC):
                 axes.
         """
 
+    @property
     def pending_ignition(self) -> EventTime | None:
         """Return the event that lights the motor, or None once it has a time."""
         return None
@@ -185,7 +186,7 @@ class SolidEngine(Engine, UnitChecked):
     grain: PropellantGrain
     casing: MassProperties  # Everything but the propellant
 
-    ignition_time: Annotated[Scalar, "s"] | EventTime = field(
+    ignition_time: Annotated[Scalar | EventTime, "s"] = field(
         default_factory=lambda: scalar(0.0, "s")
     )
 
@@ -411,6 +412,7 @@ class SolidEngine(Engine, UnitChecked):
             self.casing.si, self.grain.mass_properties(self.burned_fraction(time))
         )
 
+    @property
     def pending_ignition(self) -> EventTime | None:
         """Return the event that lights the motor, or None once it has a time."""
         if isinstance(self.ignition_time, EventTime):

@@ -33,31 +33,31 @@ def source_table(items: dict[str, Any], files: Sequence[Path]) -> SourceTable:
     return table
 
 
+def key_path(where: str, key: str) -> str:
+    """Return the key path of a key in the table at ``where``."""
+    return f"{where}.{key}" if where else key
+
+
+def item_path(where: str, index: int) -> str:
+    """Return the key path of an item in the list at ``where``."""
+    return f"{where}[{index}]"
+
+
+def display_path(path: Path) -> str:
+    """Return a path relative to the working directory if it is under it."""
+    try:
+        return path.relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def origin(where: str, table: Any) -> str:
     """Return a key path with the files its table came from, for error messages."""
     files = getattr(table, "files", ())
     if not files:
         return where or "top level"
-    names = []
-    for file in files:
-        try:
-            names.append(file.relative_to(Path.cwd()).as_posix())
-        except ValueError:
-            names.append(file.as_posix())
-    return f"{where or 'top level'} in {', '.join(names)}"
-
-
-def absolute(node: Any) -> Any:
-    """Return a table with its strings untagged, those naming files made absolute."""
-    if isinstance(node, dict):
-        return {key: absolute(item) for key, item in node.items()}
-    if isinstance(node, list):
-        return [absolute(item) for item in node]
-    if isinstance(node, SourceStr) and node and (node.base / node).is_file():
-        return (node.base / node).resolve().as_posix()
-    if isinstance(node, str):
-        return str(node)
-    return node
+    names = ", ".join(display_path(file) for file in files)
+    return f"{where or 'top level'} in {names}"
 
 
 def load_toml(path: str | Path, chain: Sequence[Path] = ()) -> dict[str, Any]:
@@ -65,25 +65,31 @@ def load_toml(path: str | Path, chain: Sequence[Path] = ()) -> dict[str, Any]:
 
     Args:
         path (str | Path): TOML file to read.
-        chain (Sequence[Path], optional): Files already being read, to catch
-            files that include themselves. Defaults to none.
+        chain (Sequence[Path], optional): Files already being read, the last
+            being the one that names this file. Defaults to none.
 
     Returns:
         dict[str, Any]: The file's table, its strings remembering the
             directory of the file each came from.
 
     Raises:
-        ConfigError: If a file is not valid TOML or includes itself.
+        ConfigError: If a file cannot be read, is not valid TOML or includes
+            itself.
     """
     path = Path(path).resolve()
     if path in chain:
-        raise ConfigError(f"{path} includes itself")
-    chain = (*chain, path)
-    with path.open("rb") as file:
-        try:
+        raise ConfigError(f"{display_path(path)} includes itself")
+    try:
+        with path.open("rb") as file:
             raw = tomllib.load(file)
-        except tomllib.TOMLDecodeError as error:
-            raise ConfigError(f"{path}: {error}") from error
+    except OSError as error:
+        named_by = f"{display_path(chain[-1])}: " if chain else ""
+        raise ConfigError(
+            f"{named_by}cannot read {display_path(path)}: {error.strerror}"
+        ) from error
+    except tomllib.TOMLDecodeError as error:
+        raise ConfigError(f"{display_path(path)}: {error}") from error
+    chain = (*chain, path)
     table: dict[str, Any] = _expand(_located(raw, path), chain)
     extends = table.pop("extends", None)
     if extends is not None:
@@ -148,12 +154,12 @@ def source_path(value: Any, where: str) -> Path:
     return Path(value)
 
 
-def plain(value: Any) -> Any:
-    """Return a value with its strings untagged."""
+def untagged(value: Any) -> Any:
+    """Return a value with its strings no longer remembering their files."""
     if isinstance(value, dict):
-        return {key: plain(item) for key, item in value.items()}
+        return {key: untagged(item) for key, item in value.items()}
     if isinstance(value, list):
-        return [plain(item) for item in value]
+        return [untagged(item) for item in value]
     if isinstance(value, str):
         return str(value)
     return value

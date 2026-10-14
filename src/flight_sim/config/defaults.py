@@ -9,30 +9,7 @@ from typing import Any
 import numpy as np
 from pint import PintError, Quantity
 
-
-def key_path(where: str, key: str) -> str:
-    """Return the key path of a key in the table at ``where``."""
-    return f"{where}.{key}" if where else key
-
-
-def with_defaults(
-    node: Any, where: str, by_table: Mapping[str, Mapping[str, Any]]
-) -> Any:
-    """Return a table with the defaults of each table at its key path added."""
-    if isinstance(node, list):
-        return [
-            with_defaults(item, f"{where}[{index}]", by_table)
-            for index, item in enumerate(node)
-        ]
-    if not isinstance(node, dict):
-        return node
-    table = {
-        key: with_defaults(item, key_path(where, key), by_table)
-        for key, item in node.items()
-    }
-    for name, value in by_table.get(where, {}).items():
-        table.setdefault(name, value)
-    return table
+from flight_sim.config.toml_files import key_path
 
 
 def record_defaults(
@@ -97,10 +74,12 @@ def _input_form(value: Any) -> Any:
         return _dataclass_form(value)
     if isinstance(value, type) or inspect.isfunction(value):
         return {"ref": f"{value.__module__}.{value.__qualname__}"}
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
     if isinstance(value, list | tuple):
         return [_input_form(item) for item in value]
-    if isinstance(value, Path | np.ndarray):
-        return value.as_posix() if isinstance(value, Path) else value.tolist()
+    if isinstance(value, Path):
+        return value.as_posix()
     return value
 
 

@@ -58,7 +58,7 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock, tmp_path: Path) -
 
 def test_main_rejects_missing_sim_file() -> None:
     """Verify main reports a sim input file that does not exist."""
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(SystemExit, match=r"cannot read .*missing\.toml"):
         main(["configs/sims/missing.toml"])
 
 

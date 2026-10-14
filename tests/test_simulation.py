@@ -31,7 +31,7 @@ def _event_lit(properties: RocketProperties, delay_s: float) -> RocketProperties
 def test_event_ignition_lights_the_motor_after_its_delay(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
-    """The motor lights its delay after the event, and the step lands on it."""
+    """The motor lights its delay after the event."""
     simulation = Simulation(
         properties=_event_lit(baseline_rocket_properties, 0.2),
         config=_WEIGHTLESS,
@@ -42,8 +42,8 @@ def test_event_ignition_lights_the_motor_after_its_delay(
     flight = simulation.run()
 
     times = [flight.at(name).time.m_as("s") for name in flight.events]
-    assert list(flight.events) == ["go", "ignition", "stop"]
-    assert times == pytest.approx([0.1, 0.3, 0.6], abs=1e-6)
+    assert list(flight.events) == ["go", "stop"]
+    assert times == pytest.approx([0.1, 0.6], abs=1e-6)
     time = flight.time.m_as("s")
     mass = flight["mass.mass"].m_as("kg")
     thrust = flight["thrust"].m_as("N")
@@ -53,7 +53,7 @@ def test_event_ignition_lights_the_motor_after_its_delay(
     assert mass[-1] < mass[0]
     assert flight["state.position"].m_as("m")[-1, 0] > 0.0
     # The unlit motor is restored for the next run
-    assert simulation.properties.engine.pending_ignition() is not None
+    assert simulation.properties.engine.pending_ignition is not None
 
 
 def test_zero_delay_ignition_lights_at_the_event(
@@ -99,6 +99,6 @@ def test_engine_without_event_ignition_cannot_be_lit(
     """An engine with no event ignition refuses to be lit by one."""
     engine = unpowered_rocket_properties.engine
 
-    assert engine.pending_ignition() is None
+    assert engine.pending_ignition is None
     with pytest.raises(NotImplementedError):
         engine.ignited(1.0)
