@@ -1,4 +1,4 @@
-"""Build objects from TOML input files, in the format configs/README.md describes.
+"""Build objects from tables read from TOML input files.
 
 Each table builds one object, and its keys are the keyword arguments of the
 callable its ``type`` names, or of the class its field's type hint names.
@@ -7,14 +7,14 @@ callable its ``type`` names, or of the class its field's type hint names.
 import dataclasses
 import importlib
 import inspect
-import tomllib
+import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import NoneType, UnionType
 from typing import (
     Annotated,
     Any,
-    TypeVar,
+    Literal,
     Union,
     cast,
     get_args,
@@ -25,116 +25,21 @@ from typing import (
 import numpy as np
 from pint import PintError, Quantity
 
+from flight_sim.config.defaults import key_path, record_defaults
+from flight_sim.config.errors import ConfigError
+from flight_sim.config.toml_files import origin, plain, source_path, source_table
 from flight_sim.units import parse_units, scalar, ureg
-
-T = TypeVar("T")
 
 # Built values of these types are never filled into another table's arguments
 _PLAIN_TYPES = (str, int, float, bool)
 
 
-class ConfigError(ValueError):
-    """Input file that cannot be read or built."""
-
-
-class _SourceStr(str):
-    """String read from a TOML file, which remembers the file's directory."""
-
-    base: Path
-
-    def __new__(cls, text: str, base: Path) -> "_SourceStr":
-        """Tag a string with the directory of the file it came from."""
-        result = super().__new__(cls, text)
-        result.base = base  # pylint: disable=attribute-defined-outside-init
-        return result
-
-
-def load(path: str | Path, cls: type[T]) -> T:
-    """Build an object from a TOML file.
-
-    Args:
-        path (str | Path): TOML file whose top-level table builds the object.
-        cls (type[T]): Class of the object, used when the file names no
-            ``type``.
-
-    Returns:
-        T: The built object.
-
-    Raises:
-        ConfigError: If the file cannot be read or does not build a ``cls``.
-    """
-    return load_with_input(path, cls)[0]
-
-
-def load_with_input(path: str | Path, cls: type[T]) -> tuple[T, dict[str, Any]]:
-    """Build an object from a TOML file, and return the input it was built from.
-
-    Args:
-        path (str | Path): TOML file whose top-level table builds the object.
-        cls (type[T]): Class of the object, used when the file names no
-            ``type``.
-
-    Returns:
-        tuple[T, dict[str, Any]]: The built object, and the file's table with
-            its includes and base file merged in. Strings naming existing
-            files are made absolute, so the table rebuilds the object from
-            anywhere.
-
-    Raises:
-        ConfigError: If the file cannot be read or does not build a ``cls``.
-    """
-    table = load_toml(path)
-    result = build(table, cls)
-    if not isinstance(result, cls):
-        raise ConfigError(f"{path} builds a {type(result).__name__}, not a {cls}")
-    return result, _absolute(table)
-
-
-def _absolute(node: Any) -> Any:
-    """Return a table with its strings untagged, those naming files made absolute."""
-    if isinstance(node, dict):
-        return {key: _absolute(item) for key, item in node.items()}
-    if isinstance(node, list):
-        return [_absolute(item) for item in node]
-    if isinstance(node, _SourceStr) and node and (node.base / node).is_file():
-        return (node.base / node).resolve().as_posix()
-    if isinstance(node, str):
-        return str(node)
-    return node
-
-
-def load_toml(path: str | Path, chain: Sequence[Path] = ()) -> dict[str, Any]:
-    """Read a TOML file, with its includes inserted and its base file merged in.
-
-    Args:
-        path (str | Path): TOML file to read.
-        chain (Sequence[Path], optional): Files already being read, to catch
-            files that include themselves. Defaults to none.
-
-    Returns:
-        dict[str, Any]: The file's table, its strings remembering the
-            directory of the file each came from.
-
-    Raises:
-        ConfigError: If a file is not valid TOML or includes itself.
-    """
-    path = Path(path).resolve()
-    if path in chain:
-        raise ConfigError(f"{path} includes itself")
-    chain = (*chain, path)
-    with path.open("rb") as file:
-        try:
-            raw = tomllib.load(file)
-        except tomllib.TOMLDecodeError as error:
-            raise ConfigError(f"{path}: {error}") from error
-    table: dict[str, Any] = _expand(_located(raw, path.parent), chain)
-    extends = table.pop("extends", None)
-    if extends is not None:
-        table = _merge(load_toml(_path(extends, "extends"), chain), table)
-    return table
-
-
-def build(value: Any, hint: Any, where: str = "") -> Any:
+def build(
+    value: Any,
+    hint: Any,
+    where: str = "",
+    defaults: dict[str, Any] | None = None,
+) -> Any:
     """Build an object from a table read by ``load_toml``.
 
     Args:
@@ -143,6 +48,8 @@ def build(value: Any, hint: Any, where: str = "") -> Any:
             table without a ``type``.
         where (str, optional): Key path of the value, for error messages.
             Defaults to the top level.
+        defaults (dict[str, Any] | None, optional): Gets the input form of
+            each argument left to its default, by key path. Defaults to none.
 
     Returns:
         Any: The built object.
@@ -151,68 +58,7 @@ def build(value: Any, hint: Any, where: str = "") -> Any:
         ConfigError: If the value does not describe an object of the hinted
             type, or building it fails.
     """
-    return _build(value, hint, where, {})
-
-
-def _located(node: Any, base: Path) -> Any:
-    """Tag every string in a TOML table with the directory of its file."""
-    if isinstance(node, dict):
-        return {key: _located(item, base) for key, item in node.items()}
-    if isinstance(node, list):
-        return [_located(item, base) for item in node]
-    if isinstance(node, str):
-        return _SourceStr(node, base)
-    return node
-
-
-def _expand(node: Any, chain: Sequence[Path]) -> Any:
-    """Insert the file each ``include`` names under the table holding it."""
-    if isinstance(node, list):
-        return [_expand(item, chain) for item in node]
-    if not isinstance(node, dict):
-        return node
-    table = {key: _expand(item, chain) for key, item in node.items()}
-    include = table.pop("include", None)
-    if include is None:
-        return table
-    return _merge(load_toml(_path(include, "include"), chain), table)
-
-
-def _merge(base: Any, override: Any) -> Any:
-    """Return ``base`` with ``override`` on top, merging tables key by key.
-
-    A table naming a different ``type`` or ``ref`` than its base replaces it.
-    """
-    if not (isinstance(base, dict) and isinstance(override, dict)):
-        return override
-    if any(
-        key in override and override[key] != base.get(key) for key in ("type", "ref")
-    ):
-        return override
-    merged = dict(base)
-    for key, item in override.items():
-        merged[key] = _merge(base.get(key), item)
-    return merged
-
-
-def _path(value: Any, where: str) -> Path:
-    """Return a path from a file, relative to that file's directory."""
-    if not isinstance(value, str):
-        raise ConfigError(f"{where}: expected a path, got {value!r}")
-    if isinstance(value, _SourceStr):
-        return value.base / value
-    return Path(value)
-
-
-def _plain(value: Any) -> Any:
-    """Return a value with its strings untagged."""
-    if isinstance(value, dict):
-        return {key: _plain(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_plain(item) for item in value]
-    if isinstance(value, str):
-        return str(value)
-    return value
+    return _build(value, hint, where, {}, {} if defaults is None else defaults)
 
 
 def _members(hint: Any) -> list[Any]:
@@ -242,7 +88,13 @@ def _is_buildable(hint: Any) -> bool:
     )
 
 
-def _build(value: Any, hint: Any, where: str, context: Mapping[str, Any]) -> Any:
+def _build(
+    value: Any,
+    hint: Any,
+    where: str,
+    context: Mapping[str, Any],
+    defaults: dict[str, Any],
+) -> Any:
     """Build a value to fit a type hint.
 
     Args:
@@ -251,6 +103,8 @@ def _build(value: Any, hint: Any, where: str, context: Mapping[str, Any]) -> Any
         where (str): Key path of the value, for error messages.
         context (Mapping[str, Any]): Objects already built in this table and
             the tables enclosing it, by name.
+        defaults (dict[str, Any]): Gets the input form of each argument left
+            to its default, by key path.
 
     Returns:
         Any: The built value.
@@ -260,9 +114,9 @@ def _build(value: Any, hint: Any, where: str, context: Mapping[str, Any]) -> Any
     """
     members = _members(hint)
     if isinstance(value, dict):
-        return _build_table(value, members, where, context)
+        return _build_table(value, members, where, context, defaults)
     if isinstance(value, list):
-        return _build_list(value, members, where, context)
+        return _build_list(value, members, where, context, defaults)
     return _build_value(value, members, where)
 
 
@@ -275,14 +129,62 @@ def _build_value(value: Any, members: list[Any], where: str) -> Any:
     quantity = any(_is_quantity(member) for member in members)
     if isinstance(value, str):
         if Path in members:
-            return _path(value, where)
-        return _quantity(value, where) if quantity else str(value)
-    if isinstance(value, int | float) and not isinstance(value, bool):
-        if quantity and float not in members and int not in members:
-            raise ConfigError(f'{where}: {value} needs units, such as "{value} m"')
-        if float in members:
-            return float(value)
-    return value
+            return source_path(value, where)
+        if quantity:
+            return _quantity(value, where)
+    number = isinstance(value, int | float) and not isinstance(value, bool)
+    if number and quantity and float not in members and int not in members:
+        raise ConfigError(f'{where}: {value} needs units, such as "{value} m"')
+    expected = _plain_mismatch(plain(value), members)
+    if expected is not None:
+        raise ConfigError(f"{where}: expected {expected}, got {plain(value)!r}")
+    if isinstance(value, int) and not isinstance(value, bool) and float in members:
+        return float(value)
+    return plain(value)
+
+
+# How each plain type is named in error messages
+_PLAIN_NAMES = {
+    bool: "true or false",
+    int: "an integer",
+    float: "a number",
+    str: "a string",
+}
+
+
+def _plain_mismatch(value: Any, members: list[Any]) -> str | None:
+    """Return what a hint of only plain types and literals expected, if not value.
+
+    Returns None when the value fits, or when the hint allows anything else.
+    """
+    if not members or not all(
+        member in _PLAIN_NAMES or get_origin(member) is Literal for member in members
+    ):
+        return None
+    for member in members:
+        if get_origin(member) is Literal:
+            if any(
+                value == option and type(value) is type(option)
+                for option in get_args(member)
+            ):
+                return None
+        elif member is bool:
+            if isinstance(value, bool):
+                return None
+        elif isinstance(value, bool):
+            continue
+        elif (member is float and isinstance(value, int | float)) or isinstance(
+            value, member
+        ):
+            return None
+    names = []
+    for member in members:
+        if get_origin(member) is Literal:
+            options = ", ".join(repr(option) for option in get_args(member))
+            names.append(f"one of {options}")
+        else:
+            names.append(_PLAIN_NAMES[member])
+    return " or ".join(names)
 
 
 def _build_table(
@@ -290,6 +192,7 @@ def _build_table(
     members: list[Any],
     where: str,
     context: Mapping[str, Any],
+    defaults: dict[str, Any],
 ) -> Any:
     """Build the object a table describes.
 
@@ -304,8 +207,11 @@ def _build_table(
         target = _resolve(table["type"], where)
         if not callable(target):
             raise ConfigError(f"{where}: {table['type']} cannot be called")
-        arguments = {key: item for key, item in table.items() if key != "type"}
-        return _call(target, arguments, where, context)
+        arguments = source_table(
+            {key: item for key, item in table.items() if key != "type"},
+            getattr(table, "files", ()),
+        )
+        return _call(target, arguments, where, context, defaults)
     if any(_is_quantity(member) for member in members) and set(table) <= {
         "value",
         "diag",
@@ -314,30 +220,56 @@ def _build_table(
         return _array(table, where)
     classes = [member for member in members if _is_buildable(member)]
     if len(classes) == 1:
-        return _call(classes[0], table, where, context)
-    abstract = [m.__name__ for m in members if inspect.isabstract(m)]
-    reason = f"{', '.join(abstract)} is abstract, so " if abstract else ""
-    raise ConfigError(f'{where}: {reason}the table needs type = "dotted.path"')
+        return _call(classes[0], table, where, context, defaults)
+    abstract = [m for m in members if inspect.isabstract(m)]
+    if not abstract:
+        raise ConfigError(
+            f'{origin(where, table)}: the table needs type = "dotted.path"'
+        )
+    options = [
+        f'"{option.__module__}.{option.__qualname__}"'
+        for member in abstract
+        for option in _concrete_subclasses(member)
+    ]
+    names = " or ".join(member.__name__ for member in abstract)
+    message = f"{origin(where, table)}: {names} is abstract, so the table needs a type"
+    if options:
+        message += f", such as type = {' or '.join(options)}"
+    raise ConfigError(message)
+
+
+def _concrete_subclasses(cls: type) -> list[type]:
+    """Return the imported subclasses of a class that are not abstract."""
+    found = []
+    for subclass in cls.__subclasses__():
+        if not inspect.isabstract(subclass):
+            found.append(subclass)
+        found += _concrete_subclasses(subclass)
+    return list(dict.fromkeys(found))
 
 
 def _build_list(
-    items: list[Any], members: list[Any], where: str, context: Mapping[str, Any]
+    items: list[Any],
+    members: list[Any],
+    where: str,
+    context: Mapping[str, Any],
+    defaults: dict[str, Any],
 ) -> Any:
     """Build a list as an array or as a sequence of built items."""
     if np.ndarray in members:
-        return np.asarray(_plain(items), dtype=float)
+        return np.asarray(plain(items), dtype=float)
     for member in members:
-        origin = get_origin(member)
-        if origin in (list, tuple, Sequence):
+        container = get_origin(member)
+        if container in (list, tuple, Sequence):
             args = get_args(member)
             item_hint = args[0] if args else Any
             built = [
-                _build(item, item_hint, f"{where}[{index}]", context)
+                _build(item, item_hint, f"{where}[{index}]", context, defaults)
                 for index, item in enumerate(items)
             ]
-            return built if origin is list else tuple(built)
+            return built if container is list else tuple(built)
     return [
-        _build(item, Any, f"{where}[{index}]", context)
+        _build(item, Any, f"{where}[{index}]", context, defaults)
         for index, item in enumerate(items)
     ]
 
@@ -368,7 +300,7 @@ def _array(table: dict[str, Any], where: str) -> Any:
         raise ConfigError(f"{where}: an array quantity needs units")
     if ("value" in table) == ("diag" in table):
         raise ConfigError(f"{where}: an array quantity needs one of value or diag")
-    components = np.asarray(_plain(table.get("value", table.get("diag"))), float)
+    components = np.asarray(plain(table.get("value", table.get("diag"))), float)
     if "diag" in table:
         components = np.diag(components)
     try:
@@ -419,16 +351,18 @@ def _call(
     table: dict[str, Any],
     where: str,
     context: Mapping[str, Any],
+    defaults: dict[str, Any],
 ) -> Any:
     """Call a callable with a table's keys as its keyword arguments.
 
     Arguments are built in the callable's parameter order, each able to use
     the ones before it. Keys the callable does not name pass through its
     ``**kwargs``, built to fit the fields of the class it is a classmethod of
-    or returns.
+    or returns. Arguments left to their defaults go into ``defaults``.
 
     Raises:
-        ConfigError: If a key matches no parameter, or the call fails.
+        ConfigError: If a key matches no parameter, a required argument is
+            missing, or the call fails.
     """
     parameters = inspect.signature(target).parameters
     hints = _hints(target)
@@ -438,33 +372,99 @@ def _call(
         if parameter.kind
         in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
     ]
+    owner = _kwargs_owner(target, parameters, hints)
+    usage = _usage(target, parameters, named, owner)
+    where_text = origin(where, table)
     extra = [key for key in table if key not in named]
-    extra_hints: dict[str, Any] = {}
-    if extra:
-        if not any(
-            p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
-        ):
-            raise ConfigError(
-                f"{where}: unknown keys {extra}; "
-                f"{getattr(target, '__qualname__', target)} takes {named}"
-            )
-        owner = getattr(target, "__self__", None)
-        if not isinstance(owner, type):
-            owner = hints.get("return")
-        extra_hints = _hints(owner) if isinstance(owner, type) else {}
+    if extra and not any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+    ):
+        raise ConfigError(f"{where_text}: unknown keys {extra}; {usage}")
+    extra_hints = _hints(owner) if owner is not None else {}
 
     local = dict(context)
     arguments: dict[str, Any] = {}
     for name in (*named, *extra):
         if name in table:
             hint = hints.get(name, Any) if name in named else extra_hints.get(name, Any)
-            key_path = f"{where}.{name}" if where else name
-            arguments[name] = _build(table[name], hint, key_path, local)
+            child = key_path(where, name)
+            arguments[name] = _build(table[name], hint, child, local, defaults)
             if not isinstance(arguments[name], _PLAIN_TYPES):
                 local[name] = arguments[name]
         elif parameters[name].default is inspect.Parameter.empty and name in context:
             arguments[name] = context[name]
+    missing = [
+        name
+        for name in named
+        if name not in arguments and parameters[name].default is inspect.Parameter.empty
+    ]
+    if missing:
+        raise ConfigError(f"{where_text}: missing {', '.join(missing)}; {usage}")
+    result = _invoke(target, arguments, where_text, usage)
+    record_defaults(
+        target,
+        parameters,
+        owner=owner,
+        table=table,
+        result=result,
+        where=where,
+        defaults=defaults,
+    )
+    return result
+
+
+def _kwargs_owner(
+    target: Any, parameters: Mapping[str, inspect.Parameter], hints: Mapping[str, Any]
+) -> type | None:
+    """Return the class whose fields a callable's ``**kwargs`` take, if any.
+
+    That is the class a classmethod belongs to, or else the class it returns.
+    """
+    if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return None
+    owner = getattr(target, "__self__", None)
+    if not isinstance(owner, type):
+        owner = hints.get("return")
+    return owner if isinstance(owner, type) else None
+
+
+def _invoke(
+    target: Callable[..., Any], arguments: dict[str, Any], where: str, usage: str
+) -> Any:
+    """Call a callable, turning its errors into ``ConfigError``.
+
+    Raises:
+        ConfigError: If the call fails, naming any arguments it was missing.
+    """
     try:
         return target(**arguments)
-    except (TypeError, ValueError, OSError) as error:
-        raise ConfigError(f"{where or 'top level'}: {error}") from error
+    except TypeError as error:
+        # Raised by the class a function builds, for a field only the table gives
+        match = _MISSING_ARGUMENTS.search(str(error))
+        if match is None:
+            raise ConfigError(f"{where}: {error}") from error
+        names = ", ".join(re.findall(r"'(\w+)'", match.group(1)))
+        raise ConfigError(f"{where}: missing {names}; {usage}") from error
+    except (ValueError, OSError) as error:
+        raise ConfigError(f"{where}: {error}") from error
+
+
+_MISSING_ARGUMENTS = re.compile(
+    r"missing \d+ required (?:positional|keyword-only) arguments?: (.*)"
+)
+
+
+def _usage(
+    target: Any,
+    parameters: Mapping[str, inspect.Parameter],
+    named: Sequence[str],
+    owner: type | None,
+) -> str:
+    """Describe the keys a callable needs and takes, for error messages."""
+    required = [n for n in named if parameters[n].default is inspect.Parameter.empty]
+    optional = [n for n in named if n not in required]
+    if owner is not None:
+        optional.append(f"other {owner.__name__} fields")
+    text = f"{getattr(target, '__qualname__', target)} needs "
+    text += ", ".join(required) if required else "nothing"
+    return text + (f" and takes {', '.join(optional)}" if optional else "")

@@ -5,13 +5,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from flight_sim.config import ConfigError, build, load, load_toml
+from flight_sim.config import ConfigError, build, load, load_toml, load_with_input
 from flight_sim.environment.gravity import ConstantGravity
+from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind
 from flight_sim.events import APOGEE, IMPACT
 from flight_sim.flight_event import EventTime
 from flight_sim.integration import TruthConfiguration
 from flight_sim.simulation import Simulation
+from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.vehicle.engine import SolidEngine
 from flight_sim.vehicle.mass_properties import MassProperties
 from flight_sim.vehicle.rocket_properties import RocketProperties
@@ -151,8 +153,22 @@ def test_abstract_field_needs_a_type(tmp_path: Path) -> None:
     """A table filling an abstract field without a type is rejected."""
     path = _write(tmp_path, "truth.toml", "[wind]\nspeed = '5 m/s'")
 
-    with pytest.raises(ConfigError, match="wind: WindModel is abstract"):
+    with pytest.raises(ConfigError, match=r"wind in .*truth\.toml: WindModel is ab"):
         load(path, TruthConfiguration)
+
+
+def test_abstract_field_error_names_the_file_and_the_options(tmp_path: Path) -> None:
+    """An included table's error names its own file and the classes to pick from."""
+    _write(tmp_path, "site.toml", "[gravity]\n")
+    path = _write(tmp_path, "truth.toml", 'include = "site.toml"\n')
+
+    with pytest.raises(ConfigError) as error:
+        load(path, TruthConfiguration)
+
+    message = str(error.value)
+    assert "gravity in " in message and "site.toml: GravityModel" in message
+    assert "truth.toml" not in message
+    assert '"flight_sim.environment.gravity.WGS84Gravity"' in message
 
 
 def test_unknown_key_is_rejected(tmp_path: Path) -> None:
@@ -243,3 +259,84 @@ def test_unreadable_quantity_is_rejected() -> None:
     """A string that is not a quantity is rejected."""
     with pytest.raises(ConfigError, match="cannot read 'fast' as a quantity"):
         build({"speed": "fast"}, UniformWind)
+
+
+def test_missing_arguments_are_named_for_the_callable_used() -> None:
+    """A missing argument is reported with what that callable needs."""
+    with pytest.raises(ConfigError) as from_rse:
+        build(
+            {
+                "type": "flight_sim.vehicle.engine.SolidEngine.from_rse",
+                "motor_file_path": "tests/test_data/Loki_M3464LB.rse",
+            },
+            SolidEngine,
+            "engine",
+        )
+    with pytest.raises(ConfigError) as from_csv:
+        build(
+            {
+                "type": "flight_sim.vehicle.engine.solid_engine_from_csv",
+                "motor_file_path": "tests/test_data/standard_motor.csv",
+            },
+            SolidEngine,
+            "engine",
+        )
+
+    assert str(from_rse.value) == (
+        "engine: missing forward_end_location; SolidEngine.from_rse needs "
+        "motor_file_path, forward_end_location and takes other SolidEngine fields"
+    )
+    assert "grain" not in str(from_rse.value)
+    assert str(from_csv.value).startswith("engine: missing grain, casing;")
+
+
+@pytest.mark.parametrize(
+    ("friction", "expected"),
+    [('"abc"', "a number, got 'abc'"), ("true", "a number, got True")],
+)
+def test_plain_fields_check_their_type(
+    tmp_path: Path, friction: str, expected: str
+) -> None:
+    """A float field takes only numbers."""
+    path = _write(
+        tmp_path,
+        "rail.toml",
+        f"""
+        length = "10 ft"
+        elevation = "85 deg"
+        azimuth = "0 deg"
+        friction_coefficient = {friction}
+        """,
+    )
+
+    with pytest.raises(ConfigError, match=f"friction_coefficient: expected {expected}"):
+        load(path, LaunchRail)
+
+
+def test_literal_fields_name_their_options() -> None:
+    """A literal field lists the values it takes."""
+    with pytest.raises(ConfigError, match="frame: expected one of 'body', 'missile'"):
+        build(
+            {
+                "type": "flight_sim.utilities.data_loader.aero_table_from_csv",
+                "filepath": "tests/test_data/standard_aero.csv",
+                "reference_area": "1 m**2",
+                "reference_length": "1 m",
+                "reference_point": {"value": [0, 0, 0], "units": "m"},
+                "frame": "wind",
+            },
+            AeroTable,
+            "aero",
+        )
+
+
+def test_defaults_are_recorded_in_the_resolved_input() -> None:
+    """Arguments left to their defaults are filled into the resolved input."""
+    _, table, defaults = load_with_input(
+        _SIMS / "sol_invictus_nominal.toml", Simulation
+    )
+
+    assert "properties.engine.ignition_time" in defaults
+    assert table["properties"]["engine"]["ignition_time"] == "0.0 s"
+    assert table["initial_state"]["orientation"]["type"].endswith("Quaternion")
+    assert "properties.engine.grain" not in defaults
