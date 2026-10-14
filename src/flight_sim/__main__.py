@@ -10,10 +10,14 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from flight_sim import output
 from flight_sim.config import ConfigError
 from flight_sim.simulation import Flight, Simulation
 
-DEFAULT_SIM = "configs/sims/sol_invictus_nominal.toml"
+# The nominal sim of the repository this package sits in
+DEFAULT_SIM = (
+    Path(__file__).resolve().parents[2] / "configs/sims/sol_invictus_nominal.toml"
+)
 
 # Functions listed by --profile
 PROFILE_LINES = 20
@@ -28,7 +32,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     """
     parser = argparse.ArgumentParser(description="Fly a sim input file.")
     parser.add_argument(
-        "sim", nargs="?", default=DEFAULT_SIM, help=f"Defaults to {DEFAULT_SIM}"
+        "sim",
+        nargs="?",
+        default=DEFAULT_SIM,
+        help="Defaults to configs/sims/sol_invictus_nominal.toml",
     )
     parser.add_argument(
         "--output-dir",
@@ -58,6 +65,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     if profiler is not None:
         profiler.disable()
 
+    times = flight.time.m_as("s")
+    for name, row in flight.events.items():
+        print(f"{name} at {times[row]:.2f} seconds")
     for key, value in flight.summary().items():
         print(f"{key}: {value:.4g}")
 
@@ -65,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     figures = flight.figures()
     plots_s = clock.perf_counter() - start
     start = clock.perf_counter()
-    directory = flight.write(figures)
+    directory = output.write(flight, figures)
     write_s = clock.perf_counter() - start
     print_diagnostics(flight, plots_s, write_s)
     if directory is not None:

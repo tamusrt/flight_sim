@@ -7,6 +7,8 @@ from typing import Any, cast
 
 import tomli_w
 
+from flight_sim.config.toml_files import item_path, key_path
+
 
 def write_toml(
     path: Path, table: Mapping[str, Any], comments: Mapping[str, str] | None = None
@@ -39,7 +41,7 @@ def _toml_table(
     lines: list[str] = []
     sections: list[tuple[str, Any, str]] = []
     for key, value in table.items():
-        key_where = f"{where}.{key}" if where else key
+        key_where = key_path(where, key)
         if _is_section(value):
             sections.append((key, value, key_where))
             continue
@@ -61,7 +63,7 @@ def _toml_table(
             lines += _toml_table(value, keys, key_where, comments)
             continue
         for index, item in enumerate(value):
-            item_where = f"{key_where}[{index}]"
+            item_where = item_path(key_where, index)
             lines += ["", _commented(f"[[{name}]]", comments.get(item_where))]
             lines += _toml_table(item, keys, item_where, comments)
     return lines

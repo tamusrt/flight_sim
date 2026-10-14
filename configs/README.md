@@ -30,13 +30,13 @@ A sim's `[output]` table builds a `flight_sim.output.OutputConfiguration`. Witho
 ```toml
 [output]
 directory = "../../out/{name}"   # {name} = sim name as a file name
-formats = ["csv"]                # and/or "parquet" (needs: uv add pyarrow)
+formats = ["csv"]                # and/or "parquet"
 channels = ["*"]                 # globs over channel names, e.g. "aero.*", "state.position"
 sample_interval = "0.01 s"       # omit for one row per integrator step
 plots = ["trajectory", "attitude", "aero", "propulsion", "step_length"]
 ```
 
-The directory gets `telemetry.csv`, `run.toml` (summary, event times, git commit),
+The directory gets `telemetry.csv` (or `.parquet`), `run.toml` (summary, event times, git commit),
 `resolved_input.toml` (the merged input with absolute paths and every default filled in, which reruns as-is) and a
 PNG per plot. `uv run flight_sim <sim> --output-dir <dir> --no-show` overrides the
 directory and skips the plot windows.
@@ -48,7 +48,8 @@ and saves `profile.prof` (open it with `uvx snakeviz profile.prof`).
 
 From a script, `Simulation.from_file(path).run()` returns a `Flight`:
 `flight["aero.force"]` is a quantity array, `flight.at("apogee")` a typed
-`FlightPoint`, and `flight.to_dataframe(["aero.*"])` a table.
+`FlightPoint`, `flight.to_dataframe(["aero.*"])` a table, and
+`flight_sim.output.write(flight)` writes it as its `[output]` table says.
 
 A channel is named by its attribute path in `FlightPoint`, so `flight["aero.force"]`
 and `flight.at("apogee").aero.force` are the same quantity. Values that are no field

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from flight_sim.config import ConfigError, build, load, load_toml, load_with_input
+from flight_sim.config import ConfigError, build, load, load_toml, load_with_source
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind
@@ -73,7 +73,7 @@ def test_changed_type_replaces_base_table_and_passes_kwargs() -> None:
     assert engine.grain.mass.m_as("kg") == pytest.approx(4.464)
     assert engine.grain.cg_location.m_as("m") == pytest.approx([-2.5991, 0.0, 0.0])
     assert engine.reference_pressure.m_as("Pa") == pytest.approx(101325.0)
-    assert engine.pending_ignition() is None
+    assert engine.pending_ignition is None
 
 
 def test_event_ignition_builds_from_a_table(tmp_path: Path) -> None:
@@ -91,7 +91,7 @@ def test_event_ignition_builds_from_a_table(tmp_path: Path) -> None:
         """,
     )
     engine = load(path, SolidEngine)
-    ignition = engine.pending_ignition()
+    ignition = engine.pending_ignition
 
     assert isinstance(ignition, EventTime)
     assert ignition.event == "apogee"
@@ -210,6 +210,16 @@ def test_include_cycle_is_rejected(tmp_path: Path) -> None:
         load_toml(path)
 
 
+def test_missing_files_name_the_file_that_names_them(tmp_path: Path) -> None:
+    """A missing file, or a missing include, is reported against its includer."""
+    path = _write(tmp_path, "top.toml", 'engine = { include = "nope.toml" }')
+
+    with pytest.raises(ConfigError, match=r"cannot read .*missing\.toml"):
+        load_toml(tmp_path / "missing.toml")
+    with pytest.raises(ConfigError, match=r"top\.toml: cannot read .*nope\.toml"):
+        load_toml(path)
+
+
 def test_invalid_toml_names_the_file(tmp_path: Path) -> None:
     """A file that is not TOML is reported with its path."""
     path = _write(tmp_path, "broken.toml", "speed = ")
@@ -242,6 +252,7 @@ def test_array_quantities() -> None:
         MassProperties,
     )
 
+    cg_hint = MassProperties.__annotations__["cg_location"]
     assert np.allclose(inertia.cg_location.m_as("m"), [0.01, 0.02, 0.03])
     assert np.allclose(inertia.inertia.m_as("kg*m**2"), np.diag([1, 2, 3]))
     with pytest.raises(ConfigError, match="needs units"):
@@ -250,9 +261,15 @@ def test_array_quantities() -> None:
         build({"units": "m"}, MassProperties.__annotations__["cg_location"])
     with pytest.raises(ConfigError, match="cannot read units"):
         build(
-            {"value": [1], "units": "furlongs per"},
+            {"value": [1, 2, 3], "units": "furlongs per"},
             MassProperties.__annotations__["cg_location"],
         )
+    with pytest.raises(ConfigError, match=r"cg\.value: expected numbers"):
+        build({"value": ["a", 0, 0], "units": "m"}, cg_hint, "cg")
+    with pytest.raises(ConfigError, match="cg: value needs 3 numbers"):
+        build({"value": [0, 0], "units": "m"}, cg_hint, "cg")
+    with pytest.raises(ConfigError, match="cg: diag needs 3 numbers"):
+        build({"diag": [[1, 0], [0, 1]], "units": "m"}, cg_hint, "cg")
 
 
 def test_unreadable_quantity_is_rejected() -> None:
@@ -332,11 +349,14 @@ def test_literal_fields_name_their_options() -> None:
 
 def test_defaults_are_recorded_in_the_resolved_input() -> None:
     """Arguments left to their defaults are filled into the resolved input."""
-    _, table, defaults = load_with_input(
-        _SIMS / "sol_invictus_nominal.toml", Simulation
-    )
+    _, source = load_with_source(_SIMS / "sol_invictus_nominal.toml", Simulation)
+    table = source.table
 
-    assert "properties.engine.ignition_time" in defaults
+    assert "properties.engine.ignition_time" in source.defaults
     assert table["properties"]["engine"]["ignition_time"] == "0.0 s"
     assert table["initial_state"]["orientation"]["type"].endswith("Quaternion")
-    assert "properties.engine.grain" not in defaults
+    assert "properties.engine.grain" not in source.defaults
+    assert source.path == (_SIMS / "sol_invictus_nominal.toml").resolve()
+    # Only arguments built as paths are made absolute
+    assert Path(table["properties"]["engine"]["motor_file_path"]).is_absolute()
+    assert table["name"] == "Sol Invictus - nominal"

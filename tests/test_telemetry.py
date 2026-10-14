@@ -9,6 +9,7 @@ import pytest
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.events import at_time
+from flight_sim.flight_point import FlightPointSI
 from flight_sim.integration import (
     IntegrationConfiguration,
     TruthConfiguration,
@@ -21,7 +22,6 @@ from flight_sim.telemetry import (
     FlightPoint,
     channel_names,
     interpolate,
-    slerp,
     table,
 )
 from flight_sim.units import scalar, vector
@@ -214,18 +214,29 @@ def test_unknown_channel_pattern_is_rejected() -> None:
         channel_names(["drag"])
 
 
-def test_slerp_follows_the_short_arc() -> None:
-    """Halfway between identity and a quarter turn is an eighth turn."""
-    identity = np.array([1.0, 0.0, 0.0, 0.0])
-    quarter = np.array([math.cos(math.pi / 4), 0.0, 0.0, math.sin(math.pi / 4)])
-    eighth = np.array([math.cos(math.pi / 8), 0.0, 0.0, math.sin(math.pi / 8)])
+def _pointing(point: FlightPointSI, nose: tuple[float, float, float]) -> FlightPointSI:
+    """Return a point turned so its nose points along a world direction."""
+    direction = np.array(nose) / np.linalg.norm(nose)
+    axis = np.cross([1.0, 0.0, 0.0], direction)
+    angle = math.asin(float(np.linalg.norm(axis)))
+    axis *= math.sin(angle / 2) / np.linalg.norm(axis)
+    orientation = Quaternion(math.cos(angle / 2), *axis.tolist())
+    return point._replace(state=point.state._replace(orientation=orientation))
 
-    assert np.allclose(slerp(identity, quarter, 0.5), eighth)
-    # The same rotation written with the opposite sign
-    assert np.allclose(slerp(identity, -quarter, 0.5), eighth)
-    # Nearly equal quaternions still give a unit quaternion
-    nearby = np.array([1.0, 0.0, 0.0, 1e-4]) / math.sqrt(1.0 + 1e-8)
-    assert np.linalg.norm(slerp(identity, nearby, 0.3)) == pytest.approx(1.0)
+
+def test_sampled_nose_azimuth_turns_through_north(flight: Flight) -> None:
+    """Between headings either side of north, the azimuth stays near north."""
+    points = [
+        _pointing(flight.points[0], (1.0, -0.01, 0.1)),
+        _pointing(flight.points[1], (1.0, 0.01, 0.1)),
+    ]
+    gap = points[1].time - points[0].time
+
+    frame = table(points, {}, ["derived.nose_azimuth"], interval_s=gap / 2)
+    azimuth = frame["derived.nose_azimuth [deg]"].to_numpy()
+
+    assert azimuth[0] > 350.0 and azimuth[-1] < 10.0
+    assert min(azimuth[1], 360.0 - azimuth[1]) < 1e-6
 
 
 def test_interpolate_takes_the_nearer_rail_start(flight: Flight) -> None:

@@ -177,7 +177,7 @@ def test_optional_field_accepts_none_and_checks_quantities() -> None:
 class _UnionField(UnitChecked):
     """A field holding either a quantity or an event time."""
 
-    ignition: Annotated[Scalar, "s"] | EventTime
+    ignition: Annotated[Scalar | EventTime, "s"]
 
 
 def test_union_field_checks_only_quantities() -> None:

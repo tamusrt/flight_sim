@@ -31,7 +31,13 @@ from flight_sim.flight_point import (
 )
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
 from flight_sim.utilities.dcm import aero_angles, body_to_world
-from flight_sim.utilities.quaternion import Quaternion, cross, quaternion_rates
+from flight_sim.utilities.quaternion import (
+    Quaternion,
+    cross,
+    quaternion_kinematics,
+    quaternion_rates,
+)
+from flight_sim.vehicle.mass_properties import MassPropertiesSI
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
@@ -205,13 +211,12 @@ def _step_inputs(
 
 def _pack(state: RocketState) -> np.ndarray:
     """Return the integrated fields of a state as an SI array."""
-    orientation = state.orientation
     return np.concatenate(
         (
             state.position.m_as("m"),
             state.velocity.m_as("m/s"),
             state.angular_velocity.m_as("rad/s"),
-            (orientation.q_w, orientation.q_x, orientation.q_y, orientation.q_z),
+            state.orientation.components(),
         )
     )
 
@@ -333,7 +338,22 @@ def _rail_acceleration(
     return along * direction
 
 
-def _evaluate(time: float, values: np.ndarray, inputs: _StepInputs) -> FlightPointSI:
+class _Loads(NamedTuple):
+    """The accelerations at one state and every load behind them, in SI units."""
+
+    altitude: float
+    conditions: AtmosphereConditions
+    wind: np.ndarray
+    gravity: float
+    to_world: np.ndarray
+    aero: AeroPointSI
+    thrust: float
+    mass: MassPropertiesSI
+    acceleration: np.ndarray
+    angular_acceleration: np.ndarray
+
+
+def _loads(time: float, values: np.ndarray, inputs: _StepInputs) -> _Loads:
     """Evaluate the equations of motion at one state.
 
     Args:
@@ -342,16 +362,12 @@ def _evaluate(time: float, values: np.ndarray, inputs: _StepInputs) -> FlightPoi
         inputs (_StepInputs): Constants of the step.
 
     Returns:
-        FlightPointSI: The state, its rates and every load behind them.
+        _Loads: The accelerations and every load behind them.
     """
     altitude = inputs.elevation_m + float(values[_POSITION][0])
     velocity = values[_VELOCITY]
     angular_velocity = values[_ANGULAR_VELOCITY]
-    orientation: tuple[float, float, float, float] = tuple(
-        values[_ORIENTATION].tolist()
-    )
-    quaternion = Quaternion(*orientation)
-    to_world = body_to_world(quaternion)
+    to_world = body_to_world(Quaternion(*values[_ORIENTATION].tolist()))
     mass_properties = inputs.properties.mass_properties(time)
     conditions = inputs.atmosphere.conditions(altitude)
     wind = inputs.wind.velocity(altitude)
@@ -384,33 +400,17 @@ def _evaluate(time: float, values: np.ndarray, inputs: _StepInputs) -> FlightPoi
         )
         angular_acceleration = np.zeros(3)
 
-    # Everything but gravity, including the rail's push
-    specific_force = acceleration.copy()
-    specific_force[0] += gravity
-    return FlightPointSI(
-        time=time,
-        state=RocketStateSI(
-            position=values[_POSITION].copy(),
-            velocity=velocity.copy(),
-            angular_velocity=angular_velocity.copy(),
-            orientation=quaternion,
-            rail_start=inputs.rail[1] if inputs.rail is not None else None,
-        ),
-        derivative=StateDerivativeSI(
-            velocity=velocity.copy(),
-            acceleration=acceleration,
-            angular_acceleration=angular_acceleration,
-            orientation_derivative=Quaternion(
-                *quaternion_rates(*orientation, angular_velocity).tolist()
-            ),
-        ),
-        environment=EnvironmentPointSI(
-            altitude=altitude, atmosphere=conditions, wind=wind, gravity=gravity
-        ),
+    return _Loads(
+        altitude=altitude,
+        conditions=conditions,
+        wind=wind,
+        gravity=gravity,
+        to_world=to_world,
         aero=aero,
         thrust=thrust,
         mass=mass_properties,
-        specific_force=to_world.T @ specific_force,
+        acceleration=acceleration,
+        angular_acceleration=angular_acceleration,
     )
 
 
@@ -425,13 +425,15 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     Returns:
         np.ndarray: Rate of change of each element of ``values``.
     """
-    derivative = _evaluate(time, values, inputs).derivative
-    q_dot = derivative.orientation_derivative
+    loads = _loads(time, values, inputs)
+    q_w, q_x, q_y, q_z = values[_ORIENTATION].tolist()
     rates = np.empty(_STATE_SIZE)
-    rates[_POSITION] = derivative.velocity
-    rates[_VELOCITY] = derivative.acceleration
-    rates[_ANGULAR_VELOCITY] = derivative.angular_acceleration
-    rates[_ORIENTATION] = (q_dot.q_w, q_dot.q_x, q_dot.q_y, q_dot.q_z)
+    rates[_POSITION] = values[_VELOCITY]
+    rates[_VELOCITY] = loads.acceleration
+    rates[_ANGULAR_VELOCITY] = loads.angular_acceleration
+    rates[_ORIENTATION] = quaternion_rates(
+        q_w, q_x, q_y, q_z, values[_ANGULAR_VELOCITY]
+    )
     return rates
 
 
@@ -452,7 +454,40 @@ def flight_point_si(
     Returns:
         FlightPointSI: The state, its rates and every load behind them.
     """
-    return _evaluate(time, _pack(state), _step_inputs(state, properties, config))
+    values = _pack(state)
+    inputs = _step_inputs(state, properties, config)
+    loads = _loads(time, values, inputs)
+    # Everything but gravity, including the rail's push
+    specific_force = loads.acceleration.copy()
+    specific_force[0] += loads.gravity
+    return FlightPointSI(
+        time=time,
+        state=RocketStateSI(
+            position=values[_POSITION],
+            velocity=values[_VELOCITY],
+            angular_velocity=values[_ANGULAR_VELOCITY],
+            orientation=state.orientation,
+            rail_start=inputs.rail[1] if inputs.rail is not None else None,
+        ),
+        derivative=StateDerivativeSI(
+            velocity=values[_VELOCITY],
+            acceleration=loads.acceleration,
+            angular_acceleration=loads.angular_acceleration,
+            orientation_derivative=quaternion_kinematics(
+                state.orientation, state.angular_velocity
+            ),
+        ),
+        environment=EnvironmentPointSI(
+            altitude=loads.altitude,
+            atmosphere=loads.conditions,
+            wind=loads.wind,
+            gravity=loads.gravity,
+        ),
+        aero=loads.aero,
+        thrust=loads.thrust,
+        mass=loads.mass,
+        specific_force=loads.to_world.T @ specific_force,
+    )
 
 
 def derivative_computation(

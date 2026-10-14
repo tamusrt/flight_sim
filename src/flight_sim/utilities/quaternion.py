@@ -23,6 +23,10 @@ class Quaternion:
     q_y: float = 0.0
     q_z: float = 0.0
 
+    def components(self) -> np.ndarray:
+        """Return (q_w, q_x, q_y, q_z) as an array."""
+        return np.array([self.q_w, self.q_x, self.q_y, self.q_z])
+
     def normalized(self) -> "Quaternion":
         """Rescale to unit length so the quaternion stays a valid rotation.
 
@@ -103,3 +107,28 @@ def quaternion_kinematics(
         angular_velocity.m_as("rad/s"),
     ).tolist()
     return Quaternion(q_w=q_dot[0], q_x=q_dot[1], q_y=q_dot[2], q_z=q_dot[3])
+
+
+def slerp(start: Quaternion, end: Quaternion, fraction: float) -> Quaternion:
+    """Interpolate between two unit quaternions along the shorter arc.
+
+    Args:
+        start (Quaternion): Orientation at ``fraction`` 0.
+        end (Quaternion): Orientation at ``fraction`` 1.
+        fraction (float): Position between them, from 0 to 1.
+
+    Returns:
+        Quaternion: Unit quaternion between the two.
+    """
+    first, second = start.components(), end.components()
+    dot = float(first @ second)
+    if dot < 0.0:
+        second, dot = -second, -dot
+    if dot > 0.9995:
+        # Nearly parallel: a normalized straight line is accurate and stable
+        return Quaternion(*(first + fraction * (second - first)).tolist()).normalized()
+    angle = math.acos(dot)
+    blend = (
+        math.sin((1.0 - fraction) * angle) * first + math.sin(fraction * angle) * second
+    ) / math.sin(angle)
+    return Quaternion(*blend.tolist())
