@@ -1,5 +1,6 @@
 """One flight from launch to its stop event, as a sim input file describes it."""
 
+import time as clock
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,6 +19,7 @@ from flight_sim.flight_event import FlightEvent
 from flight_sim.flight_point import FlightPointSI
 from flight_sim.integration import (
     IntegrationConfiguration,
+    IntegrationStats,
     adaptive_step,
     flight_point_si,
 )
@@ -62,6 +64,11 @@ class Simulation(UnitChecked):
         default=frozenset(), init=False, repr=False, compare=False
     )
 
+    # Wall time from_file took to read and build the input, in seconds
+    load_time_s: float | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
         """Build a simulation from a sim input file, keeping the resolved input.
@@ -69,7 +76,9 @@ class Simulation(UnitChecked):
         Raises:
             ConfigError: If the file cannot be read or built.
         """
+        start = clock.perf_counter()
         simulation, table, defaults = load_with_input(path, cls)
+        simulation.load_time_s = clock.perf_counter() - start
         simulation.source_file = Path(path).resolve()
         simulation.resolved_input = table
         simulation.input_defaults = defaults
@@ -102,8 +111,11 @@ class Simulation(UnitChecked):
         The engine is restored afterwards, so the flight can be run again.
 
         Returns:
-            Flight: A flight point at launch and after every step.
+            Flight: A flight point at launch and after every step, with the
+                integrator's work and the wall time the run took.
         """
+        start = clock.perf_counter()
+        stats = IntegrationStats()
         rail = self.config.truth.launch_rail
         state = (
             rail.mount(self.initial_state) if rail is not None else self.initial_state
@@ -135,13 +147,19 @@ class Simulation(UnitChecked):
                         ignition = None
 
                 state, dt_taken, dt, hit = adaptive_step(
-                    time, state, self.properties, self.config, dt, events=events
+                    time,
+                    state,
+                    self.properties,
+                    self.config,
+                    dt,
+                    events=events,
+                    stats=stats,
                 )
                 time += float(dt_taken.m_as("s"))
         finally:
             self.properties.engine = engine
 
-        return Flight(self, points, event_rows)
+        return Flight(self, points, event_rows, stats, clock.perf_counter() - start)
 
 
 @dataclass(frozen=True)
@@ -158,6 +176,11 @@ class Flight:
 
     # Row of the first time each event fired, in firing order
     events: Mapping[str, int]
+
+    stats: IntegrationStats = field(default_factory=IntegrationStats)
+
+    # Wall time the run took, in seconds
+    run_time_s: float = 0.0
 
     _columns: dict[str, Any] = field(
         default_factory=dict, init=False, repr=False, compare=False
@@ -254,7 +277,7 @@ class Flight:
             for name, row in self.events.items()
         }
         points = [self._point_at(float(time)) for time in grid]
-        return Flight(self.simulation, points, events)
+        return Flight(self.simulation, points, events, self.stats, self.run_time_s)
 
     def to_dataframe(self, channels: Sequence[str] = ("*",)) -> pd.DataFrame:
         """Lay channels out as one column per component, plus an "event" column.
@@ -280,6 +303,28 @@ class Flight:
             ),
         }
 
+    def diagnostics(self) -> dict[str, Any]:
+        """Return the integrator's work and the wall time the run took."""
+        times = self.time.m_as("s")
+        steps = np.diff(times)
+        result: dict[str, Any] = {
+            "steps": len(steps),
+            "rejected_steps": self.stats.rejected_steps,
+            "rkf45_evaluations": self.stats.rkf45_evaluations,
+            "event_iterations": self.stats.event_iterations,
+            "min_step_s": float(steps.min()) if len(steps) else 0.0,
+            "max_step_s": float(steps.max()) if len(steps) else 0.0,
+            "run_time_s": self.run_time_s,
+            "real_time_factor": (
+                float(times[-1] - times[0]) / self.run_time_s
+                if self.run_time_s > 0.0
+                else 0.0
+            ),
+        }
+        if self.simulation.load_time_s is not None:
+            result["load_time_s"] = self.simulation.load_time_s
+        return result
+
     def figures(self, names: Sequence[str] | None = None) -> dict[str, Figure]:
         """Draw named figures of the flight.
 
@@ -301,9 +346,9 @@ class Flight:
     def write(self, figures: Mapping[str, Figure] | None = None) -> Path | None:
         """Write the flight as the simulation's output table says.
 
-        The directory gets the telemetry, "run.toml" with the summary, event
-        times and source revision, "resolved_input.toml" when the simulation
-        came from a file, and a PNG of each figure.
+        The directory gets the telemetry, "run.toml" with the summary,
+        diagnostics, event times and source revision, "resolved_input.toml"
+        when the simulation came from a file, and a PNG of each figure.
 
         Args:
             figures (Mapping[str, Figure] | None, optional): Figures to save.
@@ -333,6 +378,7 @@ class Flight:
             "written": datetime.now().astimezone().replace(microsecond=0),
             **output.git_revision(),
             "summary": self.summary(),
+            "diagnostics": self.diagnostics(),
             "event_times_s": {
                 name: float(times[row]) for name, row in self.events.items()
             },

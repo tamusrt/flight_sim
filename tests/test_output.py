@@ -145,6 +145,12 @@ def test_write_lays_out_the_run(flight: Flight, tmp_path: Path) -> None:
     assert run["event_times_s"]["end"] == pytest.approx(0.05)
     assert run["summary"]["max_mach"] > 0.1
     assert run["source"].endswith("short.toml")
+    diagnostics = run["diagnostics"]
+    assert diagnostics["steps"] == len(flight) - 1
+    assert diagnostics["rkf45_evaluations"] > 0
+    assert diagnostics["rkf45_evaluations"] % 6 == 0
+    assert diagnostics["run_time_s"] > 0.0
+    assert diagnostics["load_time_s"] > 0.0
 
 
 def test_resolved_input_reruns_the_same_sim(flight: Flight) -> None:

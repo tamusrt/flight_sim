@@ -17,6 +17,7 @@ from flight_sim.environment.wind import UniformWind
 from flight_sim.events import IMPACT
 from flight_sim.integration import (
     IntegrationConfiguration,
+    IntegrationStats,
     SimConfiguration,
     TruthConfiguration,
     adaptive_step,
@@ -157,9 +158,15 @@ def test_step_adaptive_scaling_and_rejection(
     state = RocketState()
     state.position = vector((10.0, 0.0, 0.0), "m")
     state.velocity = vector((50.0, 0.0, 0.0), "m/s")
-    next_state = step(0.0, state, unpowered_rocket_properties, config, scalar(5.0, "s"))
+    stats = IntegrationStats()
+    next_state = step(
+        0.0, state, unpowered_rocket_properties, config, scalar(5.0, "s"), stats=stats
+    )
 
     assert next_state is not None
+    assert stats.rejected_steps > 0
+    assert stats.rkf45_evaluations > 6 * stats.rejected_steps
+    assert stats.rkf45_evaluations % 6 == 0
 
 
 def test_step_triggers_aerodynamic_calculations(
@@ -594,8 +601,10 @@ def test_locate_event_finds_ballistic_apogee(
         config,
         dt=dt,
         event=lambda _time, state: float(state.velocity.m_as("m/s")[0]),
+        stats=(stats := IntegrationStats()),
     )
 
+    assert stats.event_iterations > 0
     assert time_to_apogee.m_as("s") == pytest.approx(50.0 / 9.81, abs=1e-8)
     assert apogee.position.m_as("m")[0] == pytest.approx(50.0**2 / (2 * 9.81))
     assert apogee.velocity.m_as("m/s")[0] == pytest.approx(0.0, abs=1e-7)
