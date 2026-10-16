@@ -64,12 +64,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if profiler is not None:
         profiler.disable()
 
-    times = flight.time.m_as("s")
-    for name, row in flight.events.items():
-        print(f"{name} at {times[row]:.2f} seconds")
-    for key, value in flight.summary().items():
-        print(f"{key}: {value:.4g}")
-
+    print_headlines(flight)
     start = clock.perf_counter()
     figures = flight.figures()
     plots_s = clock.perf_counter() - start
@@ -89,6 +84,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             plt.close(figure)
     else:
         plt.show()
+
+
+def print_headlines(flight: Flight) -> None:
+    """Print when each event happened and the flight's summary values.
+
+    Args:
+        flight (Flight): The flight that was run.
+    """
+    times = flight.time.m_as("s")
+    for name, row in flight.events.items():
+        print(f"{name} at {times[row]:.2f} seconds")
+    for key, value in flight.summary().items():
+        print(f"{key}: {value:.4g}")
 
 
 def print_diagnostics(flight: Flight, plots_s: float, write_s: float) -> None:
