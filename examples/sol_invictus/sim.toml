@@ -29,7 +29,7 @@ ref = "flight_sim.events.APOGEE"
 ref = "flight_sim.events.IMPACT"
 
 [output]
-directory = "out/{name}"
+directory = "out/{name}/{datetime}"
 units = "metric"  # or "imperial"
 sample_interval = "0.01 s"
 plots = ["trajectory", "attitude", "aero", "propulsion"]

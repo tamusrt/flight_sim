@@ -32,7 +32,7 @@ A sim's `[output]` table builds a `flight_sim.output.OutputConfiguration`. Witho
 
 ```toml
 [output]
-directory = "../../out/{name}"   # {name} = sim name as a file name
+directory = "out/{name}/{datetime}"   # sim name as a file name, and start time
 formats = ["csv"]                # and/or "parquet"
 units = "metric"                 # or "imperial": ft, lbf, psi, lb, degF; angles and times stay
 channels = ["*"]                 # globs over channel names, e.g. "aero.*", "state.position"
@@ -40,10 +40,18 @@ sample_interval = "0.01 s"       # omit for one row per integrator step
 plots = ["trajectory", "attitude", "aero", "propulsion", "step_length"]
 ```
 
-The directory gets `telemetry.csv` (or `.parquet`), `run.toml` (summary, event times, git commit),
-`resolved_input.toml` (the merged input with absolute paths and every default filled in, which reruns as-is) and a
-PNG per plot. `uv run flight_sim <sim> --output-dir <dir> --no-show` overrides the
-directory and skips the plot windows.
+`{datetime}` is the time the run starts, as `2026-10-22_140327`, or in a format of
+your own after a colon: `{datetime:%Y%m%d}`. Preparing a directory that already
+exists is an error unless `--overwrite` is passed.
+
+`uv run flight_sim <sim>` first prepares the run directory: `resolved_input.toml`
+(the merged input with every default filled in) and a copy of each data file it
+reads under `inputs/`, which it names relative to itself. The sim then flies from
+that file, so the directory holds exactly what ran and reruns anywhere with
+`uv run flight_sim run <dir>`, writing back into itself. The run adds
+`telemetry.csv` (or `.parquet`), `run.toml` (summary, event times, git commit) and a
+PNG per plot under `plots/`. `--output-dir <dir> --no-show` overrides the directory and skips the
+plot windows.
 
 Each run prints, and `run.toml` keeps under `[diagnostics]`, the steps accepted and
 rejected, RKF45 evaluations, event-search iterations, step length range and wall
@@ -54,6 +62,8 @@ From a script, `Simulation.from_file(path).run()` returns a `Flight`:
 `flight["aero.force"]` is a quantity array, `flight.at("apogee")` a typed
 `FlightPoint`, `flight.to_dataframe(["aero.*"])` a table, and
 `flight_sim.output.write(flight)` writes it as its `[output]` table says.
+`flight_sim.output.prepare(simulation)` makes a run directory to load and fly
+instead.
 Channels, tables, plots and the summary are in `flight.units`, which the run takes
 from `[output] units`; `dataclasses.replace(flight, units="imperial")` switches it.
 

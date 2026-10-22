@@ -1,8 +1,10 @@
 """Output table, resampling, file writing and plot tests."""
 
+import shutil
 import subprocess
 import tomllib
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,13 @@ from flight_sim.units import scalar
 from flight_sim.vehicle.engine import SolidEngine
 
 _EXAMPLE = Path("examples/sol_invictus/sim.toml")
+_START = datetime(2026, 10, 22, 14, 3, 27)
+
+# Output table writing to "a" beside the sim file
+_OUTPUT_A = """
+    [output]
+    directory = "a"
+"""
 _VEHICLE = (_EXAMPLE.parent / "vehicle.toml").resolve().as_posix()
 
 
@@ -118,8 +127,31 @@ def test_directory_names_the_sim() -> None:
         file_name("Sol Invictus - 20 mph west wind") == "sol_invictus_20_mph_west_wind"
     )
     assert file_name("!!!") == "flight"
-    assert settings.resolve_directory("Short Hop") == Path("out/short_hop").resolve()
-    assert OutputConfiguration().resolve_directory("Short Hop") is None
+    assert settings.resolve_directory("Short Hop", _START) == (
+        Path("out/short_hop").resolve()
+    )
+    assert OutputConfiguration().resolve_directory("Short Hop", _START) is None
+
+
+@pytest.mark.parametrize(
+    ("template", "expected"),
+    [
+        ("out/{name}_{datetime}", "out/short_hop_2026-10-22_140327"),
+        ("out/{datetime:%Y%m%d}/{name}", "out/20261022/short_hop"),
+    ],
+)
+def test_directory_stamps_the_start_time(template: str, expected: str) -> None:
+    """A bare "{datetime}" takes the default format, or one after a colon."""
+    settings = OutputConfiguration(directory=Path(template))
+
+    assert settings.resolve_directory("Short Hop", _START) == Path(expected).resolve()
+
+
+@pytest.mark.parametrize("template", ["out/{nmae}", "out/{0}", "out/{name"])
+def test_directory_rejects_a_bad_placeholder(template: str) -> None:
+    """A placeholder other than name and datetime is rejected on construction."""
+    with pytest.raises(ValueError, match="bad placeholder"):
+        OutputConfiguration(directory=Path(template))
 
 
 def test_sampled_table_keeps_events_on_their_rows(flight: Flight) -> None:
@@ -208,7 +240,7 @@ def test_write_lays_out_the_run(flight: Flight, tmp_path: Path) -> None:
     assert all(c.startswith(("time", "aero.", "event")) for c in frame.columns)
     assert len(frame) == 7
     assert frame["event"].dropna().tolist() == ["half", "end"]
-    assert (directory / "trajectory.png").is_file()
+    assert (directory / "plots" / "trajectory.png").is_file()
     assert plt.get_fignums() == []
 
     run = tomllib.loads((directory / "run.toml").read_text(encoding="utf-8"))
@@ -230,11 +262,50 @@ def test_resolved_input_reruns_the_same_sim(flight: Flight) -> None:
     assert directory is not None
 
     rerun = Simulation.from_file(directory / "resolved_input.toml")
+    resolved = tomllib.loads((directory / "resolved_input.toml").read_text("utf-8"))
 
     assert rerun.name == flight.simulation.name
-    assert rerun.output.resolve_directory(rerun.name) == directory
+    assert rerun.output.resolve_directory(rerun.name, _START) == directory
     assert _same_engine(rerun, flight.simulation)
     assert rerun.event_names() == flight.simulation.event_names()
+    assert resolved["properties"]["aero_table"]["filepath"] == "inputs/aero.csv"
+    assert (directory / "inputs" / "aero.csv").is_file()
+    assert (directory / "inputs" / "Loki_M3464LB.eng").is_file()
+
+
+def test_prepared_directory_runs_after_it_moves(tmp_path: Path) -> None:
+    """A run directory holds all it reads, and writes into wherever it is."""
+    simulation = Simulation.from_file(_sim_file(tmp_path, _OUTPUT_A))
+    prepared = output.prepare(simulation)
+    moved = prepared.rename(tmp_path / "b")
+    shutil.rmtree(tmp_path / "out", ignore_errors=True)
+
+    flight = Simulation.from_file(moved / "resolved_input.toml").run()
+    directory = output.write(flight, figures={})
+
+    assert prepared == (tmp_path / "a").resolve()
+    assert directory == moved.resolve()
+    assert (directory / "telemetry.csv").is_file()
+    assert sorted(path.name for path in (directory / "inputs").iterdir()) == [
+        "Loki_M3464LB.eng",
+        "aero.csv",
+    ]
+
+
+def test_prepare_refuses_an_existing_directory(tmp_path: Path) -> None:
+    """Preparing over an existing directory needs overwrite."""
+    simulation = Simulation.from_file(_sim_file(tmp_path, _OUTPUT_A))
+    (tmp_path / "a").mkdir()
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        output.prepare(simulation)
+    assert output.prepare(simulation, overwrite=True) == (tmp_path / "a").resolve()
+
+
+def test_prepare_needs_a_directory(tmp_path: Path) -> None:
+    """A sim that names no output directory has nothing to prepare."""
+    with pytest.raises(ValueError, match="no output directory"):
+        output.prepare(Simulation.from_file(_sim_file(tmp_path)))
 
 
 def test_example_resolved_input_is_absolute_and_rebuilds(tmp_path: Path) -> None:
@@ -261,14 +332,16 @@ def test_write_without_directory_writes_nothing(tmp_path: Path) -> None:
 
 
 def test_write_saves_given_figures_and_leaves_them_open(flight: Flight) -> None:
-    """Figures passed in are saved and left for the caller to show."""
+    """Figures passed in replace the saved ones and are left for the caller."""
+    output.write(flight)
     figures = flight.figures(["step_length"])
 
     directory = output.write(flight, figures)
 
     assert directory is not None
-    assert (directory / "step_length.png").is_file()
-    assert not (directory / "trajectory.png").exists()
+    assert sorted(path.name for path in (directory / "plots").iterdir()) == [
+        "step_length.png"
+    ]
     assert plt.fignum_exists(figures["step_length"].number)
     plt.close("all")
 

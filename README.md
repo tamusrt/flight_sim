@@ -48,11 +48,22 @@ You do not need to manually activate virtual environments. Prefix your commands 
 
 To fly a sim input file:
 ```bash
-uv run flight_sim path/to/sim.toml [--output-dir DIR] [--no-show] [--profile]
+uv run flight_sim path/to/sim.toml [--output-dir DIR] [--overwrite] [--no-show] [--profile]
 ```
 
-- `--output-dir DIR` writes to `DIR` instead of the sim's `[output] directory`;
-  `{name}` in it becomes the sim name.
+This prepares the sim's run directory, holding its resolved input and copies of
+the data files it reads, then flies the sim from that directory. Each step also
+runs on its own:
+
+```bash
+uv run flight_sim prepare path/to/sim.toml [--output-dir DIR] [--overwrite]
+uv run flight_sim run path/to/run_dir [--no-show] [--profile]
+```
+
+- `--output-dir DIR` prepares `DIR` instead of the sim's `[output] directory`;
+  `{name}` in it becomes the sim name and `{datetime}` the time it starts.
+- `--overwrite` writes into a run directory that already exists, which is
+  otherwise an error.
 - `--no-show` saves the plots without opening their windows.
 - `--profile` times every function during the run, prints the slowest and saves
   `profile.prof`.

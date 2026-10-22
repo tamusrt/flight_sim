@@ -48,12 +48,41 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock, tmp_path: Path) -
         IMPACT,
     )
 
-    main(["examples/sol_invictus/sim.toml", "--no-show", "--output-dir", str(tmp_path)])
+    run = tmp_path / "run"
+    main(["examples/sol_invictus/sim.toml", "--no-show", "--output-dir", str(run)])
 
     # Verify the simulation successfully fired the physics engine before exiting
     mock_adaptive_step.assert_called()
-    assert (tmp_path / "telemetry.csv").is_file()
-    assert (tmp_path / "trajectory.png").is_file()
+    assert (run / "resolved_input.toml").is_file()
+    assert (run / "telemetry.csv").is_file()
+    assert (run / "plots" / "trajectory.png").is_file()
+
+
+@patch("flight_sim.simulation.adaptive_step")
+def test_main_prepares_and_runs_as_separate_steps(
+    mock_adaptive_step: MagicMock, tmp_path: Path
+) -> None:
+    """Prepare writes only the input; run flies it; preparing again needs overwrite."""
+    mock_state = RocketState(position=vector((-10.0, 0.0, 0.0), "m"))
+    mock_adaptive_step.return_value = (
+        mock_state,
+        scalar(0.2, "s"),
+        scalar(0.2, "s"),
+        IMPACT,
+    )
+    run = tmp_path / "run"
+    sim = "examples/sol_invictus/sim.toml"
+
+    main(["prepare", sim, "--output-dir", str(run)])
+    assert sorted(path.name for path in run.iterdir()) == [
+        "inputs",
+        "resolved_input.toml",
+    ]
+    with pytest.raises(SystemExit, match="already exists; pass --overwrite"):
+        main(["prepare", sim, "--output-dir", str(run)])
+
+    main(["run", str(run), "--no-show"])
+    assert (run / "telemetry.csv").is_file()
 
 
 def test_main_needs_a_sim_file(capsys: pytest.CaptureFixture[str]) -> None:

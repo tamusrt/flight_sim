@@ -28,8 +28,16 @@ class InputSource:
     # "config.truth.wind"
     defaults: frozenset[str]
 
+    # Absolute path each path argument resolved to, by key path
+    paths: Mapping[str, Path]
+
     # Wall time reading and building took, in seconds
     load_time_s: float
+
+    def table_with(self, values: Mapping[str, Any]) -> dict[str, Any]:
+        """Return ``table`` with the value at each key path in ``values`` replaced."""
+        replaced: dict[str, Any] = _replaced(self.table, "", values)
+        return replaced
 
 
 def load(path: str | Path, cls: type[T]) -> T:
@@ -80,9 +88,27 @@ def load_with_source(path: str | Path, cls: type[T]) -> tuple[T, InputSource]:
         path=Path(path).resolve(),
         table=_resolved(table, "", record.paths, defaults_by_table),
         defaults=frozenset(record.defaults),
+        paths=dict(record.paths),
         load_time_s=clock.perf_counter() - start,
     )
     return result, source
+
+
+def _replaced(node: Any, where: str, values: Mapping[str, Any]) -> Any:
+    """Return a table with the value at each key path in ``values`` replaced."""
+    if where in values:
+        return values[where]
+    if isinstance(node, list):
+        return [
+            _replaced(item, item_path(where, index), values)
+            for index, item in enumerate(node)
+        ]
+    if isinstance(node, dict):
+        return {
+            key: _replaced(item, key_path(where, key), values)
+            for key, item in node.items()
+        }
+    return node
 
 
 def _resolved(

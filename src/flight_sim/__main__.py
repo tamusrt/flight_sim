@@ -1,4 +1,4 @@
-"""Core FS runner: fly the sim input file given on the command line."""
+"""Core FS runner: prepare and fly the sim input file given on the command line."""
 
 import argparse
 import cProfile
@@ -18,45 +18,112 @@ from flight_sim.simulation import Flight, Simulation
 # Functions listed by --profile
 PROFILE_LINES = 20
 
+# Commands that take one step of a run on their own
+COMMANDS = ("prepare", "run")
+
+_DESCRIPTIONS = {
+    None: "Prepare a sim's run directory, then fly it from there. "
+    '"flight_sim prepare SIM" and "flight_sim run DIR" take each step alone.',
+    "prepare": "Create a sim's run directory, holding its resolved input and "
+    "copies of its data files.",
+    "run": "Fly a prepared run directory, writing its results into it.",
+}
+
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Fly a sim input file, print its headline numbers, then write and plot it.
+    """Prepare a sim's run directory, fly it from there, and write and plot it.
+
+    A first argument of "prepare" or "run" takes only that step.
 
     Args:
         argv (Sequence[str] | None, optional): Command-line arguments.
             Defaults to those the program was run with.
     """
-    parser = argparse.ArgumentParser(
-        prog="flight_sim", description="Fly a sim input file."
-    )
-    parser.add_argument(
-        "sim", help="Sim input file, such as examples/sol_invictus/sim.toml"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help='Write here instead of [output] directory; "{name}" is the sim name',
-    )
-    parser.add_argument(
-        "--no-show", action="store_true", help="Save the plots without showing them"
-    )
-    parser.add_argument(
-        "--profile",
-        action="store_true",
-        help="Time each function during the run, and save profile.prof",
-    )
-    argv = sys.argv[1:] if argv is None else argv
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command = argv.pop(0) if argv and argv[0] in COMMANDS else None
+    parser = _parser(command)
     if not argv:
         parser.print_help(sys.stderr)
         raise SystemExit(2)
     args = parser.parse_args(argv)
 
-    try:
-        simulation = Simulation.from_file(args.sim)
-    except ConfigError as error:
-        raise SystemExit(f"Cannot build {args.sim}:\n  {error}") from None
+    if command == "run":
+        fly(_load(Path(args.directory) / output.RESOLVED_INPUT), args)
+        return
+    simulation = _load(args.sim)
     if args.output_dir is not None:
         simulation.output = replace(simulation.output, directory=args.output_dir)
+    if command is None and simulation.output.directory is None:
+        # Nothing to write, so nothing to prepare
+        fly(simulation, args)
+        return
+    try:
+        directory = output.prepare(simulation, overwrite=args.overwrite)
+    except FileExistsError as error:
+        raise SystemExit(f"{error}; pass --overwrite to write into it") from None
+    except ValueError as error:
+        raise SystemExit(
+            f"Cannot prepare {args.sim}: {error}; set [output] directory"
+            " or pass --output-dir"
+        ) from None
+    print(f"Prepared {directory}")
+    if command is None:
+        fly(_load(directory / output.RESOLVED_INPUT), args)
+
+
+def _parser(command: str | None) -> argparse.ArgumentParser:
+    """Return the argument parser of a command, or of preparing and flying."""
+    parser = argparse.ArgumentParser(
+        prog="flight_sim" if command is None else f"flight_sim {command}",
+        description=_DESCRIPTIONS[command],
+    )
+    if command == "run":
+        parser.add_argument("directory", help='Run directory "flight_sim prepare" made')
+    else:
+        parser.add_argument(
+            "sim", help="Sim input file, such as examples/sol_invictus/sim.toml"
+        )
+        parser.add_argument(
+            "--output-dir",
+            type=Path,
+            help="Run directory to prepare instead of [output] directory; it takes"
+            ' the same "{name}" and "{datetime}" placeholders',
+        )
+        parser.add_argument(
+            "--overwrite",
+            action="store_true",
+            help="Write into the run directory even if it already exists",
+        )
+    if command != "prepare":
+        parser.add_argument(
+            "--no-show",
+            action="store_true",
+            help="Save the plots without showing them",
+        )
+        parser.add_argument(
+            "--profile",
+            action="store_true",
+            help="Time each function during the run, and save profile.prof",
+        )
+    return parser
+
+
+def _load(path: str | Path) -> Simulation:
+    """Build a sim from its input file, exiting with the reason if it cannot."""
+    try:
+        return Simulation.from_file(path)
+    except ConfigError as error:
+        raise SystemExit(f"Cannot build {path}:\n  {error}") from None
+
+
+def fly(simulation: Simulation, args: argparse.Namespace) -> None:
+    """Fly a sim, print its headline numbers, then write and plot it.
+
+    Args:
+        simulation (Simulation): The sim to fly.
+        args (argparse.Namespace): Parsed arguments, for --no-show and
+            --profile.
+    """
     profiler = cProfile.Profile() if args.profile else None
     if profiler is not None:
         profiler.enable()
