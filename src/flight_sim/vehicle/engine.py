@@ -186,17 +186,14 @@ class SolidEngine(Engine, UnitChecked):
     grain: PropellantGrain
     casing: MassProperties  # Everything but the propellant
 
-    ignition_time: Annotated[Scalar | EventTime, "s"] = field(
-        default_factory=lambda: scalar(0.0, "s")
-    )
-
-    nozzle_exit_area: Annotated[Scalar, "m**2"] = field(
-        default_factory=lambda: scalar(0.0, "m**2")
-    )
+    # Zero leaves out pressure thrust
+    nozzle_exit_area: Annotated[Scalar, "m**2"]
 
     # Ambient pressure the thrust curve was measured at
-    reference_pressure: Annotated[Scalar, "Pa"] = field(
-        default_factory=lambda: scalar(101325.0, "Pa")
+    reference_pressure: Annotated[Scalar, "Pa"]
+
+    ignition_time: Annotated[Scalar | EventTime, "s"] = field(
+        default_factory=lambda: scalar(0.0, "s")
     )
 
     _ignition_s: float = field(init=False, repr=False, compare=False)
@@ -254,8 +251,8 @@ class SolidEngine(Engine, UnitChecked):
                 newtons.
             forward_end_location (Vector): Motor's forward end from the nose
                 tip in body axes, so aft is -X.
-            **kwargs (Any): Other ``SolidEngine`` fields, such as
-                ``ignition_time``.
+            **kwargs (Any): Other ``SolidEngine`` fields: ``nozzle_exit_area``,
+                ``reference_pressure`` and optionally ``ignition_time``.
 
         Returns:
             SolidEngine: Motor igniting at time zero unless ``kwargs`` say
@@ -308,8 +305,8 @@ class SolidEngine(Engine, UnitChecked):
                 contains the motor metadata and "eng-data" thrust samples.
             forward_end_location (Vector): Motor's forward end from the nose
                 tip in body axes, so aft is -X.
-            **kwargs (Any): Other ``SolidEngine`` fields, such as
-                ``ignition_time``.
+            **kwargs (Any): Other ``SolidEngine`` fields: ``nozzle_exit_area``,
+                ``reference_pressure`` and optionally ``ignition_time``.
 
         Returns:
             SolidEngine: Motor igniting at time zero unless ``kwargs`` say
@@ -437,8 +434,8 @@ def solid_engine_from_csv(
             seconds from ignition and newtons.
         grain (PropellantGrain): Propellant burned over the curve.
         casing (MassProperties): Everything in the motor but the propellant.
-        **kwargs (Any): Other ``SolidEngine`` fields, such as
-            ``ignition_time``.
+        **kwargs (Any): Other ``SolidEngine`` fields: ``nozzle_exit_area``,
+            ``reference_pressure`` and optionally ``ignition_time``.
 
     Returns:
         SolidEngine: Motor igniting at time zero unless ``kwargs`` say

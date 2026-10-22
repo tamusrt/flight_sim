@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from support import truth
 
 from flight_sim.environment.atmosphere import VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
@@ -10,7 +11,6 @@ from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
 from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import (
     IntegrationConfiguration,
-    TruthConfiguration,
     adaptive_step,
 )
 from flight_sim.units import scalar, vector
@@ -41,9 +41,7 @@ def test_impact_is_not_crossed_on_the_pad() -> None:
 
 
 _BALLISTIC = IntegrationConfiguration(
-    truth=TruthConfiguration(
-        gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere()
-    )
+    truth=truth(gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere())
 )
 
 
@@ -116,10 +114,11 @@ def test_rail_exit_lands_where_the_rail_releases_the_rocket(
     """Without being asked, a step ends a rail length up from the mount and leaves."""
     rail = LaunchRail(
         length=scalar(2.0, "m"),
+        friction_coefficient=0.0,
         elevation=scalar(80.0, "deg"),
         azimuth=scalar(90.0, "deg"),
     )
-    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
+    config = IntegrationConfiguration(truth=truth(launch_rail=rail))
     state = rail.mount(RocketState(position=vector(start, "m")))
 
     time = 0.0

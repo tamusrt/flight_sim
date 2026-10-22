@@ -40,9 +40,15 @@ def _baseline_rocket_properties() -> RocketProperties:
             reference_area=scalar(0.0182414692, "m**2"),
             reference_length=scalar(0.1524, "m"),
             reference_point=vector((0.0, 0.0, 0.0), "m"),
+            frame="body",
+            extrapolation="linear",
         ),
         engine=solid_engine_from_csv(
-            "tests/test_data/standard_motor.csv", grain, casing
+            "tests/test_data/standard_motor.csv",
+            grain,
+            casing,
+            nozzle_exit_area=scalar(0.0, "m**2"),
+            reference_pressure=scalar(101325.0, "Pa"),
         ),
         dry_mass_properties=MassProperties(
             mass=scalar(17.0, "kg"),

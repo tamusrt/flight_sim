@@ -3,7 +3,7 @@
 import math
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 import numpy as np
 import pandas as pd  # type: ignore
@@ -32,6 +32,13 @@ _AERO_COLUMNS: tuple[str, ...] = tuple(
     coefficient.metadata["column"] for coefficient in fields(AeroCoefficients)
 )
 
+# Axes a table's components are along
+AeroFrame = Literal["body", "missile"]
+
+# How a table reaches past its grid: "linear" extends the edge cell, "clamp"
+# holds the edge value
+Extrapolation = Literal["linear", "clamp"]
+
 
 @dataclass(frozen=True)
 class AeroTable(UnitChecked):
@@ -39,7 +46,7 @@ class AeroTable(UnitChecked):
 
     The frames and angles are defined in ``flight_sim.utilities.dcm``, with the
     angles in degrees; phi is wrapped into [0, 360). Outside the grid, each
-    coefficient is extrapolated linearly from the nearest edge cell.
+    coefficient follows ``extrapolation`` along each axis it is off.
     """
 
     mach_axis: np.ndarray  # Strictly increasing, at least two values
@@ -57,9 +64,10 @@ class AeroTable(UnitChecked):
     # Point the moments are taken about, from the nose tip in body axes
     reference_point: Annotated[Vector, "m"]
 
-    # Axes the table's components are along; missile-frame components are
-    # rotated into body axes after interpolation
-    frame: Literal["body", "missile"] = "body"
+    # Missile-frame components are rotated into body axes after interpolation
+    frame: AeroFrame
+
+    extrapolation: Extrapolation
 
     # Reference values in SI units, cached on construction
     reference_area_m2: float = field(init=False, repr=False, compare=False)
@@ -67,8 +75,19 @@ class AeroTable(UnitChecked):
     reference_point_m: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Cache the reference values in SI units."""
+        """Check the frame and extrapolation, and cache the reference values.
+
+        Raises:
+            ValueError: If the frame or extrapolation is not one of its options.
+        """
         super().__post_init__()
+        if self.frame not in get_args(AeroFrame):
+            raise ValueError(f"Unknown frame {self.frame!r}; use {get_args(AeroFrame)}")
+        if self.extrapolation not in get_args(Extrapolation):
+            raise ValueError(
+                f"Unknown extrapolation {self.extrapolation!r};"
+                f" use {get_args(Extrapolation)}"
+            )
         object.__setattr__(
             self, "reference_area_m2", float(self.reference_area.m_as("m**2"))
         )
@@ -89,16 +108,10 @@ class AeroTable(UnitChecked):
             AeroCoefficients: The interpolated coefficients in body axes.
         """
         phi = phi % 360.0
-        i = _cell_index(self.mach_axis, mach)
-        j = _cell_index(self.alpha_axis, alpha)
-        k = _cell_index(self.phi_axis, phi)
-        t_mach = (mach - self.mach_axis[i]) / (
-            self.mach_axis[i + 1] - self.mach_axis[i]
-        )
-        t_alpha = (alpha - self.alpha_axis[j]) / (
-            self.alpha_axis[j + 1] - self.alpha_axis[j]
-        )
-        t_phi = (phi - self.phi_axis[k]) / (self.phi_axis[k + 1] - self.phi_axis[k])
+        clamp = self.extrapolation == "clamp"
+        i, t_mach = _cell(self.mach_axis, mach, clamp)
+        j, t_alpha = _cell(self.alpha_axis, alpha, clamp)
+        k, t_phi = _cell(self.phi_axis, phi, clamp)
         cell = self.values[i : i + 2, j : j + 2, k : k + 2]
         # Collapse the cell along phi, then alpha, then Mach
         at_phi = cell[:, :, 0] + t_phi * (cell[:, :, 1] - cell[:, :, 0])
@@ -112,13 +125,17 @@ class AeroTable(UnitChecked):
         return AeroCoefficients(*coefficients.tolist())
 
 
-def _cell_index(axis: np.ndarray, point: float) -> int:
-    """Return the index of the grid cell whose lower edge is at or below a point.
+def _cell(axis: np.ndarray, point: float, clamp: bool) -> tuple[int, float]:
+    """Return the grid cell holding a point and the fraction of the way across it.
 
-    Points beyond either end of the axis map to the first or last cell.
+    Points beyond either end of the axis use the first or last cell, with the
+    fraction held within [0, 1] when ``clamp`` is set.
     """
-    index = int(np.searchsorted(axis, point, side="right")) - 1
-    return min(max(index, 0), len(axis) - 2)
+    index = min(
+        max(int(np.searchsorted(axis, point, side="right")) - 1, 0), len(axis) - 2
+    )
+    fraction = (point - axis[index]) / (axis[index + 1] - axis[index])
+    return index, min(max(fraction, 0.0), 1.0) if clamp else fraction
 
 
 def aero_table_from_csv(
@@ -127,7 +144,8 @@ def aero_table_from_csv(
     reference_area: Scalar,
     reference_length: Scalar,
     reference_point: Vector,
-    frame: Literal["body", "missile"] = "body",
+    frame: AeroFrame,
+    extrapolation: Extrapolation,
 ) -> AeroTable:
     """Read a flight sim CSV and build one lookup covering every coefficient.
 
@@ -139,8 +157,8 @@ def aero_table_from_csv(
         reference_length (Scalar): Length the moments are also normalized by.
         reference_point (Vector): Point the moments are taken about, from the
             nose tip in body axes.
-        frame (Literal["body", "missile"], optional): Axes of the CSV's
-            components. Defaults to "body".
+        frame (AeroFrame): Axes of the CSV's components.
+        extrapolation (Extrapolation): How the table reaches past its grid.
 
     Returns:
         AeroTable: Lookup over the CSV's grid.
@@ -171,4 +189,5 @@ def aero_table_from_csv(
         reference_length=reference_length,
         reference_point=reference_point,
         frame=frame,
+        extrapolation=extrapolation,
     )

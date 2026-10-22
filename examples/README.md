@@ -3,8 +3,9 @@
 Each TOML table builds one object. Its keys are the keyword arguments.
 
 Run a sim with `uv run flight_sim examples/<name>/sim.toml`. A sim file builds a
-`flight_sim.simulation.Simulation`: `properties`, `config`, `events`,
-`initial_state`, `initial_time_step`, `stop_event` and `name`.
+`flight_sim.simulation.Simulation`: `properties`, `config`, `stop_event` and
+`max_time`, with optional `events`, `initial_state`, `initial_time_step`, `name`
+and `output`. A run whose stop event has not fired by `max_time` fails.
 
 | Form | Meaning |
 | --- | --- |
@@ -16,7 +17,9 @@ Run a sim with `uv run flight_sim examples/<name>/sim.toml`. A sim file builds a
 - **Units are required** on every quantity: `"17 ft"`, `"85 deg"`, or `{ value = [x, y, z], units = "m" }` for vectors. Matrices use `{ value = [[...], ...], units = ... }` or `{ diag = [...], units = ... }`.
 - **Paths** are relative to the file they appear in.
 - **Extra keys** on a factory pass through its `**kwargs` to the class it builds, e.g. `ignition_time` on `SolidEngine.from_rse`.
-- **Motor files** (`SolidEngine.from_rse`, `SolidEngine.from_eng`) need `forward_end_location`, the motor's forward end from the nose tip, e.g. `{ value = [-2.08, 0, 0], units = "m" }`. Aft is -X.
+- **Motor files** (`SolidEngine.from_rse`, `SolidEngine.from_eng`) need `forward_end_location`, the motor's forward end from the nose tip, e.g. `{ value = [-2.08, 0, 0], units = "m" }`. Aft is -X. Every `SolidEngine` also needs `nozzle_exit_area` (`"0 m**2"` leaves out pressure thrust) and `reference_pressure`, the ambient pressure its thrust curve was measured at.
+- **Launch site**: `config.truth` needs `launch_latitude`, `launch_elevation` and `launch_rail`. A rail needs `length` and `friction_coefficient`; `launch_rail = { type = "flight_sim.environment.launch_rail.NoRail" }` starts the rocket free instead.
+- **Aero tables** need `frame` (`"body"` or `"missile"`) and `extrapolation` (`"linear"` or `"clamp"`) for points off the grid.
 - **Ignition** is either a time, `ignition_time = "0 s"`, or an event, `ignition_time = { event = "rail exit", delay = "0.5 s" }`. The event is named, and must be one of the sim's `[[events]]` or the rail's `"rail exit"`. `delay` is optional and defaults to `"0 s"`.
 - **Missing required arguments** are filled from already-built objects with the same name, so `peak_vertical_velocity` receives the sim's `properties` and `config`.
 - **Checks**: unknown keys, missing required arguments, quantities without units or of the wrong dimension, and plain values of the wrong type (`friction_coefficient = "abc"`) are errors naming the key. A missing argument is reported against the callable used, so `SolidEngine.from_rse` asks for `forward_end_location` but never `grain`.

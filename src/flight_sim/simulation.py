@@ -33,14 +33,19 @@ from flight_sim.vehicle.rocket_state import RocketState
 class Simulation(UnitChecked):
     """Rocket, world and events of one flight, and the event that ends it.
 
-    A configured launch rail holds the initial state. A motor lit by an event
-    ignites its delay after the first time that event fires. ``from_file``
-    also keeps the input it was built from as ``source``, which
-    ``output.write`` copies next to the telemetry.
+    The launch rail holds the initial state. A motor lit by an event ignites
+    its delay after the first time that event fires. ``from_file`` also
+    keeps the input it was built from as ``source``, which ``output.write``
+    copies next to the telemetry.
     """
 
     properties: RocketProperties
-    config: IntegrationConfiguration = field(default_factory=IntegrationConfiguration)
+    config: IntegrationConfiguration
+    stop_event: str
+
+    # Sim time by which the stop event must fire, or the run fails
+    max_time: Annotated[Scalar, "s"]
+
     events: Sequence[FlightEvent] = ()
     initial_state: RocketState = field(default_factory=RocketState)
 
@@ -48,7 +53,6 @@ class Simulation(UnitChecked):
     initial_time_step: Annotated[Scalar, "s"] = field(
         default_factory=lambda: scalar(0.01, "s")
     )
-    stop_event: str = "impact"
     name: str = ""
     output: OutputConfiguration = field(default_factory=OutputConfiguration)
 
@@ -83,9 +87,8 @@ class Simulation(UnitChecked):
 
     def event_names(self) -> tuple[str, ...]:
         """Return the names of the events the flight can hit, the rail's first."""
-        rail = self.config.truth.launch_rail
-        rail_names = (rail.exit_event.name,) if rail is not None else ()
-        return (*rail_names, *(event.name for event in self.events))
+        events = (*self.config.truth.launch_rail.events, *self.events)
+        return tuple(event.name for event in events)
 
     def run(self) -> "Flight":
         """Fly from the initial state until the stop event.
@@ -95,16 +98,17 @@ class Simulation(UnitChecked):
         Returns:
             Flight: A flight point at launch and after every step, with the
                 integrator's work and the wall time the run took.
+
+        Raises:
+            RuntimeError: If the stop event has not fired by ``max_time``.
         """
         start = clock.perf_counter()
         stats = IntegrationStats()
-        rail = self.config.truth.launch_rail
-        state = (
-            rail.mount(self.initial_state) if rail is not None else self.initial_state
-        )
+        state = self.config.truth.launch_rail.mount(self.initial_state)
         engine = self.properties.engine
         ignition = engine.pending_ignition
         dt = self.initial_time_step
+        max_time_s = float(self.max_time.m_as("s"))
         time = 0.0
         points: list[FlightPointSI] = []
         event_rows: dict[str, int] = {}
@@ -125,6 +129,11 @@ class Simulation(UnitChecked):
                             time + float(ignition.delay.m_as("s"))
                         )
                         ignition = None
+                if time > max_time_s:
+                    raise RuntimeError(
+                        f"Stop event {self.stop_event!r} did not fire by the max"
+                        f" time of {max_time_s} s"
+                    )
 
                 state, dt_taken, dt, hit = adaptive_step(
                     time,

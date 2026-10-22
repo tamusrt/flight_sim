@@ -5,6 +5,7 @@ import operator
 
 import numpy as np
 import pytest
+from support import truth
 
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.environment.launch_rail import LaunchRail
@@ -12,7 +13,6 @@ from flight_sim.events import at_time
 from flight_sim.flight_point import FlightPointSI
 from flight_sim.integration import (
     IntegrationConfiguration,
-    TruthConfiguration,
     derivative_computation,
     flight_point_si,
 )
@@ -29,10 +29,8 @@ from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
-_CONFIG = IntegrationConfiguration()
-_WEIGHTLESS = IntegrationConfiguration(
-    truth=TruthConfiguration(gravity=ConstantGravity(0.0))
-)
+_CONFIG = IntegrationConfiguration(truth=truth())
+_WEIGHTLESS = IntegrationConfiguration(truth=truth(gravity=ConstantGravity(0.0)))
 
 # Moving up and a little sideways, so the air loads are not zero
 _MOVING = RocketState(velocity=vector((100.0, 5.0, 0.0), "m/s"))
@@ -47,6 +45,7 @@ def _flight(unpowered_rocket_properties: RocketProperties) -> Flight:
         events=(at_time("half", scalar(0.05, "s")), at_time("end", scalar(0.1, "s"))),
         initial_state=_MOVING,
         stop_event="end",
+        max_time=scalar(1.0, "s"),
     ).run()
 
 
@@ -87,8 +86,10 @@ def test_specific_force_on_the_pad_is_the_rails_push(
     unpowered_rocket_properties: RocketProperties,
 ) -> None:
     """A motionless rocket held by the rail feels one g up, and is on the rail."""
-    rail = LaunchRail(length=scalar(5.0, "m"), elevation=scalar(85.0, "deg"))
-    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
+    rail = LaunchRail(
+        length=scalar(5.0, "m"), friction_coefficient=0.0, elevation=scalar(85.0, "deg")
+    )
+    config = IntegrationConfiguration(truth=truth(launch_rail=rail))
     state = rail.mount(RocketState())
 
     point = flight_point_si(0.0, state, unpowered_rocket_properties, config)

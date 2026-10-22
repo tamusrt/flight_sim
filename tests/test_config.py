@@ -89,6 +89,7 @@ def test_changed_type_replaces_base_table_and_passes_kwargs(tmp_path: Path) -> N
         type = "flight_sim.vehicle.engine.SolidEngine.from_rse"
         motor_file_path = "{motor}"
         forward_end_location = {{ value = [-2.08, 0.0, 0.0], units = "m" }}
+        nozzle_exit_area = "0 m**2"
         reference_pressure = "101325 Pa"
         """,
     )
@@ -113,6 +114,8 @@ def test_event_ignition_builds_from_a_table(tmp_path: Path) -> None:
         type = "flight_sim.vehicle.engine.SolidEngine.from_eng"
         motor_file_path = "motor.eng"
         forward_end_location = { value = [-2, 0, 0], units = "m" }
+        nozzle_exit_area = "0 m**2"
+        reference_pressure = "101325 Pa"
         ignition_time = { event = "apogee", delay = "1.5 s" }
         """,
     )
@@ -138,6 +141,8 @@ def test_paths_resolve_relative_to_their_file(tmp_path: Path) -> None:
         type = "flight_sim.vehicle.engine.SolidEngine.from_rse"
         motor_file_path = "motor.rse"
         forward_end_location = { value = [-2, 0, 0], units = "m" }
+        nozzle_exit_area = "0 m**2"
+        reference_pressure = "101325 Pa"
         """,
     )
     path = _write(tmp_path, "top.toml", 'engine = { include = "vehicles/engine.toml" }')

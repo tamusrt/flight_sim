@@ -7,6 +7,7 @@ reference_area = "0.0182414692 m**2"
 reference_length = "6 in"
 reference_point = { value = [0.0, 0.0, 0.0], units = "m" }
 frame = "missile"
+extrapolation = "clamp"
 
 [dry_mass_properties]
 mass = "17 kg"
@@ -19,3 +20,6 @@ type = "flight_sim.vehicle.engine.SolidEngine.from_eng"
 motor_file_path = "Loki_M3464LB.eng"
 # Forward end of the motor from the nose tip; aft is -X
 forward_end_location = { value = [-2.08, 0.0, 0.0], units = "m" }
+# Exit area unknown, so no pressure thrust
+nozzle_exit_area = "0 m**2"
+reference_pressure = "101325 Pa"

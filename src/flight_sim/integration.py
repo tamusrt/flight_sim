@@ -67,23 +67,19 @@ _RKF_4TH_ORDER = np.array([25 / 216, 0.0, 1408 / 2565, 2197 / 4104, -1 / 5, 0.0]
 class TruthConfiguration(UnitChecked):
     """Physical world the rocket flies through: environment and launch site."""
 
+    launch_latitude: Annotated[Scalar, "rad"]
+
+    # Height of the pad above sea level
+    launch_elevation: Annotated[Scalar, "m"]
+
+    # Rail the rocket starts on, or NoRail to start it free
+    launch_rail: LaunchRail
+
     atmosphere: AtmosphereModel = field(default_factory=StandardAtmosphere1976)
 
     wind: WindModel = field(default_factory=UniformWind)
 
     gravity: GravityModel = field(default_factory=WGS84Gravity)
-
-    launch_latitude: Annotated[Scalar, "rad"] = field(
-        default_factory=lambda: scalar(0.0, "deg")
-    )
-
-    # Height of the pad above sea level
-    launch_elevation: Annotated[Scalar, "m"] = field(
-        default_factory=lambda: scalar(0.0, "m")
-    )
-
-    # Rail holding a rocket whose state is on it
-    launch_rail: LaunchRail | None = None
 
 
 @dataclass
@@ -117,7 +113,7 @@ class SimConfiguration(UnitChecked):
     )
 
     # Most bracket refinements locate_event makes before settling on the
-    # bracket's later end
+    # bracket's later end, with a warning
     max_event_iterations: int = 100
 
 
@@ -125,7 +121,7 @@ class SimConfiguration(UnitChecked):
 class IntegrationConfiguration:
     """Truth models and sim settings the integrator holds fixed for a flight."""
 
-    truth: TruthConfiguration = field(default_factory=TruthConfiguration)
+    truth: TruthConfiguration
     sim: SimConfiguration = field(default_factory=SimConfiguration)
 
 
@@ -192,7 +188,7 @@ def _step_inputs(
         elevation_m=float(truth.launch_elevation.m_as("m")),
         rail=(
             (truth.launch_rail, state.rail_start.m_as("m"))
-            if truth.launch_rail is not None and state.rail_start is not None
+            if state.rail_start is not None
             else None
         ),
         absolute_tolerance=np.repeat(
@@ -750,6 +746,10 @@ def locate_event(  # pylint: disable=too-many-arguments
     Returns:
         tuple[RocketState, Scalar]: The state at the event, on or just past
             the crossing, and the time from ``start`` to it.
+
+    Warns:
+        RuntimeWarning: If ``max_event_iterations`` refinements leave the
+            bracket wider than ``event_time_tolerance``.
     """
     low_time, high_time = 0.0, float(dt.m_as("s"))
     low_value = event(time, start)
@@ -785,4 +785,13 @@ def locate_event(  # pylint: disable=too-many-arguments
                 high_value /= 2.0
             last_moved = -1
 
+    if high_time - low_time > time_tolerance:
+        warnings.warn(
+            f"Event search at t = {time} s stopped after"
+            f" {config.sim.max_event_iterations} iterations with a"
+            f" {high_time - low_time:.3g} s bracket, wider than the"
+            f" {time_tolerance} s tolerance",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return high_state, scalar(high_time, "s")

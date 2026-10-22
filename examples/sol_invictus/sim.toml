@@ -5,6 +5,7 @@
 
 name = "Sol Invictus example"
 stop_event = "impact"
+max_time = "300 s"
 
 properties = { include = "vehicle.toml" }
 
@@ -13,6 +14,7 @@ include = "site.toml"
 
 [config.truth.launch_rail]
 length = "17 ft"
+friction_coefficient = 0.0
 elevation = "85 deg"
 azimuth = "0 deg"
 

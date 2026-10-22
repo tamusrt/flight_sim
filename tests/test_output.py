@@ -29,8 +29,14 @@ def _sim_file(directory: Path, output_table: str = "") -> Path:
         f"""
         name = "Short Hop"
         stop_event = "end"
+        max_time = "1 s"
         properties = {{ include = "{_VEHICLE}" }}
         initial_state = {{ velocity = {{ value = [50, 1, 0], units = "m/s" }} }}
+
+        [config.truth]
+        launch_latitude = "0 deg"
+        launch_elevation = "0 m"
+        launch_rail = {{ type = "flight_sim.environment.launch_rail.NoRail" }}
 
         [config.truth.gravity]
         type = "flight_sim.environment.gravity.ConstantGravity"
