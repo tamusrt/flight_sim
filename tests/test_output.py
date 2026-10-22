@@ -249,7 +249,7 @@ def test_example_resolved_input_is_absolute_and_rebuilds(tmp_path: Path) -> None
 
     assert aero_file.is_absolute() and aero_file.is_file()
     assert "include" not in resolved["config"]["truth"]
-    assert rebuilt.config.truth.launch_rail == simulation.config.truth.launch_rail
+    assert rebuilt.config.truth == simulation.config.truth
     assert _same_engine(rebuilt, simulation)
 
 

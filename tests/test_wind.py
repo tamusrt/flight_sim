@@ -29,6 +29,14 @@ def test_default_wind_is_calm() -> None:
     assert np.array_equal(UniformWind().velocity(0.0), np.zeros(3))
 
 
+def test_uniform_winds_compare_by_speed_and_direction() -> None:
+    """Winds of the same speed and direction are equal, others are not."""
+    assert UniformWind(speed=scalar(5.0, "m/s")) == UniformWind(
+        speed=scalar(5.0, "m/s")
+    )
+    assert UniformWind(speed=scalar(5.0, "m/s")) != UniformWind()
+
+
 def test_uniform_wind_rejects_a_speed_that_is_not_a_speed() -> None:
     """A speed in the wrong dimension is rejected on construction."""
     with pytest.raises(DimensionalityError, match=r"UniformWind\.speed"):
