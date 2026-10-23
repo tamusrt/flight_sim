@@ -15,7 +15,7 @@ from flight_sim.flight_event import EventTime, FlightEvent
 from flight_sim.flight_point import AeroPointSI, FlightPointSI
 from flight_sim.integration import IntegrationConfiguration, flight_point_si
 from flight_sim.mission import Mission
-from flight_sim.physics import RocketPhysics
+from flight_sim.physics import Motion, RocketPhysics
 from flight_sim.simulation import Simulation
 from flight_sim.units import scalar, vector
 from flight_sim.vehicle.engine import SolidEngine
@@ -225,6 +225,34 @@ def test_torque_its_coefficients_do_not_explain_warns(
 
     with pytest.warns(RuntimeWarning, match="_Twisted gives an aero torque"):
         flight_point_si(0.0, state, baseline_rocket_properties, config)
+
+
+@dataclass(frozen=True)
+class _Vacuum(RocketPhysics):
+    """Equations of motion of a fall in a vacuum at constant gravity."""
+
+    def motion(self, *args: Any, **kwargs: Any) -> Motion:
+        return super().motion(*args, **kwargs)._replace(
+            acceleration=np.array([-9.81, 0.0, 0.0]), angular_acceleration=np.zeros(3)
+        )
+
+
+def test_physics_can_replace_the_equations_of_motion(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A physics with its own equations moves the rocket by them alone."""
+    whole = _off_rail(_to_apogee(baseline_rocket_properties))
+    start = replace(whole.initial_state, velocity=vector((50.0, 0.0, 0.0), "m/s"))
+    segment = replace(
+        whole, config=replace(whole.config, physics=_Vacuum()), initial_state=start
+    )
+
+    flight = segment.run()
+
+    time = flight.time.m_as("s")
+    height = flight["state.position"].m_as("m")[:, 0] - start.position.m_as("m")[0]
+    np.testing.assert_allclose(height, 50.0 * time - 4.905 * time**2, atol=1e-6)
+    assert flight.at("apogee").time.m_as("s") == pytest.approx(50.0 / 9.81)
 
 
 class _Lost(RocketPhysics):

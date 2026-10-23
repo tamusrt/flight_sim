@@ -34,7 +34,6 @@ from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
 from flight_sim.utilities.dcm import body_to_world
 from flight_sim.utilities.quaternion import (
     Quaternion,
-    cross,
     quaternion_kinematics,
     quaternion_rates,
 )
@@ -321,30 +320,20 @@ def _loads(time: float, values: np.ndarray, inputs: _StepInputs) -> _Loads:
     wind = inputs.wind.velocity(altitude)
     gravity = inputs.gravity.magnitude(inputs.latitude_rad, altitude)
 
-    # Aerodynamics plus thrust along the nose, then gravity along -X
-    thrust = inputs.physics.thrust(time, conditions, inputs.properties)
-    aero = inputs.physics.aero(
+    motion = inputs.physics.motion(
         time,
-        velocity - wind,
+        velocity,
+        angular_velocity,
+        to_world,
         conditions,
-        to_world.T,
-        mass_properties.cg_location,
+        wind,
+        gravity,
+        mass_properties,
         inputs.properties,
-        thrust,
     )
-    force_body = aero.force.copy()
-    force_body[0] += thrust
-    acceleration = to_world @ force_body / mass_properties.mass
-    acceleration[0] -= gravity
-
-    if inputs.rail is None:
-        # Euler's equations with the full inertia tensor
-        inertia = mass_properties.inertia
-        angular_acceleration = np.linalg.solve(
-            inertia,
-            aero.torque - cross(angular_velocity, inertia @ angular_velocity),
-        )
-    else:
+    acceleration = motion.acceleration
+    angular_acceleration = motion.angular_acceleration
+    if inputs.rail is not None:
         acceleration = _rail_acceleration(
             values[_POSITION], velocity, acceleration, *inputs.rail
         )
@@ -356,8 +345,8 @@ def _loads(time: float, values: np.ndarray, inputs: _StepInputs) -> _Loads:
         wind=wind,
         gravity=gravity,
         to_world=to_world,
-        aero=aero,
-        thrust=thrust,
+        aero=motion.aero,
+        thrust=motion.thrust,
         mass=mass_properties,
         acceleration=acceleration,
         angular_acceleration=angular_acceleration,

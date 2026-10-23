@@ -54,11 +54,16 @@ See `examples/sol_invictus/mission.toml`.
 
 ### Phases with their own physics
 
-`config.physics` picks the forces a segment flies, a `flight_sim.physics.RocketPhysics`
-by default. A phase such as power-on drag or a parachute subclasses it and overrides
-`thrust(time, conditions, properties)` or `aero(time, air_velocity, conditions, to_body,
-cg_location, properties, thrust)`, which returns the body-axes `AeroPointSI` the
-equations of motion and telemetry use. Numbers are SI.
+`config.physics` picks the equations of motion and forces a segment flies, a
+`flight_sim.physics.RocketPhysics` by default. A phase such as power-on drag or a
+parachute subclasses it and overrides `thrust(time, conditions, properties)` or
+`aero(time, air_velocity, conditions, to_body, cg_location, properties, thrust)`, which
+returns the body-axes `AeroPointSI` the equations of motion and telemetry use. A phase
+with equations of its own overrides `motion(time, velocity, angular_velocity, to_world,
+conditions, wind, gravity, mass, properties)`, which returns the world-frame
+acceleration and body-axes angular acceleration in free flight, with the aero and
+thrust telemetry records; on the rail the sim still holds the rocket to it. Numbers
+are SI.
 
 ```python
 @dataclass(frozen=True)
