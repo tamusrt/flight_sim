@@ -1,10 +1,9 @@
-"""Aerodynamic models: the interface the integrator calls, and the CSV table."""
+"""Functions for loading aerodynamic CSV data."""
 
 import math
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Annotated, Literal, NamedTuple, get_args
+from typing import Annotated, Literal, get_args
 
 import numpy as np
 import pandas as pd  # type: ignore
@@ -28,33 +27,6 @@ class AeroCoefficients:
     cmz: float = field(metadata={"column": "CMz"})
 
 
-class AeroFlow(NamedTuple):
-    """Flight condition an aero model is asked about."""
-
-    mach: float
-    alpha: float  # Total angle of attack in degrees
-    phi: float  # Aerodynamic roll angle in degrees
-    thrust: float  # Motor thrust in N, for power-on effects
-
-
-class AeroModel(ABC):
-    """Coefficients at a flight condition, and the reference values they scale by.
-
-    A segment picks its model with ``properties.aero_table = { type = "..." }``, so
-    a new model, such as a parachute's drag, subclasses this.
-    """
-
-    # Forces are normalized by the area, moments also by the length, about the
-    # point, from the nose tip in body axes; all in SI units
-    reference_area_m2: float
-    reference_length_m: float
-    reference_point_m: np.ndarray
-
-    @abstractmethod
-    def coefficients(self, flow: AeroFlow) -> AeroCoefficients:
-        """Return the body-axes coefficients at a flight condition."""
-
-
 # CSV columns in AeroCoefficients field order
 _AERO_COLUMNS: tuple[str, ...] = tuple(
     coefficient.metadata["column"] for coefficient in fields(AeroCoefficients)
@@ -69,13 +41,12 @@ Extrapolation = Literal["linear", "clamp"]
 
 
 @dataclass(frozen=True)
-class AeroTable(AeroModel, UnitChecked):
+class AeroTable(UnitChecked):
     """Trilinear lookup of aerodynamic coefficients over Mach, alpha_tot and phi_a.
 
     The frames and angles are defined in ``flight_sim.utilities.dcm``, with the
     angles in degrees; phi is wrapped into [0, 360). Outside the grid, each
-    coefficient follows ``extrapolation`` along each axis it is off. The table
-    is power-off, so thrust is ignored.
+    coefficient follows ``extrapolation`` along each axis it is off.
     """
 
     mach_axis: np.ndarray  # Strictly increasing, at least two values
@@ -124,10 +95,6 @@ class AeroTable(AeroModel, UnitChecked):
             self, "reference_length_m", float(self.reference_length.m_as("m"))
         )
         object.__setattr__(self, "reference_point_m", self.reference_point.m_as("m"))
-
-    def coefficients(self, flow: AeroFlow) -> AeroCoefficients:
-        """Interpolate every coefficient at a flight condition, ignoring thrust."""
-        return self(flow.mach, flow.alpha, flow.phi)
 
     def __call__(self, mach: float, alpha: float, phi: float) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.

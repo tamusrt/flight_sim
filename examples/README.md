@@ -45,21 +45,65 @@ config.truth.launch_rail = { type = "flight_sim.environment.launch_rail.NoRail" 
 properties.aero_table.filepath = "coast.csv"   # override only what changes
 ```
 
-Each segment can also fly different physics by picking its own aero model.
-`properties.aero_table` takes any subclass of `flight_sim.utilities.data_loader.AeroModel`:
-it sets `reference_area_m2`, `reference_length_m` and `reference_point_m`, and
-implements `coefficients(flow)`, which gets the Mach number, angles and motor thrust
-and returns body-axes `AeroCoefficients`. The CSV table (`aero_table_from_csv`) is
-power-off and ignores thrust.
-
-```toml
-properties.aero_table = { type = "my_models.ParachuteDrag", cd_area = "1.2 m**2" }
-```
-
 One clock runs through every segment, so `max_time`, thrust curves and `at_time`
 events are mission times. A motor lit by an event that fired in an earlier segment
-burns on. Segment `name` and `output` are ignored. See
-`examples/sol_invictus/mission.toml`.
+burns on. A later segment goes on with the step size the one before would have
+taken, so its `initial_time_step` is unused, and segments that change nothing fly
+exactly as one sim with the same events. Segment `name` and `output` are ignored.
+See `examples/sol_invictus/mission.toml`.
+
+### Phases with their own physics
+
+`config.physics` picks the forces a segment flies, a `flight_sim.physics.RocketPhysics`
+by default. A phase such as power-on drag or a parachute subclasses it and overrides
+`thrust(time, conditions, properties)` or `aero(time, air_velocity, conditions, to_body,
+cg_location, properties, thrust)`, which returns the body-axes `AeroPointSI` the
+equations of motion and telemetry use. Numbers are SI.
+
+```python
+@dataclass(frozen=True)
+class PowerOnDrag(RocketPhysics):
+    factor: float = 0.8
+
+    def aero(self, time, air_velocity, conditions, to_body, cg_location, properties, thrust):
+        aero = super().aero(time, air_velocity, conditions, to_body, cg_location, properties, thrust)
+        if thrust <= 0:
+            return aero
+        force = aero.force.copy()
+        force[0] *= self.factor  # axial only: with the CG on the axis, the torque is unchanged
+        c = replace(aero.coefficients, cx=aero.coefficients.cx * self.factor)
+        return aero._replace(force=force, coefficients=c)
+```
+
+```toml
+config.physics = { type = "my_models.PowerOnDrag", factor = 0.7 }
+```
+
+A phase that starts at an event, such as a parachute inflating after deployment,
+overrides `after(event, point)`. The sim calls it with each event as it fires, and with
+the events of earlier segments at the start, and flies the physics it returns. `point`
+is the flight at the event (`time`, `state`, `aero`, ...), so the physics can depend on
+the speed or attitude it fired at. `aero` gets the time, so a force can grow from then.
+
+```python
+@dataclass(frozen=True)
+class Parachute(RocketPhysics):
+    cd_area: float = 1.2  # m**2
+    deployed_at: float = math.inf
+
+    def after(self, event, point):
+        return replace(self, deployed_at=point.time) if event == "deploy" else self
+```
+
+Change the coefficients with the loads, as above: a physics whose aero force or torque
+is not what its `coefficients` give gets a warning, since telemetry would disagree.
+
+A `type` from outside `flight_sim`, such as `my_models.PowerOnDrag`, is not pinned by
+the commit in `run.toml`, so its module's SHA-256 is written there under `code`, and a
+rerun from the run directory warns if the module has changed since.
+
+`flight_sim.events.burnout` fires `delay` (default `"0 s"`) after the motor burns out;
+give it a `name` to use it twice, e.g. a `"separation"` 1 s after burnout.
 
 ## Output
 

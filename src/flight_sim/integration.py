@@ -29,9 +29,9 @@ from flight_sim.flight_point import (
     RocketStateSI,
     StateDerivativeSI,
 )
+from flight_sim.physics import RocketPhysics, coefficient_loads
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
-from flight_sim.utilities.data_loader import AeroFlow
-from flight_sim.utilities.dcm import aero_angles, body_to_world
+from flight_sim.utilities.dcm import body_to_world
 from flight_sim.utilities.quaternion import (
     Quaternion,
     cross,
@@ -125,6 +125,9 @@ class IntegrationConfiguration:
     truth: TruthConfiguration
     sim: SimConfiguration = field(default_factory=SimConfiguration)
 
+    # Forces on the rocket; a flight phase that changes them subclasses this
+    physics: RocketPhysics = field(default_factory=RocketPhysics)
+
 
 @dataclass
 class IntegrationStats:
@@ -161,6 +164,7 @@ class _StepInputs(NamedTuple):
     """Models and constants of one step, with numbers in SI units."""
 
     properties: RocketProperties
+    physics: RocketPhysics
     atmosphere: AtmosphereModel
     wind: WindModel
     gravity: GravityModel
@@ -182,6 +186,7 @@ def _step_inputs(
     truth, sim = config.truth, config.sim
     return _StepInputs(
         properties=properties,
+        physics=config.physics,
         atmosphere=truth.atmosphere,
         wind=truth.wind,
         gravity=truth.gravity,
@@ -236,65 +241,6 @@ def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
         angular_velocity=vector(values[_ANGULAR_VELOCITY], "rad/s"),
         orientation=Quaternion(q_w=q_w, q_x=q_x, q_y=q_y, q_z=q_z),
         rail_start=template.rail_start,
-    )
-
-
-def _aero_loads(
-    air_velocity: np.ndarray,
-    conditions: AtmosphereConditions,
-    to_body: np.ndarray,
-    cg_location: np.ndarray,
-    inputs: _StepInputs,
-    *,
-    thrust: float,
-) -> AeroPointSI:
-    """Compute the flow angles and the aerodynamic loads, in body axes.
-
-    The torque is the model's moment about the reference point plus the
-    moment of the force through the lever arm from the CG.
-
-    Args:
-        air_velocity (np.ndarray): Velocity relative to the wind in the world
-            frame in m/s.
-        conditions (AtmosphereConditions): Air conditions around the rocket.
-        to_body (np.ndarray): World-to-body rotation matrix.
-        cg_location (np.ndarray): CG from the nose tip in body axes in m.
-        inputs (_StepInputs): Constants of the step.
-        thrust (float): Motor thrust in N, for the model.
-
-    Returns:
-        AeroPointSI: Force in N and torque about the CG in N*m, with the flow
-            angles and coefficients they came from.
-    """
-    table = inputs.properties.aero_table
-    airspeed_body = to_body @ air_velocity
-    speed = math.sqrt(float(airspeed_body @ airspeed_body))
-    alpha, phi = aero_angles(airspeed_body)
-    mach = speed / conditions.speed_of_sound
-    c = table.coefficients(
-        AeroFlow(mach, math.degrees(alpha), math.degrees(phi), thrust)
-    )
-    coefficients = np.array([c.cx, c.cy, c.cz, c.cmx, c.cmy, c.cmz])
-
-    # Dynamic pressure times reference area gives force per unit coefficient
-    dynamic_pressure = 0.5 * conditions.air_density * speed**2
-    force_scale = dynamic_pressure * table.reference_area_m2
-    force_body = force_scale * coefficients[:3]
-    # Reference length acts as "lever arm" length
-    lever_arm = table.reference_point_m - cg_location
-    torque_body = (force_scale * table.reference_length_m) * coefficients[3:] + cross(
-        lever_arm, force_body
-    )
-    return AeroPointSI(
-        air_velocity=airspeed_body,
-        airspeed=speed,
-        mach=mach,
-        alpha=alpha,
-        phi=phi,
-        dynamic_pressure=dynamic_pressure,
-        coefficients=c,
-        force=force_body,
-        torque=torque_body,
     )
 
 
@@ -376,14 +322,15 @@ def _loads(time: float, values: np.ndarray, inputs: _StepInputs) -> _Loads:
     gravity = inputs.gravity.magnitude(inputs.latitude_rad, altitude)
 
     # Aerodynamics plus thrust along the nose, then gravity along -X
-    thrust = inputs.properties.engine.get_thrust(time, conditions.pressure)
-    aero = _aero_loads(
+    thrust = inputs.physics.thrust(time, conditions, inputs.properties)
+    aero = inputs.physics.aero(
+        time,
         velocity - wind,
         conditions,
         to_world.T,
         mass_properties.cg_location,
-        inputs,
-        thrust=thrust,
+        inputs.properties,
+        thrust,
     )
     force_body = aero.force.copy()
     force_body[0] += thrust
@@ -440,6 +387,35 @@ def _state_rates(time: float, values: np.ndarray, inputs: _StepInputs) -> np.nda
     return rates
 
 
+def _check_coefficients(
+    loads: _Loads, properties: RocketProperties, physics: RocketPhysics
+) -> None:
+    """Warn if the aero loads are not what their coefficients give.
+
+    Telemetry records both, so a physics that scales the loads without its
+    coefficients would leave them disagreeing.
+    """
+    aero = loads.aero
+    force, torque = coefficient_loads(
+        aero.coefficients,
+        aero.dynamic_pressure,
+        properties.aero_table,
+        loads.mass.cg_location,
+    )
+    for name, given, explained in (
+        ("force", aero.force, force),
+        ("torque", aero.torque, torque),
+    ):
+        if not np.allclose(given, explained, rtol=1e-9, atol=1e-9):
+            warnings.warn(
+                f"{type(physics).__name__} gives an aero {name} its coefficients"
+                f" do not explain, so telemetry's aero.coefficients do not match"
+                f" aero.{name}",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+
 def flight_point_si(
     time: float,
     state: RocketState,
@@ -460,6 +436,7 @@ def flight_point_si(
     values = _pack(state)
     inputs = _step_inputs(state, properties, config)
     loads = _loads(time, values, inputs)
+    _check_coefficients(loads, properties, config.physics)
     # Everything but gravity, including the rail's push
     specific_force = loads.acceleration.copy()
     specific_force[0] += loads.gravity

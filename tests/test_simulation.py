@@ -9,7 +9,7 @@ from support import truth
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.events import at_time
 from flight_sim.flight_event import EventTime
-from flight_sim.integration import IntegrationConfiguration
+from flight_sim.integration import IntegrationConfiguration, flight_point_si
 from flight_sim.simulation import Simulation
 from flight_sim.units import scalar
 from flight_sim.vehicle.engine import SolidEngine
@@ -148,7 +148,10 @@ def test_already_fired_ignition_event_lights_from_its_time(
         max_time=scalar(2.0, "s"),
     )
 
-    flight = simulation.run(start_time=0.5, fired_events={"go": 0.4})
+    went = flight_point_si(
+        0.4, simulation.initial_state, simulation.properties, simulation.config
+    )
+    flight = simulation.run(start_time=0.5, fired_events={"go": went})
 
     time = flight.time.m_as("s")
     thrust = flight["thrust"].m_as("N")

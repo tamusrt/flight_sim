@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from flight_sim.utilities.data_loader import AeroModel
+from flight_sim.utilities.data_loader import AeroTable
 from flight_sim.vehicle.engine import Engine
 from flight_sim.vehicle.mass_properties import (
     MassProperties,
@@ -15,7 +15,7 @@ from flight_sim.vehicle.mass_properties import (
 class RocketProperties:
     """Aerodynamics, motor and dry mass properties of the rocket."""
 
-    aero_table: AeroModel
+    aero_table: AeroTable
     engine: Engine
 
     # Everything but the motor

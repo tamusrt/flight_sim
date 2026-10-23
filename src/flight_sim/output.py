@@ -1,10 +1,14 @@
 """Where and how a run's input, telemetry, run summary and plots are written."""
 
+import hashlib
 import inspect
 import re
 import shutil
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+import sys
+import tomllib
+import warnings
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +32,9 @@ FORMATS = ("csv", "parquet")
 # Input a run directory runs from, and the folder of its data file copies
 RESOLVED_INPUT = "resolved_input.toml"
 INPUT_FILES = "inputs"
+
+# A run's summary, with the hashes of the modules outside flight_sim it used
+RUN_SUMMARY = "run.toml"
 
 # Folder of a run directory holding its figures
 PLOT_FILES = "plots"
@@ -216,9 +223,10 @@ def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path
         frame.to_csv(directory / "telemetry.csv", index=False)
     if "parquet" in settings.formats:
         frame.to_parquet(directory / "telemetry.parquet", index=False)
-    write_toml(directory / "run.toml", _run_table(flight))
+    # The input first, so a rerun is checked against the old summary
     if simulation.source is not None:
         _write_input(simulation.source, directory)
+    write_toml(directory / RUN_SUMMARY, _run_table(flight))
 
     drawn = flight.figures() if figures is None else figures
     plot_directory = directory / PLOT_FILES
@@ -249,6 +257,9 @@ def _run_table(flight: "Flight") -> dict[str, Any]:
     }
     if flight.simulation.source is not None:
         run["source"] = flight.simulation.source.path.as_posix()
+        code = _custom_modules(flight.simulation.source.table)
+        if code:
+            run["code"] = {name: _sha256(path) for name, path in code.items()}
     return run
 
 
@@ -257,7 +268,24 @@ def _write_input(source: InputSource, directory: Path) -> None:
 
     Data files of the same name from different places get numbered copies.
     Input read from the directory's own RESOLVED_INPUT is already there.
+
+    Warns:
+        RuntimeWarning: If the input was read from a run directory and a
+            module outside flight_sim that a ``type`` names has changed
+            since, by the hash in its RUN_SUMMARY.
     """
+    summary = source.path.parent / RUN_SUMMARY
+    if summary.is_file():
+        with summary.open("rb") as file:
+            hashes = tomllib.load(file).get("code", {})
+        for name, path in _custom_modules(source.table).items():
+            if name in hashes and hashes[name] != _sha256(path):
+                warnings.warn(
+                    f"{path} has changed since the run in {summary.parent} was"
+                    " made, so this run may not match it",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
     if source.path == directory / RESOLVED_INPUT:
         return
     inputs = directory / INPUT_FILES
@@ -288,6 +316,46 @@ def _write_input(source: InputSource, directory: Path) -> None:
         if default not in ("output", "output.directory")
     }
     write_toml(directory / RESOLVED_INPUT, table, comments)
+
+
+def _custom_modules(table: Any) -> dict[str, Path]:
+    """Return the source file of each module outside flight_sim a ``type`` names.
+
+    Modules of the standard library and installed packages are left out, as
+    their versions pin them. The build has already imported every module.
+    """
+    package = Path(__file__).resolve().parent
+    pinned = (package, Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve())
+    found: dict[str, Path] = {}
+    for dotted in _types(table):
+        # The module is the longest imported prefix, as in "my_models.Drag"
+        parts = dotted.split(".")
+        for count in range(len(parts), 0, -1):
+            name = ".".join(parts[:count])
+            file = getattr(sys.modules.get(name), "__file__", None)
+            if file is not None:
+                path = Path(file).resolve()
+                if not any(path.is_relative_to(folder) for folder in pinned):
+                    found[name] = path
+                break
+    return found
+
+
+def _types(item: Any) -> Iterator[str]:
+    """Yield every ``type`` string in a nested input table."""
+    if isinstance(item, dict):
+        if isinstance(item.get("type"), str):
+            yield item["type"]
+        for value in item.values():
+            yield from _types(value)
+    elif isinstance(item, list):
+        for value in item:
+            yield from _types(value)
+
+
+def _sha256(path: Path) -> str:
+    """Return the SHA-256 of a file's bytes, in hex."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def git_revision() -> dict[str, Any]:

@@ -112,6 +112,10 @@ class Engine(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} has no event ignition")
 
+    @abstractmethod
+    def burnout_time(self) -> float:
+        """Return the simulation time in seconds the burn ends, inf until lit."""
+
 
 @dataclass(frozen=True)
 class PropellantGrain(UnitChecked):
@@ -419,6 +423,10 @@ class SolidEngine(Engine, UnitChecked):
     def ignited(self, time: float) -> Self:
         """Return a copy of the motor igniting at a simulation time in seconds."""
         return replace(self, ignition_time=scalar(time, "s"))
+
+    def burnout_time(self) -> float:
+        """Return the simulation time in seconds the thrust curve ends, inf until lit."""
+        return self._ignition_s + float(self.times[-1])
 
 
 def solid_engine_from_csv(

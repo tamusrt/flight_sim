@@ -3,7 +3,7 @@
 import re
 import time as clock
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Annotated, Any, Self
 
@@ -22,6 +22,7 @@ from flight_sim.integration import (
     flight_point_si,
 )
 from flight_sim.output import OutputConfiguration
+from flight_sim.physics import RocketPhysics
 from flight_sim.telemetry import FlightPoint
 from flight_sim.units import Scalar, UnitChecked, UnitSystem, scalar
 from flight_sim.utilities.quaternion import Quaternion
@@ -88,19 +89,23 @@ class Simulation(UnitChecked):
         return tuple(event.name for event in events)
 
     def run(
-        self, start_time: float = 0.0, fired_events: Mapping[str, float] | None = None
+        self,
+        start_time: float = 0.0,
+        fired_events: Mapping[str, FlightPointSI] | None = None,
     ) -> "Flight":
         """Fly from the initial state until the stop event.
 
         The engine is restored afterwards, so the flight can be run again.
+        Physics that changes at events is kept to this run; ``config`` is
+        never changed.
 
         Args:
             start_time (float, optional): Time in seconds the initial state is
                 at. Defaults to 0.
-            fired_events (Mapping[str, float] | None, optional): Events that
-                fired before the start, with their times in seconds, as a
-                ``Mission`` hands on. A motor lit by one ignites its delay
-                after that time. Defaults to none.
+            fired_events (Mapping[str, FlightPointSI] | None, optional): Events
+                that fired before the start, in firing order, with the flight
+                when each fired, as a ``Mission`` hands on. A motor lit by one
+                ignites its delay after that time. Defaults to none.
 
         Returns:
             Flight: A flight point at the start and after every step, with the
@@ -115,6 +120,7 @@ class Simulation(UnitChecked):
         start = clock.perf_counter()
         fired = dict(fired_events or {})
         engine = self.properties.engine
+        config = self.config
         ignition = engine.pending_ignition
         names = (*self.event_names(), *fired)
         if ignition is not None and ignition.event not in names:
@@ -131,21 +137,22 @@ class Simulation(UnitChecked):
         try:
             if ignition is not None and ignition.event in fired:
                 self.properties.engine = engine.ignited(
-                    fired[ignition.event] + float(ignition.delay.m_as("s"))
+                    fired[ignition.event].time + float(ignition.delay.m_as("s"))
                 )
                 ignition = None
+            for name, point in fired.items():
+                config = _after(config, name, point)
             if fired:
                 # Continuing an earlier segment, judged with the motor as lit
                 # as it will fly
                 self._check_ahead(time, state)
             while True:
-                points.append(
-                    flight_point_si(time, state, self.properties, self.config)
-                )
+                points.append(flight_point_si(time, state, self.properties, config))
                 if hit is not None:
                     event_rows.setdefault(hit.name, len(points) - 1)
                     if hit.name == self.stop_event:
                         break
+                    config = _after(config, hit.name, points[-1])
                     if ignition is not None and hit.name == ignition.event:
                         # Events built from the properties see the lit motor too
                         self.properties.engine = engine.ignited(
@@ -162,7 +169,7 @@ class Simulation(UnitChecked):
                     time,
                     state,
                     self.properties,
-                    self.config,
+                    config,
                     dt,
                     events=self.events,
                     stats=stats,
@@ -178,6 +185,7 @@ class Simulation(UnitChecked):
             stats,
             run_time_s=clock.perf_counter() - start,
             units=self.output.units,
+            next_time_step=dt,
         )
 
     def _check_ahead(self, time: float, state: RocketState) -> None:
@@ -193,6 +201,23 @@ class Simulation(UnitChecked):
                 f"Stop event {stop.name!r} is already behind the start at {time} s,"
                 " so it would never fire"
             )
+
+
+def _after(
+    config: IntegrationConfiguration, event: str, point: FlightPointSI
+) -> IntegrationConfiguration:
+    """Return the config with its physics told an event fired.
+
+    Raises:
+        TypeError: If ``after`` returns something other than a RocketPhysics.
+    """
+    physics = config.physics.after(event, point)
+    if not isinstance(physics, RocketPhysics):
+        raise TypeError(
+            f"{type(config.physics).__name__}.after({event!r}) returned"
+            f" {physics!r}, not a RocketPhysics"
+        )
+    return replace(config, physics=physics)
 
 
 @dataclass(frozen=True)
@@ -217,6 +242,10 @@ class Flight:
     run_time_s: float = 0.0
 
     units: UnitSystem = "metric"
+
+    # Step the integrator would have taken next, so a later segment goes on
+    # with it as one run would
+    next_time_step: Scalar = field(kw_only=True)
 
     _columns: dict[str, Any] = field(
         default_factory=dict, init=False, repr=False, compare=False

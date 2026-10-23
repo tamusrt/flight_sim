@@ -1,7 +1,9 @@
 """Output table, resampling, file writing and plot tests."""
 
+import hashlib
 import shutil
 import subprocess
+import sys
 import tomllib
 from dataclasses import replace
 from datetime import datetime
@@ -290,6 +292,36 @@ def test_prepared_directory_runs_after_it_moves(tmp_path: Path) -> None:
         "Loki_M3464LB.eng",
         "aero.csv",
     ]
+
+
+def test_custom_code_is_hashed_and_checked_on_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model from outside flight_sim is hashed, and checked on rerun."""
+    module = tmp_path / "archived_physics.py"
+    module.write_text(
+        "from flight_sim.physics import RocketPhysics\n\n\n"
+        "class Same(RocketPhysics):\n    pass\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "archived_physics", raising=False)
+    physics = '[config.physics]\ntype = "archived_physics.Same"\n'
+
+    flight = Simulation.from_file(_sim_file(tmp_path, physics + _OUTPUT_A)).run()
+    directory = output.write(flight, figures={})
+    assert directory is not None
+    run = tomllib.loads((directory / "run.toml").read_text("utf-8"))
+
+    assert run["code"] == {
+        "archived_physics": hashlib.sha256(module.read_bytes()).hexdigest()
+    }
+
+    # The module changes after the run, so a rerun no longer matches it
+    module.write_text(module.read_text("utf-8") + "# changed\n", encoding="utf-8")
+    rerun = Simulation.from_file(directory / "resolved_input.toml").run()
+    with pytest.warns(RuntimeWarning, match="archived_physics.py has changed"):
+        output.write(rerun, figures={})
 
 
 def test_prepare_refuses_an_existing_directory(tmp_path: Path) -> None:

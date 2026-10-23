@@ -1,19 +1,23 @@
 """Mission tests."""
 
-from dataclasses import replace
+import math
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 import pytest
 from support import truth
 
+from flight_sim.environment.atmosphere import AtmosphereConditions
 from flight_sim.environment.launch_rail import LaunchRail, NoRail
 from flight_sim.events import APOGEE, at_time
 from flight_sim.flight_event import EventTime, FlightEvent
-from flight_sim.integration import IntegrationConfiguration
+from flight_sim.flight_point import AeroPointSI, FlightPointSI
+from flight_sim.integration import IntegrationConfiguration, flight_point_si
 from flight_sim.mission import Mission
+from flight_sim.physics import RocketPhysics
 from flight_sim.simulation import Simulation
-from flight_sim.units import scalar
+from flight_sim.units import scalar, vector
 from flight_sim.vehicle.engine import SolidEngine
 from flight_sim.vehicle.rocket_properties import RocketProperties
 
@@ -46,25 +50,27 @@ def _off_rail(simulation: Simulation, **changes: Any) -> Simulation:
 def test_rail_then_free_flight_matches_one_simulation(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
-    """Splitting the flight at rail exit gives the same flight."""
+    """Splitting the flight at its events gives exactly the same flight."""
     whole = _to_apogee(baseline_rocket_properties)
+    whole = replace(whole, events=(*whole.events, at_time("cut", scalar(3.0, "s"))))
     mission = Mission(
-        segments=(replace(whole, stop_event="rail exit"), _off_rail(whole)),
+        segments=(
+            replace(whole, stop_event="rail exit"),
+            _off_rail(whole, stop_event="cut"),
+            _off_rail(whole),
+        ),
         name="split",
     )
 
     expected = whole.run()
     flight = mission.run()
 
-    assert list(flight.events) == ["rail exit", "apogee"]
-    assert np.all(np.diff(flight.time.m_as("s")) > 0.0)
+    assert list(flight.events) == ["rail exit", "cut", "apogee"]
     assert flight.simulation.name == "split"
-    for name in ("rail exit", "apogee"):
-        assert flight.at(name).time.m_as("s") == pytest.approx(
-            expected.at(name).time.m_as("s"), rel=1e-3
-        )
-    assert flight.summary()["apogee_m"] == pytest.approx(
-        expected.summary()["apogee_m"], rel=1e-3
+    # Each segment goes on with the step the last would have taken
+    np.testing.assert_array_equal(flight.time.m_as("s"), expected.time.m_as("s"))
+    np.testing.assert_array_equal(
+        flight["state.position"].m_as("m"), expected["state.position"].m_as("m")
     )
 
 
@@ -98,6 +104,145 @@ def test_motor_lit_by_an_earlier_segment_burns_on(
     assert list(flight.events) == ["go", "stop"]
     assert np.all(thrust[time < 0.3] == 0.0)
     assert np.all(thrust[time > 0.3] > 0.0)
+
+
+@dataclass(frozen=True)
+class _NoPowerOnDrag(RocketPhysics):
+    """Table aero, with no force while the motor pushes."""
+
+    def aero(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        time: float,
+        air_velocity: np.ndarray,
+        conditions: AtmosphereConditions,
+        to_body: np.ndarray,
+        cg_location: np.ndarray,
+        properties: RocketProperties,
+        thrust: float,
+    ) -> AeroPointSI:
+        aero = super().aero(
+            time, air_velocity, conditions, to_body, cg_location, properties, thrust
+        )
+        return aero._replace(force=aero.force * 0.0) if thrust > 0.0 else aero
+
+
+def test_segment_physics_drives_only_its_segment(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A segment's own physics sets its loads, and the next goes back to default."""
+    whole = _to_apogee(baseline_rocket_properties)
+    boost = replace(
+        whole,
+        config=replace(
+            whole.config,
+            truth=replace(whole.config.truth, launch_rail=NoRail()),
+            physics=_NoPowerOnDrag(),
+        ),
+        events=(at_time("switch", scalar(1.0, "s")),),
+        stop_event="switch",
+    )
+    mission = Mission(
+        segments=(replace(whole, stop_event="rail exit"), boost, _off_rail(whole))
+    )
+
+    # The zeroed force no longer matches the table's coefficients
+    with pytest.warns(RuntimeWarning, match="_NoPowerOnDrag gives an aero force"):
+        flight = mission.run()
+
+    time = flight.time.m_as("s")
+    drag = flight["aero.force"].m_as("N")[:, 0]
+    rail_exit = flight.at("rail exit").time.m_as("s")
+    assert np.all(drag[(time > rail_exit) & (time <= 1.0)] == 0.0)
+    assert np.all(drag[(time > 1.0) & (time < 3.0)] != 0.0)
+
+
+@dataclass(frozen=True)
+class _CutOff(RocketPhysics):
+    """Motor thrust until the "cut" event, then none."""
+
+    cut_at: float = math.inf
+
+    def after(self, event: str, point: FlightPointSI) -> RocketPhysics:
+        return replace(self, cut_at=point.time) if event == "cut" else self
+
+    def thrust(
+        self, time: float, conditions: AtmosphereConditions, properties: RocketProperties
+    ) -> float:
+        return 0.0 if time > self.cut_at else super().thrust(time, conditions, properties)
+
+
+def test_physics_hears_events_in_its_segment_and_earlier_ones(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Physics changes at an event, and a later segment starts from it."""
+    whole = _off_rail(_to_apogee(baseline_rocket_properties))
+    whole = replace(whole, config=replace(whole.config, physics=_CutOff()))
+    first = replace(
+        whole,
+        events=(at_time("cut", scalar(0.5, "s")), at_time("go", scalar(1.0, "s"))),
+        stop_event="go",
+    )
+    second = replace(
+        whole, events=(at_time("stop", scalar(1.5, "s")),), stop_event="stop"
+    )
+
+    flight = Mission(segments=(first, second)).run()
+
+    time = flight.time.m_as("s")
+    thrust = flight["thrust"].m_as("N")
+    assert np.all(thrust[(time > 0.0) & (time <= 0.5)] > 0.0)
+    assert np.all(thrust[time > 0.5] == 0.0)
+    assert first.config.physics == _CutOff()
+
+
+@dataclass(frozen=True)
+class _Twisted(RocketPhysics):
+    """Table aero with its torque doubled."""
+
+    def aero(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        time: float,
+        air_velocity: np.ndarray,
+        conditions: AtmosphereConditions,
+        to_body: np.ndarray,
+        cg_location: np.ndarray,
+        properties: RocketProperties,
+        thrust: float,
+    ) -> AeroPointSI:
+        aero = super().aero(
+            time, air_velocity, conditions, to_body, cg_location, properties, thrust
+        )
+        return aero._replace(torque=aero.torque * 2.0)
+
+
+def test_torque_its_coefficients_do_not_explain_warns(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Telemetry's coefficients must explain the torque as well as the force."""
+    whole = _to_apogee(baseline_rocket_properties)
+    config = replace(whole.config, physics=_Twisted())
+    state = replace(whole.initial_state, velocity=vector((100.0, 5.0, 0.0), "m/s"))
+
+    with pytest.warns(RuntimeWarning, match="_Twisted gives an aero torque"):
+        flight_point_si(0.0, state, baseline_rocket_properties, config)
+
+
+class _Lost(RocketPhysics):
+    """Physics whose ``after`` forgets to return one."""
+
+    def after(self, event: str, point: FlightPointSI) -> RocketPhysics:
+        return None  # type: ignore[return-value]
+
+
+def test_after_returning_no_physics_fails(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A broken ``after`` stops the run instead of flying on without physics."""
+    whole = _to_apogee(baseline_rocket_properties)
+    segment = replace(whole, config=replace(whole.config, physics=_Lost()))
+
+    with pytest.raises(TypeError, match="_Lost.after.*not a RocketPhysics"):
+        segment.run()
 
 
 def test_later_segment_with_a_rail_is_rejected(

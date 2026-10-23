@@ -7,6 +7,7 @@ from support import truth
 from flight_sim.environment.atmosphere import VacuumAtmosphere
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.environment.launch_rail import LaunchRail
+from flight_sim import events
 from flight_sim.events import APOGEE, IMPACT, peak_vertical_velocity
 from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import (
@@ -149,3 +150,15 @@ def test_custom_event() -> None:
     burnout = FlightEvent("burnout", lambda time, _state: 4.0 - time)
 
     assert burnout.crossed(3.0, _coasting_state(0.0), 5.0, _coasting_state(0.0))
+
+
+def test_burnout_fires_its_delay_after_the_thrust_curve_ends(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """Burnout is the end of the motor's thrust curve plus the delay."""
+    event = events.burnout(baseline_rocket_properties, delay=scalar(1.0, "s"))
+    end = baseline_rocket_properties.engine.burnout_time()
+
+    assert event.name == "burnout"
+    assert event.value(end + 1.0, RocketState()) == 0.0
+    assert event.value(end, RocketState()) > 0.0

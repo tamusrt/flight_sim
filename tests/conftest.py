@@ -67,6 +67,9 @@ class _InertEngine(Engine):
     def mass_properties(self, time: float) -> MassPropertiesSI:
         return MassPropertiesSI(0.0, np.zeros(3), np.zeros((3, 3)))
 
+    def burnout_time(self) -> float:
+        return 0.0
+
 
 @pytest.fixture(name="unpowered_rocket_properties")
 def _unpowered_rocket_properties(

@@ -12,7 +12,6 @@ from flight_sim.flight_point import FlightPointSI
 from flight_sim.integration import IntegrationStats
 from flight_sim.output import OutputConfiguration
 from flight_sim.simulation import Flight, Simulation
-from flight_sim.vehicle.rocket_state import RocketState
 
 
 @dataclass
@@ -21,9 +20,10 @@ class Mission:
 
     Each segment is a ``Simulation`` with its own rocket, world and stop
     event. The first flies from its initial state; each later one starts
-    from the state, time and fired events the one before stopped at, and so
-    must use ``NoRail``. One clock runs through every segment, so thrust
-    curves, ``at_time`` events and each ``max_time`` are mission times.
+    from the state, time, step size and fired events the one before stopped
+    at, so its ``initial_time_step`` is unused and it must use ``NoRail``.
+    One clock runs through every segment, so thrust curves, ``at_time``
+    events and each ``max_time`` are mission times.
     Segment ``name`` and ``output`` are ignored.
     """
 
@@ -94,18 +94,24 @@ class Mission:
         start = clock.perf_counter()
         points: list[FlightPointSI] = []
         events: dict[str, int] = {}
-        fired: dict[str, float] = {}
+        fired: dict[str, FlightPointSI] = {}
         stats = IntegrationStats()
-        state: RocketState | None = None
+        flight: Flight | None = None
         for index, segment in enumerate(self.segments):
-            if state is not None:
+            if flight is not None:
+                state = flight.point(-1).state
                 if state.rail_start is not None:
                     raise ValueError(
                         f"Segment {index - 1} stopped at {points[-1].time} s with"
                         " the rocket still on the rail; stop it at 'rail exit' or"
                         " later"
                     )
-                segment = replace(segment, initial_state=state)
+                # Same step on as one run, so a split flight matches it exactly
+                segment = replace(
+                    segment,
+                    initial_state=state,
+                    initial_time_step=flight.next_time_step,
+                )
             flight = segment.run(points[-1].time if points else 0.0, fired)
             # shortcut: only events this segment has are watched, so a later
             # stop event only its own segment has is caught when that one starts
@@ -120,7 +126,7 @@ class Mission:
             skip = 1 if points else 0
             for name, row in flight.events.items():
                 events.setdefault(name, len(points) + row - skip)
-                fired.setdefault(name, flight.points[row].time)
+                fired.setdefault(name, flight.points[row])
             points.extend(flight.points[skip:])
             for counter in fields(stats):
                 setattr(
@@ -128,8 +134,8 @@ class Mission:
                     counter.name,
                     getattr(stats, counter.name) + getattr(flight.stats, counter.name),
                 )
-            state = flight.point(-1).state
 
+        assert flight is not None, "A mission has at least one segment"
         simulation = replace(self.segments[0], name=self.name, output=self.output)
         simulation.source = self.source
         return Flight(
@@ -139,4 +145,5 @@ class Mission:
             stats,
             run_time_s=clock.perf_counter() - start,
             units=self.output.units,
+            next_time_step=flight.next_time_step,
         )

@@ -1,8 +1,10 @@
 """Standard flight events the integrator can land a step on."""
 
+from typing import Annotated
+
 from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import IntegrationConfiguration, derivative_computation
-from flight_sim.units import Scalar
+from flight_sim.units import Scalar, scalar
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
@@ -34,6 +36,23 @@ def peak_vertical_velocity(
         return float(derivative.acceleration.m_as("m/s**2")[0])
 
     return FlightEvent("peak vertical velocity", vertical_acceleration)
+
+
+def burnout(
+    properties: RocketProperties,
+    name: str = "burnout",
+    delay: Annotated[Scalar, "s"] = scalar(0.0, "s"),
+) -> FlightEvent:
+    """Build the event ``delay`` after the motor's thrust curve ends.
+
+    The motor is read at each call, so a motor lit by an event during the
+    flight is judged as lit.
+    """
+    delay_s = float(delay.m_as("s"))
+    return FlightEvent(
+        name,
+        lambda time, _state: properties.engine.burnout_time() + delay_s - time,
+    )
 
 
 def at_time(name: str, time: Scalar) -> FlightEvent:
