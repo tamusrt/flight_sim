@@ -123,15 +123,40 @@ def test_run_fails_when_the_stop_event_misses_the_max_time(
 def test_unknown_ignition_event_is_rejected(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
-    """An ignition event the flight does not have is rejected."""
+    """An ignition event the flight does not have, nor had fire, is rejected."""
+    simulation = Simulation(
+        properties=_event_lit(baseline_rocket_properties, 0.0),
+        config=_WEIGHTLESS,
+        events=(at_time("stop", scalar(1.0, "s")),),
+        stop_event="stop",
+        max_time=scalar(1.0, "s"),
+    )
+
     with pytest.raises(ValueError, match="Ignition event 'go'"):
-        Simulation(
-            properties=_event_lit(baseline_rocket_properties, 0.0),
-            config=_WEIGHTLESS,
-            events=(at_time("stop", scalar(1.0, "s")),),
-            stop_event="stop",
-            max_time=scalar(1.0, "s"),
-        )
+        simulation.run()
+
+
+def test_already_fired_ignition_event_lights_from_its_time(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A run starting later lights a motor whose event fired before it."""
+    simulation = Simulation(
+        properties=_event_lit(baseline_rocket_properties, 0.2),
+        config=_WEIGHTLESS,
+        events=(at_time("stop", scalar(1.0, "s")),),
+        stop_event="stop",
+        max_time=scalar(2.0, "s"),
+    )
+
+    flight = simulation.run(start_time=0.5, fired_events={"go": 0.4})
+
+    time = flight.time.m_as("s")
+    thrust = flight["thrust"].m_as("N")
+    assert time[0] == 0.5
+    assert flight.at("stop").time.m_as("s") == pytest.approx(1.0, abs=1e-6)
+    assert np.all(thrust[time < 0.6] == 0.0)
+    assert np.all(thrust[time > 0.6] > 0.0)
+    assert simulation.properties.engine.pending_ignition is not None
 
 
 def test_engine_without_event_ignition_cannot_be_lit(

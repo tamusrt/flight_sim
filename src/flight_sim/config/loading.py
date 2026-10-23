@@ -57,13 +57,17 @@ def load(path: str | Path, cls: type[T]) -> T:
     return load_with_source(path, cls)[0]
 
 
-def load_with_source(path: str | Path, cls: type[T]) -> tuple[T, InputSource]:
+def load_with_source(
+    path: str | Path, cls: type[T], table: dict[str, Any] | None = None
+) -> tuple[T, InputSource]:
     """Build an object from a TOML file, and describe the input it came from.
 
     Args:
         path (str | Path): TOML file whose top-level table builds the object.
         cls (type[T]): Class of the object, used when the file names no
             ``type``.
+        table (dict[str, Any] | None, optional): The file as ``load_toml``
+            already read it. Defaults to reading it.
 
     Returns:
         tuple[T, InputSource]: The built object, and the file and resolved
@@ -73,7 +77,8 @@ def load_with_source(path: str | Path, cls: type[T]) -> tuple[T, InputSource]:
         ConfigError: If the file cannot be read or does not build a ``cls``.
     """
     start = clock.perf_counter()
-    table = load_toml(path)
+    if table is None:
+        table = load_toml(path)
     record = BuildRecord()
     result = build(table, cls, record=record)
     if not isinstance(result, cls):

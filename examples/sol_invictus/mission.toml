@@ -1,0 +1,20 @@
+# sim.toml flown as a mission of two segments: up the rail, then free to
+# impact. Run it with:
+#
+#   uv run flight_sim examples/sol_invictus/mission.toml
+
+name = "Sol Invictus mission example"
+
+[[segments]]
+include = "sim.toml"
+stop_event = "rail exit"
+
+# Starts where the rail segment stopped, so it needs no rail of its own
+[[segments]]
+include = "sim.toml"
+config.truth.launch_rail = { type = "flight_sim.environment.launch_rail.NoRail" }
+
+[output]
+directory = "out/{name}/{datetime}"
+sample_interval = "0.01 s"
+plots = ["trajectory", "attitude", "aero", "propulsion"]

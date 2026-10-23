@@ -22,10 +22,17 @@ from flight_sim.integration import (
     SimConfiguration,
     adaptive_step,
     derivative_computation,
+    flight_point_si,
     locate_event,
     step,
 )
 from flight_sim.units import matrix, scalar, vector
+from flight_sim.utilities.data_loader import (
+    AeroCoefficients,
+    AeroFlow,
+    AeroModel,
+    AeroTable,
+)
 from flight_sim.utilities.dcm import body_to_world
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
@@ -571,6 +578,7 @@ def test_six_dof_aerodynamic_response(
 ) -> None:
     """Verify that all six coefficients drive every axis."""
 
+    assert isinstance(unpowered_rocket_properties.aero_table, AeroTable)
     unpowered_rocket_properties.aero_table.values[:] = 1.0
 
     state = RocketState()
@@ -598,6 +606,7 @@ def test_aerodynamics_finite_at_zero_and_reversed_angle_of_attack(
     unpowered_rocket_properties: RocketProperties, vertical_velocity: float
 ) -> None:
     """A vertical rocket flying nose-first or tail-first gets finite loads."""
+    assert isinstance(unpowered_rocket_properties.aero_table, AeroTable)
     unpowered_rocket_properties.aero_table.values[:] = 1.0
     state = RocketState()
     state.position = vector((1000.0, 0.0, 0.0), "m")
@@ -612,6 +621,42 @@ def test_aerodynamics_finite_at_zero_and_reversed_angle_of_attack(
     assert np.all(np.isfinite(angular_accel))
     assert np.all(np.isfinite(linear_accel))
     assert abs(angular_accel[0]) > 0.0
+
+
+class _PowerOnDrag(AeroModel):
+    """Table drag that drops to zero while the motor pushes, recording thrust."""
+
+    def __init__(self, table: AeroTable) -> None:
+        self.table = table
+        self.reference_area_m2 = table.reference_area_m2
+        self.reference_length_m = table.reference_length_m
+        self.reference_point_m = table.reference_point_m
+        self.thrusts: list[float] = []
+
+    def coefficients(self, flow: AeroFlow) -> AeroCoefficients:
+        self.thrusts.append(flow.thrust)
+        c = self.table.coefficients(flow)
+        return replace(c, cx=0.0) if flow.thrust > 0.0 else c
+
+
+def test_aero_model_sees_thrust_and_drives_the_loads(
+    baseline_rocket_properties: RocketProperties,
+) -> None:
+    """A custom aero model gets the motor's thrust and its coefficients are flown."""
+    assert isinstance(baseline_rocket_properties.aero_table, AeroTable)
+    model = _PowerOnDrag(baseline_rocket_properties.aero_table)
+    properties = replace(baseline_rocket_properties, aero_table=model)
+    state = RocketState()
+    state.position = vector((1000.0, 0.0, 0.0), "m")
+    state.velocity = vector((100.0, 0.0, 0.0), "m/s")
+
+    burning = flight_point_si(1.0, state, properties, _CONFIG)
+    coasting = flight_point_si(10.0, state, properties, _CONFIG)
+
+    assert model.thrusts[0] == pytest.approx(2000.0)
+    assert model.thrusts[-1] == 0.0
+    assert burning.aero.coefficients.cx == 0.0
+    assert coasting.aero.coefficients.cx != 0.0
 
 
 def test_locate_event_finds_ballistic_apogee(

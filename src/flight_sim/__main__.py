@@ -12,7 +12,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 from flight_sim import output
-from flight_sim.config import ConfigError
+from flight_sim.config import ConfigError, load_toml, load_with_source
+from flight_sim.mission import Mission
 from flight_sim.simulation import Flight, Simulation
 
 # Functions listed by --profile
@@ -108,19 +109,24 @@ def _parser(command: str | None) -> argparse.ArgumentParser:
     return parser
 
 
-def _load(path: str | Path) -> Simulation:
-    """Build a sim from its input file, exiting with the reason if it cannot."""
+def _load(path: str | Path) -> Simulation | Mission:
+    """Build a sim, or a mission if it has segments, exiting if it cannot."""
+    start = clock.perf_counter()
     try:
-        return Simulation.from_file(path)
+        table = load_toml(path)
+        cls: type[Simulation | Mission] = Mission if "segments" in table else Simulation
+        built, source = load_with_source(path, cls, table)
     except ConfigError as error:
         raise SystemExit(f"Cannot build {path}:\n  {error}") from None
+    built.source = replace(source, load_time_s=clock.perf_counter() - start)
+    return built
 
 
-def fly(simulation: Simulation, args: argparse.Namespace) -> None:
+def fly(simulation: Simulation | Mission, args: argparse.Namespace) -> None:
     """Fly a sim, print its headline numbers, then write and plot it.
 
     Args:
-        simulation (Simulation): The sim to fly.
+        simulation (Simulation | Mission): The sim to fly.
         args (argparse.Namespace): Parsed arguments, for --no-show and
             --profile.
     """

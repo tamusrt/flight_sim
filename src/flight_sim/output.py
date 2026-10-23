@@ -20,6 +20,7 @@ from flight_sim.telemetry import channel_names
 from flight_sim.units import Scalar, UnitChecked, UnitSystem
 
 if TYPE_CHECKING:
+    from flight_sim.mission import Mission
     from flight_sim.simulation import Flight, Simulation
 
 FORMATS = ("csv", "parquet")
@@ -152,7 +153,7 @@ def file_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "flight"
 
 
-def prepare(simulation: "Simulation", *, overwrite: bool = False) -> Path:
+def prepare(simulation: "Simulation | Mission", *, overwrite: bool = False) -> Path:
     """Create a sim's run directory and write the input it runs from.
 
     The directory gets RESOLVED_INPUT, which names a copy of each data file
@@ -160,8 +161,8 @@ def prepare(simulation: "Simulation", *, overwrite: bool = False) -> Path:
     directory, all relative to itself, so the directory reruns anywhere.
 
     Args:
-        simulation (Simulation): Sim read from a file, naming an output
-            directory.
+        simulation (Simulation | Mission): Sim read from a file, naming an
+            output directory.
         overwrite (bool, optional): Write into a directory that already
             exists. Defaults to refusing.
 
@@ -264,7 +265,8 @@ def _write_input(source: InputSource, directory: Path) -> None:
     copies: dict[Path, str] = {}
     relative_paths: dict[str, str] = {}
     for where, path in source.paths.items():
-        if where == "output.directory":
+        # A mission's segments have output tables of their own, ignored too
+        if where.endswith("output.directory"):
             continue
         if path not in copies:
             name, number = path.name, 1
@@ -278,6 +280,8 @@ def _write_input(source: InputSource, directory: Path) -> None:
 
     table = source.table_with(relative_paths)
     table["output"] = {**table.get("output", {}), "directory": "."}
+    for segment in table.get("segments", ()):
+        segment.pop("output", None)
     comments = {
         default: "pulled from default"
         for default in source.defaults

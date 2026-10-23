@@ -30,6 +30,7 @@ from flight_sim.flight_point import (
     StateDerivativeSI,
 )
 from flight_sim.units import Scalar, UnitChecked, Vector, scalar, vector
+from flight_sim.utilities.data_loader import AeroFlow
 from flight_sim.utilities.dcm import aero_angles, body_to_world
 from flight_sim.utilities.quaternion import (
     Quaternion,
@@ -244,10 +245,12 @@ def _aero_loads(
     to_body: np.ndarray,
     cg_location: np.ndarray,
     inputs: _StepInputs,
+    *,
+    thrust: float,
 ) -> AeroPointSI:
     """Compute the flow angles and the aerodynamic loads, in body axes.
 
-    The torque is the table's moment about the reference point plus the
+    The torque is the model's moment about the reference point plus the
     moment of the force through the lever arm from the CG.
 
     Args:
@@ -257,6 +260,7 @@ def _aero_loads(
         to_body (np.ndarray): World-to-body rotation matrix.
         cg_location (np.ndarray): CG from the nose tip in body axes in m.
         inputs (_StepInputs): Constants of the step.
+        thrust (float): Motor thrust in N, for the model.
 
     Returns:
         AeroPointSI: Force in N and torque about the CG in N*m, with the flow
@@ -267,7 +271,9 @@ def _aero_loads(
     speed = math.sqrt(float(airspeed_body @ airspeed_body))
     alpha, phi = aero_angles(airspeed_body)
     mach = speed / conditions.speed_of_sound
-    c = table(mach, math.degrees(alpha), math.degrees(phi))
+    c = table.coefficients(
+        AeroFlow(mach, math.degrees(alpha), math.degrees(phi), thrust)
+    )
     coefficients = np.array([c.cx, c.cy, c.cz, c.cmx, c.cmy, c.cmz])
 
     # Dynamic pressure times reference area gives force per unit coefficient
@@ -370,14 +376,15 @@ def _loads(time: float, values: np.ndarray, inputs: _StepInputs) -> _Loads:
     gravity = inputs.gravity.magnitude(inputs.latitude_rad, altitude)
 
     # Aerodynamics plus thrust along the nose, then gravity along -X
+    thrust = inputs.properties.engine.get_thrust(time, conditions.pressure)
     aero = _aero_loads(
         velocity - wind,
         conditions,
         to_world.T,
         mass_properties.cg_location,
         inputs,
+        thrust=thrust,
     )
-    thrust = inputs.properties.engine.get_thrust(time, conditions.pressure)
     force_body = aero.force.copy()
     force_body[0] += thrust
     acceleration = to_world @ force_body / mass_properties.mass

@@ -72,49 +72,72 @@ class Simulation(UnitChecked):
         return simulation
 
     def __post_init__(self) -> None:
-        """Check that the stop and ignition events are among the flight's events.
+        """Check that the stop event is among the flight's events.
 
         Raises:
-            ValueError: If either names an event the flight does not have.
+            ValueError: If it names an event the flight does not have.
         """
         super().__post_init__()
         names = self.event_names()
         if self.stop_event not in names:
             raise ValueError(f"Stop event {self.stop_event!r} is not one of {names}")
-        ignition = self.properties.engine.pending_ignition
-        if ignition is not None and ignition.event not in names:
-            raise ValueError(f"Ignition event {ignition.event!r} is not one of {names}")
 
     def event_names(self) -> tuple[str, ...]:
         """Return the names of the events the flight can hit, the rail's first."""
         events = (*self.config.truth.launch_rail.events, *self.events)
         return tuple(event.name for event in events)
 
-    def run(self) -> "Flight":
+    def run(
+        self, start_time: float = 0.0, fired_events: Mapping[str, float] | None = None
+    ) -> "Flight":
         """Fly from the initial state until the stop event.
 
         The engine is restored afterwards, so the flight can be run again.
 
+        Args:
+            start_time (float, optional): Time in seconds the initial state is
+                at. Defaults to 0.
+            fired_events (Mapping[str, float] | None, optional): Events that
+                fired before the start, with their times in seconds, as a
+                ``Mission`` hands on. A motor lit by one ignites its delay
+                after that time. Defaults to none.
+
         Returns:
-            Flight: A flight point at launch and after every step, with the
+            Flight: A flight point at the start and after every step, with the
                 integrator's work and the wall time the run took.
 
         Raises:
+            ValueError: If the motor's ignition event is neither one of the
+                flight's events nor already fired, or, with events already
+                fired, the stop event is already behind the start.
             RuntimeError: If the stop event has not fired by ``max_time``.
         """
         start = clock.perf_counter()
-        stats = IntegrationStats()
-        state = self.config.truth.launch_rail.mount(self.initial_state)
+        fired = dict(fired_events or {})
         engine = self.properties.engine
         ignition = engine.pending_ignition
+        names = (*self.event_names(), *fired)
+        if ignition is not None and ignition.event not in names:
+            raise ValueError(f"Ignition event {ignition.event!r} is not one of {names}")
+        stats = IntegrationStats()
+        state = self.config.truth.launch_rail.mount(self.initial_state)
         dt = self.initial_time_step
         max_time_s = float(self.max_time.m_as("s"))
-        time = 0.0
+        time = start_time
         points: list[FlightPointSI] = []
         event_rows: dict[str, int] = {}
         hit: FlightEvent | None = None
 
         try:
+            if ignition is not None and ignition.event in fired:
+                self.properties.engine = engine.ignited(
+                    fired[ignition.event] + float(ignition.delay.m_as("s"))
+                )
+                ignition = None
+            if fired:
+                # Continuing an earlier segment, judged with the motor as lit
+                # as it will fly
+                self._check_ahead(time, state)
             while True:
                 points.append(
                     flight_point_si(time, state, self.properties, self.config)
@@ -156,6 +179,20 @@ class Simulation(UnitChecked):
             run_time_s=clock.perf_counter() - start,
             units=self.output.units,
         )
+
+    def _check_ahead(self, time: float, state: RocketState) -> None:
+        """Fail now if the stop event already fired, as it never would again.
+
+        Raises:
+            ValueError: If the stop event's value is not positive at the start.
+        """
+        events = (*self.config.truth.launch_rail.events, *self.events)
+        stop = next(event for event in events if event.name == self.stop_event)
+        if not stop.value(time, state) > 0.0:
+            raise ValueError(
+                f"Stop event {stop.name!r} is already behind the start at {time} s,"
+                " so it would never fire"
+            )
 
 
 @dataclass(frozen=True)
