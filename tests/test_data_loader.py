@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import astuple, replace
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -197,3 +198,48 @@ def test_zero_alpha_xcp_far_from_the_next_row_is_flagged() -> None:
     """A zero alpha xCP left at a placeholder is flagged."""
     with pytest.warns(UserWarning, match="Zero alpha xCP"):
         _table(_cp_values([0.0, 1.0], [0.0, -12.0]), [0.0, 1.0])
+
+
+def test_power_on_cx_applies_only_while_powered() -> None:
+    """A sixth column replaces Cx while the motor burns."""
+    values = np.zeros((2, 2, 2, 6))
+    values[..., 0], values[..., 5] = -0.5, -0.4
+    table = AeroTable(
+        mach_axis=np.array([0.1, 0.8]),
+        alpha_axis=np.array([0.0, 5.0]),
+        phi_axis=np.array([0.0, 360.0]),
+        values=values,
+        reference_area=scalar(1.0, "m**2"),
+        reference_length=scalar(1.0, "m"),
+        reference_point=vector((0.0, 0.0, 0.0), "m"),
+        frame="body",
+        extrapolation="linear",
+    )
+
+    assert table(0.3, 2.0, 0.0).cx == pytest.approx(-0.5)
+    assert table(0.3, 2.0, 0.0, powered=True).cx == pytest.approx(-0.4)
+    # Without the column, powered flight keeps the power-off Cx
+    assert _csv_table()(0.3, 2.0, 0.0, powered=True) == _csv_table()(0.3, 2.0, 0.0)
+
+
+def test_csv_reads_power_on_cx_when_present(tmp_path: Path) -> None:
+    """A CxPowerOn column adds a sixth value to the table."""
+    path = tmp_path / "aero.csv"
+    rows = ["Mach,Alpha,Phi,Cx,Cy,Cz,CMx,xCP,CxPowerOn"]
+    for mach in (0.5, 1.5):
+        for alpha in (0, 5):
+            for phi in (0, 360):
+                rows.append(f"{mach},{alpha},{phi},-0.5,0,0,0,-1,-0.4")
+    path.write_text("\n".join(rows))
+
+    table = aero_table_from_csv(
+        path,
+        reference_area=scalar(1.0, "m**2"),
+        reference_length=scalar(1.0, "m"),
+        reference_point=vector((0.0, 0.0, 0.0), "m"),
+        frame="body",
+        extrapolation="linear",
+    )
+
+    assert table.values.shape[-1] == 6
+    assert _csv_table().values.shape[-1] == 5

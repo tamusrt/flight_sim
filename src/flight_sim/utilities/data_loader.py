@@ -31,6 +31,10 @@ class AeroCoefficients:
 # CSV columns, in the order of the table's last axis
 _AERO_COLUMNS: tuple[str, ...] = ("Cx", "Cy", "Cz", "CMx", "xCP")
 
+# Optional last column: Cx while the motor burns, as base drag falls with the
+# exhaust filling the wake
+_POWER_ON_COLUMN = "CxPowerOn"
+
 # Largest jump in xCP, in reference lengths, from the first nonzero alpha row
 # to the zero alpha row before it is flagged
 _ZERO_ALPHA_XCP_TOLERANCE = 1.0
@@ -61,8 +65,8 @@ class AeroTable(UnitChecked):
     alpha_axis: np.ndarray  # Degrees, strictly increasing, at least two
     phi_axis: np.ndarray  # Degrees, strictly increasing, at least two
 
-    # Shape (len(mach_axis), len(alpha_axis), len(phi_axis), 5), last axis
-    # Cx, Cy, Cz, CMx, xCP
+    # Shape (len(mach_axis), len(alpha_axis), len(phi_axis), 5 or 6), last axis
+    # Cx, Cy, Cz, CMx, xCP and optionally CxPowerOn
     values: np.ndarray
 
     # Forces are normalized by the reference area, moments also by the
@@ -99,9 +103,13 @@ class AeroTable(UnitChecked):
                 f" use {get_args(Extrapolation)}"
             )
         shape = (len(self.mach_axis), len(self.alpha_axis), len(self.phi_axis))
-        if self.values.shape != (*shape, len(_AERO_COLUMNS)):
+        if self.values.shape[:3] != shape or self.values.shape[3] not in (
+            len(_AERO_COLUMNS),
+            len(_AERO_COLUMNS) + 1,
+        ):
             raise ValueError(
                 f"Aero table values must have shape {(*shape, len(_AERO_COLUMNS))}"
+                f", or one more column for {_POWER_ON_COLUMN}"
             )
         if not np.all(np.isfinite(self.values)):
             raise ValueError("Aero table values must be finite")
@@ -122,19 +130,25 @@ class AeroTable(UnitChecked):
         )
         object.__setattr__(self, "reference_point_m", self.reference_point.m_as("m"))
 
-    def __call__(self, mach: float, alpha: float, phi: float) -> AeroCoefficients:
+    def __call__(
+        self, mach: float, alpha: float, phi: float, *, powered: bool = False
+    ) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.
 
         Args:
             mach (float): Mach number.
             alpha (float): Total angle of attack in degrees.
             phi (float): Aerodynamic roll angle in degrees.
+            powered (bool, optional): Whether the motor burns, which takes
+                the power-on Cx where the table has one. Defaults to False.
 
         Returns:
             AeroCoefficients: The interpolated coefficients in body axes.
         """
         phi = phi % 360.0
-        cx, cy, cz, cmx, xcp = self._interpolate(mach, alpha, phi)
+        cx, cy, cz, cmx, xcp, *power_on = self._interpolate(mach, alpha, phi)
+        if powered and power_on:
+            cx = power_on[0]
         if self.frame == "missile":
             # Rolling about X leaves the axial force and rolling moment alone
             cx, cy, cz = missile_to_body(math.radians(phi)) @ np.array([cx, cy, cz])
@@ -188,7 +202,7 @@ def aero_table_from_csv(
     Args:
         filepath (str | Path): CSV with "Mach", "Alpha", "Phi", "Cx", "Cy",
             "Cz", "CMx" and "xCP" columns, with components along the axes of
-            ``frame``.
+            ``frame``, and optionally "CxPowerOn".
         reference_area (Scalar): Area the coefficients are normalized by.
         reference_length (Scalar): Length the rolling moment is also
             normalized by and xCP is measured in.
@@ -206,6 +220,9 @@ def aero_table_from_csv(
     alpha_axis = np.sort(data_frame["Alpha"].unique())
     phi_axis = np.sort(data_frame["Phi"].unique())
 
+    columns = _AERO_COLUMNS
+    if _POWER_ON_COLUMN in data_frame.columns:
+        columns += (_POWER_ON_COLUMN,)
     values = np.stack(
         [
             data_frame.pivot_table(
@@ -213,7 +230,7 @@ def aero_table_from_csv(
             )
             .to_numpy()
             .reshape(len(mach_axis), len(alpha_axis), len(phi_axis))
-            for column in _AERO_COLUMNS
+            for column in columns
         ],
         axis=-1,
     )
