@@ -45,6 +45,20 @@ def test_csv_reads_sorted_rows_with_blanks_unknown(tmp_path: Path) -> None:
     assert np.isnan(correction.cx_viscous[2])
 
 
+def test_csv_reads_the_alpha_0_rows_of_an_aero_table(tmp_path: Path) -> None:
+    """An aero table gives its zero-alpha rows once, whatever other angles it has."""
+    path = tmp_path / "aero.csv"
+    path.write_text(
+        "Mach,Alpha,Phi,Cx,CxViscous\n"
+        "0.1,0,0,-0.9,0.6\n0.1,0,360,-0.9,0.6\n0.1,5,0,-1.0,0.7\n0.4,0,0,-0.6,0.5\n"
+    )
+
+    correction = ReynoldsCorrection.from_csv(path)
+
+    assert np.array_equal(correction.mach_axis, [0.1, 0.4])
+    assert np.array_equal(correction.cx_viscous, [0.6, 0.5])
+
+
 def test_mismatched_rows_are_refused() -> None:
     """There must be one CxViscous per Mach."""
     with pytest.raises(ValueError, match="one CxViscous per Mach"):

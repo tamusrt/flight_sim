@@ -51,8 +51,14 @@ class ReynoldsCorrection:
 
     @classmethod
     def from_csv(cls, filepath: str | Path) -> "ReynoldsCorrection":
-        """Read a CSV with "Mach" and "CxViscous" columns, blank where unknown."""
-        data_frame = pd.read_csv(filepath).sort_values("Mach")
+        """Read a CSV with "Mach" and "CxViscous" columns, blank where unknown.
+
+        An aero table works as is: only its alpha 0, phi 0 rows are used.
+        """
+        data_frame = pd.read_csv(filepath)
+        if {"Alpha", "Phi"} <= set(data_frame.columns):
+            data_frame = data_frame[(data_frame["Alpha"] == 0) & (data_frame["Phi"] == 0)]
+        data_frame = data_frame.sort_values("Mach")
         return cls(
             data_frame["Mach"].to_numpy(dtype=float),
             data_frame["CxViscous"].to_numpy(dtype=float),
