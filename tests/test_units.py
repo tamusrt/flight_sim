@@ -83,7 +83,7 @@ def test_quantities_convert_between_units() -> None:
                 np.zeros(2),
                 np.zeros(2),
                 np.zeros(2),
-                np.zeros((2, 2, 2, 6)),
+                np.zeros((2, 2, 2, 5)),
                 reference_area=scalar(1.0, "m"),
                 reference_length=scalar(1.0, "m"),
                 reference_point=vector((0.0, 0.0, 0.0), "m"),

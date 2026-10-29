@@ -1,7 +1,8 @@
 """Functions for loading aerodynamic CSV data."""
 
 import math
-from dataclasses import dataclass, field, fields
+import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal, get_args
 
@@ -17,20 +18,22 @@ class AeroCoefficients:
     """Body-frame aerodynamic coefficients at one flight condition."""
 
     # Force components along the body X, Y and Z axes
-    cx: float = field(metadata={"column": "Cx"})
-    cy: float = field(metadata={"column": "Cy"})
-    cz: float = field(metadata={"column": "Cz"})
+    cx: float
+    cy: float
+    cz: float
 
-    # Moment components about the body X, Y and Z axes
-    cmx: float = field(metadata={"column": "CMx"})
-    cmy: float = field(metadata={"column": "CMy"})
-    cmz: float = field(metadata={"column": "CMz"})
+    # Moment components about the body X, Y and Z axes, about the reference point
+    cmx: float
+    cmy: float
+    cmz: float
 
 
-# CSV columns in AeroCoefficients field order
-_AERO_COLUMNS: tuple[str, ...] = tuple(
-    coefficient.metadata["column"] for coefficient in fields(AeroCoefficients)
-)
+# CSV columns, in the order of the table's last axis
+_AERO_COLUMNS: tuple[str, ...] = ("Cx", "Cy", "Cz", "CMx", "xCP")
+
+# Largest jump in xCP, in reference lengths, from the first nonzero alpha row
+# to the zero alpha row before it is flagged
+_ZERO_ALPHA_XCP_TOLERANCE = 1.0
 
 # Axes a table's components are along
 AeroFrame = Literal["body", "missile"]
@@ -44,6 +47,11 @@ Extrapolation = Literal["linear", "clamp"]
 class AeroTable(UnitChecked):
     """Trilinear lookup of aerodynamic coefficients over Mach, alpha_tot and phi_a.
 
+    The force acts at the center of pressure, xCP reference lengths along body
+    X from the reference point, which gives the pitching and yawing moments.
+    The rolling moment is tabulated. At zero alpha, where the force vanishes,
+    xCP is the limit of the CP as alpha goes to zero.
+
     The frames and angles are defined in ``flight_sim.utilities.dcm``, with the
     angles in degrees; phi is wrapped into [0, 360). Outside the grid, each
     coefficient follows ``extrapolation`` along each axis it is off.
@@ -53,15 +61,16 @@ class AeroTable(UnitChecked):
     alpha_axis: np.ndarray  # Degrees, strictly increasing, at least two
     phi_axis: np.ndarray  # Degrees, strictly increasing, at least two
 
-    # Shape (len(mach_axis), len(alpha_axis), len(phi_axis), 6), last axis in
-    # AeroCoefficients field order
+    # Shape (len(mach_axis), len(alpha_axis), len(phi_axis), 5), last axis
+    # Cx, Cy, Cz, CMx, xCP
     values: np.ndarray
 
-    # Forces are normalized by the reference area, moments also by the length
+    # Forces are normalized by the reference area, moments also by the
+    # length, which xCP is measured in
     reference_area: Annotated[Scalar, "m**2"]
     reference_length: Annotated[Scalar, "m"]
 
-    # Point the moments are taken about, from the nose tip in body axes
+    # Point xCP is measured from, from the nose tip in body axes
     reference_point: Annotated[Vector, "m"]
 
     # Missile-frame components are rotated into body axes after interpolation
@@ -75,10 +84,11 @@ class AeroTable(UnitChecked):
     reference_point_m: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Check the frame and extrapolation, and cache the reference values.
+        """Check the options and values, and cache the reference values in SI units.
 
         Raises:
-            ValueError: If the frame or extrapolation is not one of its options.
+            ValueError: If the frame or extrapolation is not one of its
+                options, the values do not match the axes, or the values are not finite.
         """
         super().__post_init__()
         if self.frame not in get_args(AeroFrame):
@@ -88,6 +98,22 @@ class AeroTable(UnitChecked):
                 f"Unknown extrapolation {self.extrapolation!r};"
                 f" use {get_args(Extrapolation)}"
             )
+        shape = (len(self.mach_axis), len(self.alpha_axis), len(self.phi_axis))
+        if self.values.shape != (*shape, len(_AERO_COLUMNS)):
+            raise ValueError(
+                f"Aero table values must have shape {(*shape, len(_AERO_COLUMNS))}"
+            )
+        if not np.all(np.isfinite(self.values)):
+            raise ValueError("Aero table values must be finite")
+        if self.alpha_axis[0] == 0.0:
+            jump = np.abs(self.values[:, 0, :, 4] - self.values[:, 1, :, 4])
+            if np.any(jump > _ZERO_ALPHA_XCP_TOLERANCE):
+                warnings.warn(
+                    f"Zero alpha xCP differs from the next alpha row by up to "
+                    f"{jump.max():.3g} reference lengths; it should be the CP's "
+                    f"limit as alpha goes to zero",
+                    stacklevel=2,
+                )
         object.__setattr__(
             self, "reference_area_m2", float(self.reference_area.m_as("m**2"))
         )
@@ -108,6 +134,22 @@ class AeroTable(UnitChecked):
             AeroCoefficients: The interpolated coefficients in body axes.
         """
         phi = phi % 360.0
+        cx, cy, cz, cmx, xcp = self._interpolate(mach, alpha, phi)
+        if self.frame == "missile":
+            # Rolling about X leaves the axial force and rolling moment alone
+            cx, cy, cz = missile_to_body(math.radians(phi)) @ np.array([cx, cy, cz])
+        # Moment of the force acting at the CP
+        return AeroCoefficients(
+            float(cx),
+            float(cy),
+            float(cz),
+            float(cmx),
+            float(-xcp * cz),
+            float(xcp * cy),
+        )
+
+    def _interpolate(self, mach: float, alpha: float, phi: float) -> np.ndarray:
+        """Return the table's columns at a point, with phi already wrapped."""
         clamp = self.extrapolation == "clamp"
         i, t_mach = _cell(self.mach_axis, mach, clamp)
         j, t_alpha = _cell(self.alpha_axis, alpha, clamp)
@@ -116,13 +158,7 @@ class AeroTable(UnitChecked):
         # Collapse the cell along phi, then alpha, then Mach
         at_phi = cell[:, :, 0] + t_phi * (cell[:, :, 1] - cell[:, :, 0])
         at_alpha = at_phi[:, 0] + t_alpha * (at_phi[:, 1] - at_phi[:, 0])
-        coefficients = at_alpha[0] + t_mach * (at_alpha[1] - at_alpha[0])
-        if self.frame == "missile":
-            to_body = missile_to_body(math.radians(phi))
-            coefficients = np.concatenate(
-                (to_body @ coefficients[:3], to_body @ coefficients[3:])
-            )
-        return AeroCoefficients(*coefficients.tolist())
+        return np.asarray(at_alpha[0] + t_mach * (at_alpha[1] - at_alpha[0]))
 
 
 def _cell(axis: np.ndarray, point: float, clamp: bool) -> tuple[int, float]:
@@ -150,13 +186,14 @@ def aero_table_from_csv(
     """Read a flight sim CSV and build one lookup covering every coefficient.
 
     Args:
-        filepath (str | Path): CSV with "Mach", "Alpha" and "Phi" columns plus one
-            column per ``AeroCoefficients`` field, with components along the
-            axes of ``frame``.
+        filepath (str | Path): CSV with "Mach", "Alpha", "Phi", "Cx", "Cy",
+            "Cz", "CMx" and "xCP" columns, with components along the axes of
+            ``frame``.
         reference_area (Scalar): Area the coefficients are normalized by.
-        reference_length (Scalar): Length the moments are also normalized by.
-        reference_point (Vector): Point the moments are taken about, from the
-            nose tip in body axes.
+        reference_length (Scalar): Length the rolling moment is also
+            normalized by and xCP is measured in.
+        reference_point (Vector): Point xCP is measured from, from the nose
+            tip in body axes.
         frame (AeroFrame): Axes of the CSV's components.
         extrapolation (Extrapolation): How the table reaches past its grid.
 

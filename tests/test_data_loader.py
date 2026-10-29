@@ -10,6 +10,7 @@ import pytest
 from flight_sim.units import scalar, vector
 from flight_sim.utilities.data_loader import (
     AeroCoefficients,
+    AeroFrame,
     AeroTable,
     Extrapolation,
     aero_table_from_csv,
@@ -86,18 +87,27 @@ def test_aero_table_rejects_an_unknown_option(option: dict[str, Any]) -> None:
         replace(_csv_table(), **option)
 
 
-def _missile_table() -> AeroTable:
-    """Return the test table's axisymmetric loads tabulated in the missile frame."""
+def _table(
+    values: np.ndarray, alphas: list[float], frame: AeroFrame = "body"
+) -> AeroTable:
+    """Return a unit-reference table over two Mach numbers and one turn of phi."""
     return AeroTable(
         mach_axis=np.array([0.1, 0.2]),
-        alpha_axis=np.array([0.0, 5.0]),
+        alpha_axis=np.array(alphas),
         phi_axis=np.array([0.0, 360.0]),
-        values=np.tile([-0.6, 0.0, -0.1, 0.0, -2.0, 0.0], (2, 2, 2, 1)),
+        values=values,
         reference_area=scalar(1.0, "m**2"),
         reference_length=scalar(1.0, "m"),
         reference_point=vector((0.0, 0.0, 0.0), "m"),
-        frame="missile",
+        frame=frame,
         extrapolation="linear",
+    )
+
+
+def _missile_table() -> AeroTable:
+    """Return the test table's axisymmetric loads tabulated in the missile frame."""
+    return _table(
+        np.tile([-0.6, 0.0, -0.1, 0.0, -20.0], (2, 2, 2, 1)), [0.0, 5.0], "missile"
     )
 
 
@@ -120,3 +130,70 @@ def test_missile_frame_matches_body_frame_on_the_grid(phi: float) -> None:
     body = _csv_table()(0.1, 5.0, phi)
 
     assert astuple(missile) == pytest.approx(astuple(body), abs=1e-12)
+
+
+def _cp_values(alphas: list[float], xcp: list[float]) -> np.ndarray:
+    """Return values whose normal force grows linearly with alpha at a given CP."""
+    values = np.zeros((2, len(alphas), 2, 5))
+    values[..., 0] = -0.5
+    values[..., 2] = -0.3 * np.array(alphas)[None, :, None]
+    values[..., 4] = np.array(xcp)[None, :, None]
+    return values
+
+
+@pytest.mark.parametrize("alpha", [0.01, 0.5, 2.5])
+def test_cp_holds_between_alpha_rows(alpha: float) -> None:
+    """The force acts at the interpolated CP, so the CP holds between rows."""
+    table = _table(_cp_values([0.0, 1.0, 4.0], [-10.0] * 3), [0.0, 1.0, 4.0])
+
+    coefficients = table(0.15, alpha, 0.0)
+
+    assert coefficients.cz == pytest.approx(-0.3 * alpha)
+    assert coefficients.cmy == pytest.approx(-10.0 * 0.3 * alpha)
+    assert -coefficients.cmy / coefficients.cz == pytest.approx(-10.0)
+
+
+def test_cp_approaches_its_zero_alpha_limit() -> None:
+    """Below the first nonzero alpha row the CP moves toward the zero alpha xCP."""
+    table = _table(_cp_values([0.0, 1.0], [-12.0, -11.0]), [0.0, 1.0])
+
+    coefficients = table(0.15, 0.25, 0.0)
+
+    assert -coefficients.cmy / coefficients.cz == pytest.approx(-11.75)
+
+
+@pytest.mark.parametrize("phi", [0.0, 45.0, 200.0])
+def test_cp_moment_turns_with_missile_frame_force(phi: float) -> None:
+    """In the missile frame the moment stays that of the force at the CP."""
+    values = _cp_values([0.0, 1.0, 4.0], [-10.0] * 3)
+    values[..., 3] = 0.05
+    table = _table(values, [0.0, 1.0, 4.0], "missile")
+
+    coefficients = table(0.15, 2.0, phi)
+    force = np.array([coefficients.cx, coefficients.cy, coefficients.cz])
+    moment = np.array([coefficients.cmx, coefficients.cmy, coefficients.cmz])
+
+    assert moment == pytest.approx(
+        np.cross([-10.0, 0.0, 0.0], force) + np.array([0.05, 0.0, 0.0]), abs=1e-12
+    )
+
+
+def test_values_must_match_the_axes() -> None:
+    """A table without one column per CSV coefficient is refused."""
+    with pytest.raises(ValueError, match="shape"):
+        _table(np.zeros((2, 2, 2, 7)), [0.0, 5.0])
+
+
+def test_values_must_be_finite() -> None:
+    """A missing or undefined xCP is refused."""
+    values = _cp_values([0.0, 1.0], [-10.0, -10.0])
+    values[0, 0, 0, 4] = math.nan
+
+    with pytest.raises(ValueError, match="finite"):
+        _table(values, [0.0, 1.0])
+
+
+def test_zero_alpha_xcp_far_from_the_next_row_is_flagged() -> None:
+    """A zero alpha xCP left at a placeholder is flagged."""
+    with pytest.warns(UserWarning, match="Zero alpha xCP"):
+        _table(_cp_values([0.0, 1.0], [0.0, -12.0]), [0.0, 1.0])
