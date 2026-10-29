@@ -260,7 +260,8 @@ def _aero_loads(
     """Compute the flow angles and the aerodynamic loads, in body axes.
 
     The torque is the table's moment about the reference point plus the
-    moment of the force through the lever arm from the CG.
+    moment of the force through the lever arm from the CG. A rocket with a
+    ``reynolds_correction`` has Cx corrected to the flight's Reynolds number.
 
     Args:
         air_velocity (np.ndarray): Velocity relative to the wind in the world
@@ -281,6 +282,9 @@ def _aero_loads(
     alpha, phi = aero_angles(airspeed_body)
     mach = speed / conditions.speed_of_sound
     c = table(mach, math.degrees(alpha), math.degrees(phi), powered=powered)
+    correction = inputs.properties.reynolds_correction
+    if correction is not None:
+        c = replace(c, cx=c.cx + correction(mach, conditions))
     coefficients = np.array([c.cx, c.cy, c.cz, c.cmx, c.cmy, c.cmz])
 
     # Dynamic pressure times reference area gives force per unit coefficient

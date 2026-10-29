@@ -134,6 +134,11 @@ def _standard_conditions(altitude_m: float) -> AtmosphereConditions:
     )
 
 
+def dynamic_viscosity(temperature: float) -> float:
+    """Return the dynamic viscosity of air in Pa*s by Sutherland's law (US76)."""
+    return 1.458e-6 * math.pow(temperature, 1.5) / (temperature + 110.4)
+
+
 @dataclass
 class StandardAtmosphere1976(AtmosphereModel, UnitChecked):
     """US Standard Atmosphere 1976 up to 86 km geometric altitude.
