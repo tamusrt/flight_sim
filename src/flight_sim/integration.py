@@ -81,6 +81,16 @@ class TruthConfiguration(UnitChecked):
 
     gravity: GravityModel = field(default_factory=WGS84Gravity)
 
+    def __post_init__(self) -> None:
+        """Anchor the atmosphere at the launch elevation."""
+        super().__post_init__()
+        elevation_m = float(self.launch_elevation.m_as("m"))
+        # A copy, so a model shared between configurations keeps its own site
+        if isinstance(self.atmosphere, StandardAtmosphere1976):
+            atmosphere = replace(self.atmosphere)
+            atmosphere.anchor(elevation_m)
+            self.atmosphere = atmosphere
+
 
 @dataclass
 class SimConfiguration(UnitChecked):
