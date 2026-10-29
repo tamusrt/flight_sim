@@ -159,7 +159,7 @@ class PropellantGrain(UnitChecked):
         Returns:
             MassPropertiesSI: The remaining hollow cylinder, about its own CG.
         """
-        remaining = 1.0 - burned_fraction
+        remaining = float(np.clip(1.0 - burned_fraction, 0.0, 1.0))
         outer_sq = self._outer_radius_sq
         # The core widens until the remaining volume matches the remaining mass
         inner_sq = outer_sq - remaining * (outer_sq - self._core_radius_sq)
@@ -207,10 +207,16 @@ class SolidEngine(Engine, UnitChecked):
         """Check the thrust curve and cache its cumulative impulse.
 
         Raises:
-            ValueError: If the times are not strictly increasing, the curve
-                delivers no impulse or the nozzle exit area is negative.
+            ValueError: If there are fewer than two samples, the times and
+                thrusts differ in length, the times are not strictly
+                increasing, the curve delivers no impulse or the nozzle exit
+                area is negative.
         """
         super().__post_init__()
+        if len(self.times) < 2:
+            raise ValueError("Thrust curve must contain at least two samples")
+        if len(self.times) != len(self.thrusts):
+            raise ValueError("Thrust and time arrays must have equal lengths")
         intervals = np.diff(self.times)
         if np.any(intervals <= 0.0):
             raise ValueError("Thrust curve times must be strictly increasing")
