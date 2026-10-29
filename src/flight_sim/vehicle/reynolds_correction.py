@@ -57,7 +57,9 @@ class ReynoldsCorrection:
         """
         data_frame = pd.read_csv(filepath)
         if {"Alpha", "Phi"} <= set(data_frame.columns):
-            data_frame = data_frame[(data_frame["Alpha"] == 0) & (data_frame["Phi"] == 0)]
+            data_frame = data_frame[
+                (data_frame["Alpha"] == 0) & (data_frame["Phi"] == 0)
+            ]
         data_frame = data_frame.sort_values("Mach")
         return cls(
             data_frame["Mach"].to_numpy(dtype=float),
