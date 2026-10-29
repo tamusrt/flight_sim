@@ -7,6 +7,7 @@ callable its ``type`` names, or of the class its field's type hint names.
 import dataclasses
 import importlib
 import inspect
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,7 +24,7 @@ from typing import (
 )
 
 import numpy as np
-from pint import PintError, Quantity
+from pint import OffsetUnitCalculusError, PintError, Quantity
 
 from flight_sim.config.defaults import record_defaults
 from flight_sim.config.errors import ConfigError
@@ -281,6 +282,10 @@ def _build_list(
     """Build a list as an array or as a sequence of built items."""
     if np.ndarray in members:
         return _floats(items, where)
+    if any(_is_quantity(member) for member in members):
+        raise ConfigError(
+            f'{where}: a list needs units, such as {{ value = [1, 2], units = "m" }}'
+        )
     for member in members:
         container = get_origin(member)
         if container in (list, tuple, Sequence):
@@ -311,6 +316,21 @@ def _floats(items: Any, where: str) -> np.ndarray:
         ) from error
 
 
+_LEADING_NUMBER = re.compile(r"\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(.*)")
+
+
+def _parse_quantity(text: str) -> Any:
+    """Parse a quantity, reading "30 degC" as a number and an offset unit."""
+    try:
+        return ureg.Quantity(text)
+    except OffsetUnitCalculusError:
+        # Parsed whole, "30 degC" is the product 30 * degC, which pint refuses
+        number = _LEADING_NUMBER.fullmatch(text)
+        if number is None:
+            raise
+        return ureg.Quantity(float(number[1]), number[2])
+
+
 def _quantity(text: str, where: str) -> Any:
     """Read a scalar quantity such as "17 ft".
 
@@ -318,7 +338,7 @@ def _quantity(text: str, where: str) -> Any:
         ConfigError: If the text is not a quantity with units.
     """
     try:
-        quantity: Any = ureg.Quantity(str(text))
+        quantity: Any = _parse_quantity(str(text))
     except (PintError, AttributeError, SyntaxError, TypeError, ValueError) as error:
         raise ConfigError(f"{where}: cannot read {text!r} as a quantity") from error
     if not isinstance(quantity, Quantity) or quantity.unitless:

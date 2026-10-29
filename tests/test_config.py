@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from flight_sim.config import ConfigError, build, load, load_toml, load_with_source
+from flight_sim.environment.atmosphere import StandardAtmosphere1976
 from flight_sim.environment.gravity import ConstantGravity
 from flight_sim.environment.launch_rail import LaunchRail
 from flight_sim.environment.wind import UniformWind
@@ -301,6 +302,18 @@ def test_array_quantities() -> None:
         build({"value": [0, 0], "units": "m"}, cg_hint, "cg")
     with pytest.raises(ConfigError, match="cg: diag needs 3 numbers"):
         build({"diag": [[1, 0], [0, 1]], "units": "m"}, cg_hint, "cg")
+    with pytest.raises(ConfigError, match="cg: a list needs units"):
+        build([0, 0, 0], cg_hint, "cg")
+
+
+@pytest.mark.parametrize(
+    "text", ["30 degC", "30degC", "86 degF", "303.15 K", "606.3/2 K"]
+)
+def test_offset_temperatures_are_read(text: str) -> None:
+    """Celsius and Fahrenheit read like any other unit."""
+    site = build({"launch_temperature": text}, StandardAtmosphere1976)
+
+    assert site.launch_temperature.m_as("K") == pytest.approx(303.15)
 
 
 def test_unreadable_quantity_is_rejected() -> None:
