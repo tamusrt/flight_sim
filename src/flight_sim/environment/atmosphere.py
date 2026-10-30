@@ -3,8 +3,10 @@
 import bisect
 import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, NamedTuple
+
+from flight_sim.units import Scalar, UnitChecked, scalar
 
 
 class AtmosphereConditions(NamedTuple):
@@ -106,33 +108,119 @@ def _layer_pressure(
 _LAYER_BASE_TEMPERATURE_K, _LAYER_BASE_PRESSURE_PA = _layer_bases()
 
 
+def _standard_conditions(altitude_m: float) -> AtmosphereConditions:
+    """Return the standard day's air conditions at a geometric altitude in metres."""
+    altitude = min(max(altitude_m, _MIN_ALTITUDE_M), _MAX_ALTITUDE_M)
+    height = _EARTH_RADIUS_M * altitude / (_EARTH_RADIUS_M + altitude)
+    layer = max(bisect.bisect_right(_LAYER_BASE_M, height) - 1, 0)
+
+    base_temperature = _LAYER_BASE_TEMPERATURE_K[layer]
+    height_above_base = height - _LAYER_BASE_M[layer]
+    temperature = base_temperature + _LAYER_LAPSE_K_PER_M[layer] * height_above_base
+    pressure = _layer_pressure(
+        temperature,
+        height_above_base,
+        _LAYER_BASE_PRESSURE_PA[layer],
+        base_temperature,
+        layer,
+    )
+    return AtmosphereConditions(
+        temperature=temperature,
+        pressure=pressure,
+        air_density=pressure / (_AIR_GAS_CONSTANT * temperature),
+        speed_of_sound=math.sqrt(
+            _HEAT_CAPACITY_RATIO * _AIR_GAS_CONSTANT * temperature
+        ),
+    )
+
+
+def dynamic_viscosity(temperature: float) -> float:
+    """Return the dynamic viscosity of air in Pa*s by Sutherland's law (US76)."""
+    return 1.458e-6 * math.pow(temperature, 1.5) / (temperature + 110.4)
+
+
 @dataclass
-class StandardAtmosphere1976(AtmosphereModel):
+class StandardAtmosphere1976(AtmosphereModel, UnitChecked):
     """US Standard Atmosphere 1976 up to 86 km geometric altitude.
 
-    Conditions are held at their values at the ends of that range.
+    Conditions are held at their values at the ends of that range. As in
+    RASAero II, temperature and pressure follow the standard variation scaled
+    to pass through the launch site's values, and humidity lowers the density.
+    The defaults give the standard day. ``anchor`` sets the site's altitude,
+    which ``TruthConfiguration`` takes from its launch elevation.
     """
+
+    # None takes the standard day's temperature at the launch site
+    launch_temperature: Annotated[Scalar | None, "K"] = None
+
+    # Site pressure reduced to sea level along the standard atmosphere, as
+    # weather stations and airfields report it
+    barometric_pressure: Annotated[Scalar, "Pa"] = field(
+        default_factory=lambda: scalar(_SEA_LEVEL_PRESSURE_PA, "Pa")
+    )
+
+    # Relative humidity at the launch site, from 0 to 1
+    relative_humidity: float = 0.0
+
+    # Geometric altitude of the launch site in m
+    _launch_altitude_m: float = field(default=0.0, init=False, repr=False)
+
+    # Site value over the standard value, for temperature and pressure
+    _scales: tuple[float, float] = field(init=False, repr=False, compare=False)
+    _vapour_pressure: float = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Check the humidity and anchor the site conditions at sea level.
+
+        Raises:
+            ValueError: If the relative humidity is outside 0 to 1.
+        """
+        super().__post_init__()
+        if not 0.0 <= self.relative_humidity <= 1.0:
+            raise ValueError("relative_humidity must be from 0 to 1, not a percentage")
+        self.anchor(self._launch_altitude_m)
+
+    def anchor(self, launch_altitude_m: float) -> None:
+        """Take the site conditions as being at a launch altitude in metres."""
+        self._launch_altitude_m = launch_altitude_m
+        standard = _standard_conditions(launch_altitude_m)
+        temperature = (
+            standard.temperature
+            if self.launch_temperature is None
+            else float(self.launch_temperature.m_as("K"))
+        )
+        pressure = (
+            float(self.barometric_pressure.m_as("Pa"))
+            * standard.pressure
+            / _SEA_LEVEL_PRESSURE_PA
+        )
+        # Water vapour pressure at the site from the Tetens formula
+        celsius = temperature - 273.15
+        self._vapour_pressure = (
+            self.relative_humidity
+            * 610.78
+            * 10.0 ** (7.5 * celsius / (celsius + 237.3))
+        )
+        self._scales = (
+            temperature / standard.temperature,
+            pressure / standard.pressure,
+        )
 
     def conditions(self, altitude_m: float) -> AtmosphereConditions:
         """Return the air conditions at a geometric altitude in metres."""
-        altitude = min(max(altitude_m, _MIN_ALTITUDE_M), _MAX_ALTITUDE_M)
-        height = _EARTH_RADIUS_M * altitude / (_EARTH_RADIUS_M + altitude)
-        layer = max(bisect.bisect_right(_LAYER_BASE_M, height) - 1, 0)
-
-        base_temperature = _LAYER_BASE_TEMPERATURE_K[layer]
-        height_above_base = height - _LAYER_BASE_M[layer]
-        temperature = base_temperature + _LAYER_LAPSE_K_PER_M[layer] * height_above_base
-        pressure = _layer_pressure(
-            temperature,
-            height_above_base,
-            _LAYER_BASE_PRESSURE_PA[layer],
-            base_temperature,
-            layer,
+        standard = _standard_conditions(altitude_m)
+        temperature = standard.temperature * self._scales[0]
+        pressure = standard.pressure * self._scales[1]
+        # Hann's formula: vapour pressure falls tenfold every 6.3 km, faster
+        # than air pressure. Vapour weighs 0.622 of dry air at the same pressure.
+        vapour_pressure = self._vapour_pressure * 10.0 ** (
+            -(altitude_m - self._launch_altitude_m) / 6300.0
         )
         return AtmosphereConditions(
             temperature=temperature,
             pressure=pressure,
-            air_density=pressure / (_AIR_GAS_CONSTANT * temperature),
+            air_density=(pressure - 0.378 * vapour_pressure)
+            / (_AIR_GAS_CONSTANT * temperature),
             speed_of_sound=math.sqrt(
                 _HEAT_CAPACITY_RATIO * _AIR_GAS_CONSTANT * temperature
             ),

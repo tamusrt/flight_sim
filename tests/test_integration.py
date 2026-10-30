@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 from pint import DimensionalityError
+from support import truth
 
 from flight_sim.__main__ import main
 from flight_sim.config import load
@@ -19,7 +20,6 @@ from flight_sim.integration import (
     IntegrationConfiguration,
     IntegrationStats,
     SimConfiguration,
-    TruthConfiguration,
     adaptive_step,
     derivative_computation,
     locate_event,
@@ -31,7 +31,7 @@ from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
-_CONFIG = IntegrationConfiguration()
+_CONFIG = IntegrationConfiguration(truth=truth())
 
 
 @patch("flight_sim.simulation.adaptive_step")
@@ -48,12 +48,41 @@ def test_main_echoes_test_input(mock_adaptive_step: MagicMock, tmp_path: Path) -
         IMPACT,
     )
 
-    main(["examples/sol_invictus/sim.toml", "--no-show", "--output-dir", str(tmp_path)])
+    run = tmp_path / "run"
+    main(["examples/sol_invictus/sim.toml", "--no-show", "--output-dir", str(run)])
 
     # Verify the simulation successfully fired the physics engine before exiting
     mock_adaptive_step.assert_called()
-    assert (tmp_path / "telemetry.csv").is_file()
-    assert (tmp_path / "trajectory.png").is_file()
+    assert (run / "resolved_input.toml").is_file()
+    assert (run / "telemetry.csv").is_file()
+    assert (run / "plots" / "trajectory.png").is_file()
+
+
+@patch("flight_sim.simulation.adaptive_step")
+def test_main_prepares_and_runs_as_separate_steps(
+    mock_adaptive_step: MagicMock, tmp_path: Path
+) -> None:
+    """Prepare writes only the input; run flies it; preparing again needs overwrite."""
+    mock_state = RocketState(position=vector((-10.0, 0.0, 0.0), "m"))
+    mock_adaptive_step.return_value = (
+        mock_state,
+        scalar(0.2, "s"),
+        scalar(0.2, "s"),
+        IMPACT,
+    )
+    run = tmp_path / "run"
+    sim = "examples/sol_invictus/sim.toml"
+
+    main(["prepare", sim, "--output-dir", str(run)])
+    assert sorted(path.name for path in run.iterdir()) == [
+        "inputs",
+        "resolved_input.toml",
+    ]
+    with pytest.raises(SystemExit, match="already exists; pass --overwrite"):
+        main(["prepare", sim, "--output-dir", str(run)])
+
+    main(["run", str(run), "--no-show"])
+    assert (run / "telemetry.csv").is_file()
 
 
 def test_main_needs_a_sim_file(capsys: pytest.CaptureFixture[str]) -> None:
@@ -77,9 +106,7 @@ def test_step_zero_force_keeps_velocity_constant(
     unpowered_rocket_properties: RocketProperties,
 ) -> None:
     """Tests that the step function keeps velocity constant"""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
-    )
+    config = IntegrationConfiguration(truth=truth(gravity=ConstantGravity(0.0)))
     state = RocketState()
     next_state = step(
         0.0, state, unpowered_rocket_properties, config, scalar(0.01, "s")
@@ -163,7 +190,7 @@ def test_step_adaptive_scaling_and_rejection(
             return altitude_m**3
 
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=_CubicGravity(), atmosphere=VacuumAtmosphere())
+        truth=truth(gravity=_CubicGravity(), atmosphere=VacuumAtmosphere())
     )
 
     state = RocketState()
@@ -199,9 +226,7 @@ def test_aero_loads_match_a_table_row(
     baseline_rocket_properties: RocketProperties, attitude: Quaternion
 ) -> None:
     """On a grid point the loads are the row's coefficients scaled by q*S and L."""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
-    )
+    config = IntegrationConfiguration(truth=truth(gravity=ConstantGravity(0.0)))
     air = config.truth.atmosphere.conditions(0.0)
     speed = 0.1 * air.speed_of_sound
     alpha = np.radians(5.0)
@@ -238,9 +263,7 @@ def test_step_angular_velocity_rotates_orientation(
     unpowered_rocket_properties: RocketProperties,
 ) -> None:
     """A constant body rate about X turns the orientation by rate * time."""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
-    )
+    config = IntegrationConfiguration(truth=truth(gravity=ConstantGravity(0.0)))
     state = RocketState()
     state.angular_velocity = vector((np.pi / 2, 0.0, 0.0), "rad/s")
 
@@ -285,9 +308,7 @@ def test_torque_free_rotation_conserves_angular_momentum(
 ) -> None:
     """With no torque, the world-frame angular momentum and spin energy hold."""
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            gravity=ConstantGravity(0.0), atmosphere=VacuumAtmosphere()
-        )
+        truth=truth(gravity=ConstantGravity(0.0), atmosphere=VacuumAtmosphere())
     )
     dry = unpowered_rocket_properties.dry_mass_properties
     properties = replace(
@@ -317,9 +338,7 @@ def test_step_length_is_limited_by_the_attitude_error(
     unpowered_rocket_properties: RocketProperties,
 ) -> None:
     """A rocket turning in place still integrates its attitude accurately."""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
-    )
+    config = IntegrationConfiguration(truth=truth(gravity=ConstantGravity(0.0)))
     state = RocketState()
     state.angular_velocity = vector((0.0, 0.5, 0.0), "rad/s")
 
@@ -360,14 +379,17 @@ def test_launch_elevation_sets_the_altitude_of_the_air_and_gravity(
         )
 
     high_pad = IntegrationConfiguration(
-        truth=TruthConfiguration(launch_elevation=scalar(1400.0, "m"))
+        truth=truth(launch_elevation=scalar(1400.0, "m"))
     )
     assert rates(state, high_pad) == pytest.approx(rates(raised, _CONFIG))
     assert rates(state, high_pad) != pytest.approx(rates(state, _CONFIG))
 
 
 _RAIL = LaunchRail(
-    length=scalar(5.0, "m"), elevation=scalar(80.0, "deg"), azimuth=scalar(90.0, "deg")
+    length=scalar(5.0, "m"),
+    friction_coefficient=0.0,
+    elevation=scalar(80.0, "deg"),
+    azimuth=scalar(90.0, "deg"),
 )
 
 
@@ -381,9 +403,7 @@ def test_rail_guides_the_rocket_up_it(
 ) -> None:
     """On the rail the rocket slides up it without turning, despite a crosswind."""
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            wind=UniformWind(speed=scalar(10.0, "m/s")), launch_rail=_RAIL
-        )
+        truth=truth(wind=UniformWind(speed=scalar(10.0, "m/s")), launch_rail=_RAIL)
     )
     state = _rail_state()
     rail = _RAIL.direction()
@@ -402,7 +422,7 @@ def test_rail_holds_an_unpowered_rocket_on_the_pad(
     baseline_rocket_properties: RocketProperties,
 ) -> None:
     """Without thrust, gravity cannot push the rocket down through the pad."""
-    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=_RAIL))
+    config = IntegrationConfiguration(truth=truth(launch_rail=_RAIL))
     after_burnout = 100.0
 
     next_state = step(
@@ -434,7 +454,7 @@ def test_friction_slows_the_run_up_the_rail(
     """A coasting rocket slides up an incline decelerated by g*(sin + mu*cos)."""
     rail = _incline_rail(friction_coefficient, 60.0)
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(
+        truth=truth(
             atmosphere=VacuumAtmosphere(),
             gravity=ConstantGravity(9.81),
             launch_rail=rail,
@@ -471,7 +491,7 @@ def test_static_friction_holds_a_rocket_at_rest_on_a_shallow_rail(
     """At rest on a 30 degree rail, friction above tan(30 deg) stops it sliding."""
     rail = _incline_rail(friction_coefficient, 30.0)
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(atmosphere=VacuumAtmosphere(), launch_rail=rail)
+        truth=truth(atmosphere=VacuumAtmosphere(), launch_rail=rail)
     )
     # Mount at the origin, then start one metre up the rail
     state = rail.mount(RocketState())
@@ -501,7 +521,7 @@ def test_rail_does_not_affect_a_free_rocket(
         angular_velocity=vector((0.1, 0.2, -0.1), "rad/s"),
         orientation=_RAIL.orientation(),
     )
-    with_rail = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=_RAIL))
+    with_rail = IntegrationConfiguration(truth=truth(launch_rail=_RAIL))
 
     dt = scalar(0.5, "s")
 
@@ -520,9 +540,13 @@ def test_rail_does_not_affect_a_free_rocket(
 
 def test_default_rocket_turns_over_and_lands_nose_first() -> None:
     """The example rocket, launched tilted, falls nose-first after apogee."""
-    rail = LaunchRail(length=scalar(17.0, "ft"), elevation=scalar(85.0, "deg"))
+    rail = LaunchRail(
+        length=scalar(17.0, "ft"),
+        friction_coefficient=0.0,
+        elevation=scalar(85.0, "deg"),
+    )
     properties = load("examples/sol_invictus/vehicle.toml", RocketProperties)
-    config = IntegrationConfiguration(truth=TruthConfiguration(launch_rail=rail))
+    config = IntegrationConfiguration(truth=truth(launch_rail=rail))
     state = rail.mount(RocketState())
 
     time = 0.0
@@ -595,9 +619,7 @@ def test_locate_event_finds_ballistic_apogee(
 ) -> None:
     """A drag-free coast peaks at the time and height the closed form gives."""
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere()
-        )
+        truth=truth(gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere())
     )
     start = RocketState()
     start.velocity = vector((50.0, 0.0, 0.0), "m/s")
@@ -621,14 +643,44 @@ def test_locate_event_finds_ballistic_apogee(
     assert apogee.velocity.m_as("m/s")[0] == pytest.approx(0.0, abs=1e-7)
 
 
+def test_locate_event_warns_when_it_runs_out_of_iterations(
+    unpowered_rocket_properties: RocketProperties,
+) -> None:
+    """An event search cut short warns and settles on the bracket's later end."""
+    config = IntegrationConfiguration(
+        truth=truth(gravity=ConstantGravity(9.81), atmosphere=VacuumAtmosphere()),
+        sim=SimConfiguration(max_event_iterations=2),
+    )
+    start = RocketState(
+        position=vector((10.0, 0.0, 0.0), "m"),
+        velocity=vector((50.0, 0.0, 0.0), "m/s"),
+    )
+    dt = scalar(20.0, "s")
+    end = step(0.0, start, unpowered_rocket_properties, config, dt)
+
+    with pytest.warns(RuntimeWarning, match="stopped after 2 iterations"):
+        state, _time = locate_event(
+            0.0,
+            start,
+            end,
+            unpowered_rocket_properties,
+            config,
+            dt=dt,
+            event=IMPACT.value,
+        )
+
+    assert state.position.m_as("m")[0] <= 0.0
+
+
 def test_step_warns_at_minimum_step_length(
     monkeypatch: pytest.MonkeyPatch, unpowered_rocket_properties: RocketProperties
 ) -> None:
     """A step whose error never meets tolerance is accepted at the minimum length."""
     config = IntegrationConfiguration(
+        truth=truth(),
         sim=SimConfiguration(
             position_tolerance=scalar(1e-7, "m"), min_time_step=scalar(1.0, "ns")
-        )
+        ),
     )
 
     def over_tolerance(
@@ -672,9 +724,7 @@ def test_configured_atmosphere_is_used(
 ) -> None:
     """In a vacuum atmosphere a coasting rocket feels no aerodynamic force."""
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(0.0)
-        )
+        truth=truth(atmosphere=VacuumAtmosphere(), gravity=ConstantGravity(0.0))
     )
     state = RocketState()
     state.velocity = vector((200.0, 50.0, 0.0), "m/s")
@@ -691,9 +741,7 @@ def test_configured_launch_latitude_sets_gravity(
 ) -> None:
     """Gravity follows the configured latitude through the default WGS84 model."""
     config = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            launch_latitude=scalar(90.0, "deg"), atmosphere=VacuumAtmosphere()
-        )
+        truth=truth(launch_latitude=scalar(90.0, "deg"), atmosphere=VacuumAtmosphere())
     )
 
     next_state = step(
@@ -715,16 +763,14 @@ def test_uniform_wind_loads_a_rocket_at_rest(
     coasting = 100.0
 
     still_air = IntegrationConfiguration(
-        truth=TruthConfiguration(
-            atmosphere=StandardAtmosphere1976(), gravity=ConstantGravity(0.0)
-        )
+        truth=truth(atmosphere=StandardAtmosphere1976(), gravity=ConstantGravity(0.0))
     )
     in_still_air = derivative_computation(coasting, state, properties, still_air)
     assert in_still_air.acceleration.m_as("m/s**2") == pytest.approx(np.zeros(3))
 
     # A west wind, blowing toward +Y
     windy = IntegrationConfiguration(
-        truth=TruthConfiguration(
+        truth=truth(
             wind=UniformWind(
                 speed=scalar(20.0, "m/s"), from_azimuth=scalar(270.0, "deg")
             ),
@@ -746,9 +792,7 @@ def test_table_loads_are_symmetric_about_the_nose(
     crossflow_direction: tuple[float, float, float],
 ) -> None:
     """The same alpha gives the same loads whichever way the crossflow points."""
-    config = IntegrationConfiguration(
-        truth=TruthConfiguration(gravity=ConstantGravity(0.0))
-    )
+    config = IntegrationConfiguration(truth=truth(gravity=ConstantGravity(0.0)))
     nose = np.array([1.0, 0.0, 0.0])
     speed, alpha_tot = 150.0, np.radians(5.0)
     coasting = 100.0

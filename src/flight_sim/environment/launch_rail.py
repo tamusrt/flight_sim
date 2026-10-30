@@ -23,6 +23,9 @@ class LaunchRail(UnitChecked):
 
     length: Annotated[Scalar, "m"]
 
+    # Coulomb friction between the rail and the rocket, kinetic and static
+    friction_coefficient: float
+
     elevation: Annotated[Scalar, "rad"] = field(
         default_factory=lambda: scalar(90.0, "deg")
     )
@@ -31,9 +34,6 @@ class LaunchRail(UnitChecked):
         default_factory=lambda: scalar(0.0, "deg")
     )
 
-    # Coulomb friction between the rail and the rocket, kinetic and static
-    friction_coefficient: float = 0.0
-
     # Event at which the rocket has slid the rail's length and leaves it
     exit_event: FlightEvent = field(init=False, repr=False, compare=False)
 
@@ -41,16 +41,28 @@ class LaunchRail(UnitChecked):
     _direction: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Cache the rail's geometry in SI units."""
+        """Check the length and cache the rail's geometry in SI units.
+
+        Raises:
+            ValueError: If the length is not positive.
+        """
         super().__post_init__()
+        length_m = float(self.length.m_as("m"))
+        if length_m <= 0.0:
+            raise ValueError(f"Rail length must be positive, got {length_m} m")
         direction = world_direction(
             float(self.elevation.m_as("rad")), float(self.azimuth.m_as("rad"))
         )
-        object.__setattr__(self, "_length_m", float(self.length.m_as("m")))
+        object.__setattr__(self, "_length_m", length_m)
         object.__setattr__(self, "_direction", direction)
         object.__setattr__(
             self, "exit_event", FlightEvent("rail exit", self._distance_to_exit)
         )
+
+    @property
+    def events(self) -> tuple[FlightEvent, ...]:
+        """Return the events the rail adds to the flight."""
+        return (self.exit_event,)
 
     def direction(self) -> np.ndarray:
         """Return the world-frame unit vector pointing up the rail."""
@@ -100,3 +112,35 @@ class LaunchRail(UnitChecked):
             q_y=-math.cos(azimuth) * math.sin(half_tilt),
             q_z=math.sin(azimuth) * math.sin(half_tilt),
         )
+
+
+@dataclass(frozen=True)
+class NoRail(LaunchRail):
+    """No rail: the rocket flies free from its initial state.
+
+    It takes no arguments and never holds a rocket, so it has no geometry.
+    """
+
+    length: Annotated[Scalar, "m"] = field(
+        init=False, default_factory=lambda: scalar(0.0, "m")
+    )
+    friction_coefficient: float = field(init=False, default=0.0)
+    elevation: Annotated[Scalar, "rad"] = field(
+        init=False, default_factory=lambda: scalar(90.0, "deg")
+    )
+    azimuth: Annotated[Scalar, "rad"] = field(
+        init=False, default_factory=lambda: scalar(0.0, "deg")
+    )
+
+    def __post_init__(self) -> None:
+        """Check the fields' units only, as there is no rail to cache."""
+        UnitChecked.__post_init__(self)
+
+    @property
+    def events(self) -> tuple[FlightEvent, ...]:
+        """Return no events, as the rocket is never on a rail to leave."""
+        return ()
+
+    def mount(self, state: RocketState) -> RocketState:
+        """Return a copy of a state off any rail, as it was otherwise."""
+        return replace(state, rail_start=None)

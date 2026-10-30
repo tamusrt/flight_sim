@@ -6,9 +6,10 @@ import numpy as np
 import pytest
 from pint import DimensionalityError
 
-from flight_sim.environment.launch_rail import LaunchRail
+from flight_sim.environment.launch_rail import LaunchRail, NoRail
 from flight_sim.units import scalar, vector
 from flight_sim.utilities.dcm import body_to_world
+from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_state import RocketState
 
 
@@ -16,6 +17,7 @@ def _rail(elevation_deg: float, azimuth_deg: float) -> LaunchRail:
     """Return a 5 m rail at the given elevation and azimuth."""
     return LaunchRail(
         length=scalar(5.0, "m"),
+        friction_coefficient=0.0,
         elevation=scalar(elevation_deg, "deg"),
         azimuth=scalar(azimuth_deg, "deg"),
     )
@@ -61,7 +63,11 @@ def test_vertical_rail_gives_the_pad_attitude() -> None:
 def test_rail_rejects_an_elevation_that_is_not_an_angle() -> None:
     """An elevation in the wrong dimension is rejected on construction."""
     with pytest.raises(DimensionalityError, match=r"LaunchRail\.elevation"):
-        LaunchRail(length=scalar(5.0, "m"), elevation=scalar(85.0, "m"))
+        LaunchRail(
+            length=scalar(5.0, "m"),
+            friction_coefficient=0.0,
+            elevation=scalar(85.0, "m"),
+        )
 
 
 def test_distance_along_is_measured_up_the_rail_from_its_foot() -> None:
@@ -103,3 +109,28 @@ def test_exit_event_counts_the_distance_left_on_the_rail() -> None:
 
     assert rail.exit_event.value(0.0, mounted) == pytest.approx(5.0)
     assert rail.exit_event.value(0.0, moved) == pytest.approx(4.0)
+
+
+@pytest.mark.parametrize("length_m", [0.0, -1.0])
+def test_rail_rejects_a_length_that_is_not_positive(length_m: float) -> None:
+    """A rail the rocket could never slide off is rejected on construction."""
+    with pytest.raises(ValueError, match="Rail length must be positive"):
+        LaunchRail(length=scalar(length_m, "m"), friction_coefficient=0.0)
+
+
+def test_no_rail_leaves_the_rocket_free() -> None:
+    """Mounting on no rail keeps the state as it was, off any rail."""
+    rail = NoRail()
+    tilted = Quaternion(q_w=0.9, q_y=0.1)
+    state = RocketState(
+        position=vector((500.0, 30.0, -20.0), "m"),
+        orientation=tilted,
+        rail_start=vector((0.0, 0.0, 0.0), "m"),
+    )
+
+    mounted = rail.mount(state)
+
+    assert mounted.rail_start is None
+    assert mounted.orientation == tilted
+    assert mounted.position.m_as("m") == pytest.approx([500.0, 30.0, -20.0])
+    assert not rail.events

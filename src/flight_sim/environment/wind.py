@@ -36,7 +36,7 @@ class UniformWind(WindModel, UnitChecked):
         default_factory=lambda: scalar(0.0, "deg")
     )
 
-    _velocity: np.ndarray = field(init=False, repr=False)
+    _velocity: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         super().__post_init__()

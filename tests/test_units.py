@@ -8,12 +8,12 @@ from typing import Annotated, Any
 import numpy as np
 import pytest
 from pint import DimensionalityError
+from support import truth
 
 from flight_sim.flight_event import EventTime
 from flight_sim.integration import (
     SimConfiguration,
     StateDerivative,
-    TruthConfiguration,
 )
 from flight_sim.units import (
     Scalar,
@@ -75,7 +75,7 @@ def test_quantities_convert_between_units() -> None:
             "SimConfiguration.position_tolerance",
         ),
         (
-            lambda: TruthConfiguration(launch_elevation=scalar(1.0, "s")),
+            lambda: truth(launch_elevation=scalar(1.0, "s")),
             "TruthConfiguration.launch_elevation",
         ),
         (
@@ -83,10 +83,12 @@ def test_quantities_convert_between_units() -> None:
                 np.zeros(2),
                 np.zeros(2),
                 np.zeros(2),
-                np.zeros((2, 2, 2, 6)),
+                np.zeros((2, 2, 2, 5)),
                 reference_area=scalar(1.0, "m"),
                 reference_length=scalar(1.0, "m"),
                 reference_point=vector((0.0, 0.0, 0.0), "m"),
+                frame="body",
+                extrapolation="linear",
             ),
             "AeroTable.reference_area",
         ),

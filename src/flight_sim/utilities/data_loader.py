@@ -1,9 +1,10 @@
 """Functions for loading aerodynamic CSV data."""
 
 import math
-from dataclasses import dataclass, field, fields
+import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 import numpy as np
 import pandas as pd  # type: ignore
@@ -17,49 +18,69 @@ class AeroCoefficients:
     """Body-frame aerodynamic coefficients at one flight condition."""
 
     # Force components along the body X, Y and Z axes
-    cx: float = field(metadata={"column": "Cx"})
-    cy: float = field(metadata={"column": "Cy"})
-    cz: float = field(metadata={"column": "Cz"})
+    cx: float
+    cy: float
+    cz: float
 
-    # Moment components about the body X, Y and Z axes
-    cmx: float = field(metadata={"column": "CMx"})
-    cmy: float = field(metadata={"column": "CMy"})
-    cmz: float = field(metadata={"column": "CMz"})
+    # Moment components about the body X, Y and Z axes, about the reference point
+    cmx: float
+    cmy: float
+    cmz: float
 
 
-# CSV columns in AeroCoefficients field order
-_AERO_COLUMNS: tuple[str, ...] = tuple(
-    coefficient.metadata["column"] for coefficient in fields(AeroCoefficients)
-)
+# CSV columns, in the order of the table's last axis
+_AERO_COLUMNS: tuple[str, ...] = ("Cx", "Cy", "Cz", "CMx", "xCP")
+
+# Optional last column: Cx while the motor burns, as base drag falls with the
+# exhaust filling the wake
+_POWER_ON_COLUMN = "CxPowerOn"
+
+# Largest jump in xCP, in reference lengths, from the first nonzero alpha row
+# to the zero alpha row before it is flagged
+_ZERO_ALPHA_XCP_TOLERANCE = 1.0
+
+# Axes a table's components are along
+AeroFrame = Literal["body", "missile"]
+
+# How a table reaches past its grid: "linear" extends the edge cell, "clamp"
+# holds the edge value
+Extrapolation = Literal["linear", "clamp"]
 
 
 @dataclass(frozen=True)
 class AeroTable(UnitChecked):
     """Trilinear lookup of aerodynamic coefficients over Mach, alpha_tot and phi_a.
 
+    The force acts at the center of pressure, xCP reference lengths along body
+    X from the reference point, which gives the pitching and yawing moments.
+    The rolling moment is tabulated. At zero alpha, where the force vanishes,
+    xCP is the limit of the CP as alpha goes to zero.
+
     The frames and angles are defined in ``flight_sim.utilities.dcm``, with the
     angles in degrees; phi is wrapped into [0, 360). Outside the grid, each
-    coefficient is extrapolated linearly from the nearest edge cell.
+    coefficient follows ``extrapolation`` along each axis it is off.
     """
 
     mach_axis: np.ndarray  # Strictly increasing, at least two values
     alpha_axis: np.ndarray  # Degrees, strictly increasing, at least two
     phi_axis: np.ndarray  # Degrees, strictly increasing, at least two
 
-    # Shape (len(mach_axis), len(alpha_axis), len(phi_axis), 6), last axis in
-    # AeroCoefficients field order
+    # Shape (len(mach_axis), len(alpha_axis), len(phi_axis), 5 or 6), last axis
+    # Cx, Cy, Cz, CMx, xCP and optionally CxPowerOn
     values: np.ndarray
 
-    # Forces are normalized by the reference area, moments also by the length
+    # Forces are normalized by the reference area, moments also by the
+    # length, which xCP is measured in
     reference_area: Annotated[Scalar, "m**2"]
     reference_length: Annotated[Scalar, "m"]
 
-    # Point the moments are taken about, from the nose tip in body axes
+    # Point xCP is measured from, from the nose tip in body axes
     reference_point: Annotated[Vector, "m"]
 
-    # Axes the table's components are along; missile-frame components are
-    # rotated into body axes after interpolation
-    frame: Literal["body", "missile"] = "body"
+    # Missile-frame components are rotated into body axes after interpolation
+    frame: AeroFrame
+
+    extrapolation: Extrapolation
 
     # Reference values in SI units, cached on construction
     reference_area_m2: float = field(init=False, repr=False, compare=False)
@@ -67,8 +88,40 @@ class AeroTable(UnitChecked):
     reference_point_m: np.ndarray = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Cache the reference values in SI units."""
+        """Check the options and values, and cache the reference values in SI units.
+
+        Raises:
+            ValueError: If the frame or extrapolation is not one of its
+                options, the values do not match the axes, or the values are not finite.
+        """
         super().__post_init__()
+        if self.frame not in get_args(AeroFrame):
+            raise ValueError(f"Unknown frame {self.frame!r}; use {get_args(AeroFrame)}")
+        if self.extrapolation not in get_args(Extrapolation):
+            raise ValueError(
+                f"Unknown extrapolation {self.extrapolation!r};"
+                f" use {get_args(Extrapolation)}"
+            )
+        shape = (len(self.mach_axis), len(self.alpha_axis), len(self.phi_axis))
+        if self.values.shape[:3] != shape or self.values.shape[3] not in (
+            len(_AERO_COLUMNS),
+            len(_AERO_COLUMNS) + 1,
+        ):
+            raise ValueError(
+                f"Aero table values must have shape {(*shape, len(_AERO_COLUMNS))}"
+                f", or one more column for {_POWER_ON_COLUMN}"
+            )
+        if not np.all(np.isfinite(self.values)):
+            raise ValueError("Aero table values must be finite")
+        if self.alpha_axis[0] == 0.0:
+            jump = np.abs(self.values[:, 0, :, 4] - self.values[:, 1, :, 4])
+            if np.any(jump > _ZERO_ALPHA_XCP_TOLERANCE):
+                warnings.warn(
+                    f"Zero alpha xCP differs from the next alpha row by up to "
+                    f"{jump.max():.3g} reference lengths; it should be the CP's "
+                    f"limit as alpha goes to zero",
+                    stacklevel=2,
+                )
         object.__setattr__(
             self, "reference_area_m2", float(self.reference_area.m_as("m**2"))
         )
@@ -77,48 +130,62 @@ class AeroTable(UnitChecked):
         )
         object.__setattr__(self, "reference_point_m", self.reference_point.m_as("m"))
 
-    def __call__(self, mach: float, alpha: float, phi: float) -> AeroCoefficients:
+    def __call__(
+        self, mach: float, alpha: float, phi: float, *, powered: bool = False
+    ) -> AeroCoefficients:
         """Interpolate every coefficient at one flight condition.
 
         Args:
             mach (float): Mach number.
             alpha (float): Total angle of attack in degrees.
             phi (float): Aerodynamic roll angle in degrees.
+            powered (bool, optional): Whether the motor burns, which takes
+                the power-on Cx where the table has one. Defaults to False.
 
         Returns:
             AeroCoefficients: The interpolated coefficients in body axes.
         """
         phi = phi % 360.0
-        i = _cell_index(self.mach_axis, mach)
-        j = _cell_index(self.alpha_axis, alpha)
-        k = _cell_index(self.phi_axis, phi)
-        t_mach = (mach - self.mach_axis[i]) / (
-            self.mach_axis[i + 1] - self.mach_axis[i]
+        cx, cy, cz, cmx, xcp, *power_on = self._interpolate(mach, alpha, phi)
+        if powered and power_on:
+            cx = power_on[0]
+        if self.frame == "missile":
+            # Rolling about X leaves the axial force and rolling moment alone
+            cx, cy, cz = missile_to_body(math.radians(phi)) @ np.array([cx, cy, cz])
+        # Moment of the force acting at the CP
+        return AeroCoefficients(
+            float(cx),
+            float(cy),
+            float(cz),
+            float(cmx),
+            float(-xcp * cz),
+            float(xcp * cy),
         )
-        t_alpha = (alpha - self.alpha_axis[j]) / (
-            self.alpha_axis[j + 1] - self.alpha_axis[j]
-        )
-        t_phi = (phi - self.phi_axis[k]) / (self.phi_axis[k + 1] - self.phi_axis[k])
+
+    def _interpolate(self, mach: float, alpha: float, phi: float) -> np.ndarray:
+        """Return the table's columns at a point, with phi already wrapped."""
+        clamp = self.extrapolation == "clamp"
+        i, t_mach = _cell(self.mach_axis, mach, clamp)
+        j, t_alpha = _cell(self.alpha_axis, alpha, clamp)
+        k, t_phi = _cell(self.phi_axis, phi, clamp)
         cell = self.values[i : i + 2, j : j + 2, k : k + 2]
         # Collapse the cell along phi, then alpha, then Mach
         at_phi = cell[:, :, 0] + t_phi * (cell[:, :, 1] - cell[:, :, 0])
         at_alpha = at_phi[:, 0] + t_alpha * (at_phi[:, 1] - at_phi[:, 0])
-        coefficients = at_alpha[0] + t_mach * (at_alpha[1] - at_alpha[0])
-        if self.frame == "missile":
-            to_body = missile_to_body(math.radians(phi))
-            coefficients = np.concatenate(
-                (to_body @ coefficients[:3], to_body @ coefficients[3:])
-            )
-        return AeroCoefficients(*coefficients.tolist())
+        return np.asarray(at_alpha[0] + t_mach * (at_alpha[1] - at_alpha[0]))
 
 
-def _cell_index(axis: np.ndarray, point: float) -> int:
-    """Return the index of the grid cell whose lower edge is at or below a point.
+def _cell(axis: np.ndarray, point: float, clamp: bool) -> tuple[int, float]:
+    """Return the grid cell holding a point and the fraction of the way across it.
 
-    Points beyond either end of the axis map to the first or last cell.
+    Points beyond either end of the axis use the first or last cell, with the
+    fraction held within [0, 1] when ``clamp`` is set.
     """
-    index = int(np.searchsorted(axis, point, side="right")) - 1
-    return min(max(index, 0), len(axis) - 2)
+    index = min(
+        max(int(np.searchsorted(axis, point, side="right")) - 1, 0), len(axis) - 2
+    )
+    fraction = (point - axis[index]) / (axis[index + 1] - axis[index])
+    return index, min(max(fraction, 0.0), 1.0) if clamp else fraction
 
 
 def aero_table_from_csv(
@@ -127,20 +194,22 @@ def aero_table_from_csv(
     reference_area: Scalar,
     reference_length: Scalar,
     reference_point: Vector,
-    frame: Literal["body", "missile"] = "body",
+    frame: AeroFrame,
+    extrapolation: Extrapolation,
 ) -> AeroTable:
     """Read a flight sim CSV and build one lookup covering every coefficient.
 
     Args:
-        filepath (str | Path): CSV with "Mach", "Alpha" and "Phi" columns plus one
-            column per ``AeroCoefficients`` field, with components along the
-            axes of ``frame``.
+        filepath (str | Path): CSV with "Mach", "Alpha", "Phi", "Cx", "Cy",
+            "Cz", "CMx" and "xCP" columns, with components along the axes of
+            ``frame``, and optionally "CxPowerOn".
         reference_area (Scalar): Area the coefficients are normalized by.
-        reference_length (Scalar): Length the moments are also normalized by.
-        reference_point (Vector): Point the moments are taken about, from the
-            nose tip in body axes.
-        frame (Literal["body", "missile"], optional): Axes of the CSV's
-            components. Defaults to "body".
+        reference_length (Scalar): Length the rolling moment is also
+            normalized by and xCP is measured in.
+        reference_point (Vector): Point xCP is measured from, from the nose
+            tip in body axes.
+        frame (AeroFrame): Axes of the CSV's components.
+        extrapolation (Extrapolation): How the table reaches past its grid.
 
     Returns:
         AeroTable: Lookup over the CSV's grid.
@@ -151,6 +220,9 @@ def aero_table_from_csv(
     alpha_axis = np.sort(data_frame["Alpha"].unique())
     phi_axis = np.sort(data_frame["Phi"].unique())
 
+    columns = _AERO_COLUMNS
+    if _POWER_ON_COLUMN in data_frame.columns:
+        columns += (_POWER_ON_COLUMN,)
     values = np.stack(
         [
             data_frame.pivot_table(
@@ -158,7 +230,7 @@ def aero_table_from_csv(
             )
             .to_numpy()
             .reshape(len(mach_axis), len(alpha_axis), len(phi_axis))
-            for column in _AERO_COLUMNS
+            for column in columns
         ],
         axis=-1,
     )
@@ -171,4 +243,5 @@ def aero_table_from_csv(
         reference_length=reference_length,
         reference_point=reference_point,
         frame=frame,
+        extrapolation=extrapolation,
     )
