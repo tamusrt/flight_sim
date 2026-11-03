@@ -124,6 +124,9 @@ def fly(simulation: Simulation, args: argparse.Namespace) -> None:
         args (argparse.Namespace): Parsed arguments, for --no-show and
             --profile.
     """
+    if args.no_show:
+        # Draw off screen
+        plt.switch_backend("Agg")
     profiler = cProfile.Profile() if args.profile else None
     if profiler is not None:
         profiler.enable()
