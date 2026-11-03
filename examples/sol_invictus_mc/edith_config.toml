@@ -1,0 +1,117 @@
+# EDITH campaign: dispersed flights of the Sol Invictus example. Read with:
+#
+#   uv sync --extra edith
+#   uv run edith examples/sol_invictus_mc/edith_config.toml
+#
+# This folder sits beside examples/sol_invictus, not inside it. Every trial
+# copies the base sim's folder, so EDITH refuses a campaign file or an
+# output_dir inside that folder. Paths are relative to this file.
+
+# Number of trials
+N = 500
+
+# Seeds every draw. Each dispersion draws from its own stream, made from
+# master_seed and the dispersion's key, so adding, removing or reordering
+# dispersions leaves the other dispersions' samples unchanged.
+master_seed = 9999
+
+# The sim every trial disperses. Its folder holds every file it reads.
+base_sim = "../sol_invictus/sim.toml"
+
+# Gets runs/, a folder per trial, and the Zarr store of the results
+output_dir = "../../out/edith_sol_invictus"
+
+# "lhs", Latin hypercube sampling, or "random". With "lhs", changing N
+# changes every trial's sample.
+sampling = "lhs"
+
+# Left out, EDITH picks these:
+# workers = 7               # Worker processes; default: CPUs less one
+# batch_size = 13           # Trials per batch and per Zarr chunk
+# trial_timeout = "10 min"  # Longer trials stop as TIMEOUT; in s, min or h
+
+# ---------------------------------------------------------------------------
+# Dispersions
+#
+# Each [dispersions."<file>:<key>"] table draws one value of the base sim for
+# every trial. <file> is a file in the base sim's folder, and <key> is the
+# value's key path in that file, with [i] after a list:
+#
+#   "vehicle.toml:dry_mass_properties.mass"                  "17 kg"
+#   "vehicle.toml:dry_mass_properties.cg_location.value[0]"  -1.0 of a vector
+#   "vehicle.toml:dry_mass_properties.inertia.diag[1]"       135.0 of a diag
+#   "sim.toml:config.truth.launch_rail.elevation"            "85 deg"
+#
+# A value a file takes from another through include belongs to the other
+# file: the dry mass is "vehicle.toml:...", not "sim.toml:properties...".
+#
+# "aero.csv:<column>" scales a whole column of the aero table by one factor
+# whose nominal value is 1: Cx, the axial force, which holds the drag; Cy and
+# Cz, the side and normal forces; CMx, the rolling moment; xCP, the center of
+# pressure's distance from the reference point; and CxPowerOn, where the
+# table has it. "aero.csv:Cy+Cz" scales both columns by the same factor. The
+# pitching and yawing moments follow from the forces acting at xCP, so
+# scaling Cz leaves the center of pressure in place. A table with CxPowerOn
+# scales it with Cx: "aero.csv:Cx+CxPowerOn".
+#
+# dist_type = "normal"   sigma about the nominal value. Optional low and
+#                        high truncate it, as absolute values on either
+#                        side of the nominal value.
+# dist_type = "uniform"  half_width either side of the nominal value, or
+#                        from low to high, as absolute values.
+#
+# sigma, half_width, low and high carry units of the same kind as the
+# nominal value's, such as "0.25 kg" or "5 mph", and EDITH converts them to
+# the nominal value's units. A plain number in the base file, and an aero
+# factor, take plain numbers: sigma = 0.05. A sigma or half_width of 0
+# keeps the value at its nominal. An aero factor's normal without low needs
+# sigma below 0.2, which keeps the factor above 0 to five sigma.
+# ---------------------------------------------------------------------------
+
+# Dry mass, a placeholder 17 kg in vehicle.toml
+[dispersions."vehicle.toml:dry_mass_properties.mass"]
+dist_type = "normal"
+sigma = "0.25 kg"
+
+# Dry CG along the body axis, from the nose tip
+[dispersions."vehicle.toml:dry_mass_properties.cg_location.value[0]"]
+dist_type = "normal"
+sigma = "2 cm"
+
+# Rail elevation, never past vertical
+[dispersions."sim.toml:config.truth.launch_rail.elevation"]
+dist_type = "normal"
+sigma = "0.5 deg"
+high = "90 deg"
+
+# Rail friction, a plain number in sim.toml, so its bounds are plain too
+[dispersions."sim.toml:config.truth.launch_rail.friction_coefficient"]
+dist_type = "uniform"
+low = 0.0
+high = 0.2
+
+# Wind speed, anywhere from calm to 15 mph
+[dispersions."site.toml:wind.speed"]
+dist_type = "uniform"
+low = "0 mph"
+high = "15 mph"
+
+# Wind direction, within 30 deg of the azimuth in site.toml
+[dispersions."site.toml:wind.from_azimuth"]
+dist_type = "uniform"
+half_width = "30 deg"
+
+# Drag, 5 % at one sigma
+[dispersions."aero.csv:Cx"]
+dist_type = "normal"
+sigma = 0.05
+
+# Side and normal force together, 10 % at one sigma
+[dispersions."aero.csv:Cy+Cz"]
+dist_type = "normal"
+sigma = 0.10
+
+# Center of pressure, 2 % of its distance from the nose at one sigma
+[dispersions."aero.csv:xCP"]
+dist_type = "normal"
+sigma = 0.02
