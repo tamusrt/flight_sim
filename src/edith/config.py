@@ -1,1 +1,1 @@
-﻿"""Read and validate edith_config.toml."""
+"""Read and validate edith_config.toml."""

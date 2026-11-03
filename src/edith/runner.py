@@ -1,1 +1,1 @@
-﻿"""Trial tasks, batches and campaign orchestration."""
+"""Trial tasks, batches and campaign orchestration."""

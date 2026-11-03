@@ -1,1 +1,1 @@
-﻿"""Dispersion matrix generation: Latin hypercube samples per variable."""
+"""Dispersion matrix generation: Latin hypercube samples per variable."""

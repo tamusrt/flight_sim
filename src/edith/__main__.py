@@ -1,4 +1,4 @@
-﻿"""EDITH runner: run the Monte Carlo campaign given on the command line."""
+"""EDITH runner: run the Monte Carlo campaign given on the command line."""
 
 import argparse
 import sys
