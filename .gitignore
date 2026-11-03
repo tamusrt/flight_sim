@@ -219,3 +219,7 @@ __marimo__/
 
 # Sim output
 out/
+
+# EDITH campaign output
+runs/
+*.zarr/
