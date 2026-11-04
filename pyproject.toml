@@ -67,11 +67,11 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=flight_sim --cov-report=term-missing --cov-fail-under=75"
+addopts = "--cov=flight_sim --cov=edith --cov-report=term-missing --cov-fail-under=75"
 
 [tool.coverage.run]
 branch = true
-source = ["flight_sim"]
+source = ["flight_sim", "edith"]
 
 [tool.coverage.report]
 exclude_also = ['if __name__ == "__main__":']

@@ -18,7 +18,7 @@ from pint import PintError
 
 from edith.errors import EdithConfigError
 from flight_sim.units import parse_units
-from flight_sim.utilities.data_loader import _AERO_COLUMNS, _POWER_ON_COLUMN
+from flight_sim.utilities.data_loader import AERO_COLUMNS, POWER_ON_COLUMN
 
 # What Pint raises for units it cannot read, AssertionError among them for
 # some malformed ones, such as "m/"
@@ -32,10 +32,9 @@ UNREADABLE_UNITS = (
 )
 
 # Columns of an aero table: its grid, and the columns aero_table_from_csv
-# reads, which a factor may scale. flight_sim keeps the names private; they are
-# read from it so that the two cannot drift apart.
+# reads, which a factor may scale
 _GRID_COLUMNS = ("Mach", "Alpha", "Phi")
-_SCALABLE_COLUMNS = (*_AERO_COLUMNS, _POWER_ON_COLUMN)
+_SCALABLE_COLUMNS = (*AERO_COLUMNS, POWER_ON_COLUMN)
 
 # A number and its units, such as "0.25 kg", "-2.08 m" or "1e-5 m/s"
 _QUANTITY = re.compile(
