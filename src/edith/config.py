@@ -12,7 +12,7 @@ import math
 import re
 import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, NamedTuple, Self, TypeAlias
 
@@ -21,19 +21,20 @@ from pint import DimensionalityError
 from edith.errors import EdithConfigError
 from edith.targets import (
     UNREADABLE_UNITS,
-    BaseFolder,
-    CsvTarget,
+    AeroTarget,
+    BaseSim,
     Nominal,
     Target,
-    TomlTarget,
-    display_path,
+    ValueTarget,
     parse_quantity,
     value_path,
 )
+from flight_sim.config import InputSource
+from flight_sim.config.toml_files import display_path
 from flight_sim.units import scalar, ureg
 
 __all__ = [
-    "CsvTarget",
+    "AeroTarget",
     "Dispersion",
     "Distribution",
     "EdithConfig",
@@ -41,8 +42,8 @@ __all__ = [
     "Normal",
     "Sampling",
     "Target",
-    "TomlTarget",
     "Uniform",
+    "ValueTarget",
     "read_edith_config",
 ]
 
@@ -123,13 +124,13 @@ class Dispersion:
     """
 
     # Key of its table in the campaign file, such as
-    # "vehicle.toml:dry_mass_properties.mass"
+    # "properties.dry_mass_properties.mass"
     key: str
     target: Target
     nominal: float  # Value in the base sim; 1 for an aero factor
     distribution: Distribution
 
-    # Units of the nominal value as its file writes them, such as "kg"; ""
+    # Units of the nominal value as the input writes them, such as "kg"; ""
     # for a plain number or an aero factor
     units: str
 
@@ -139,7 +140,9 @@ class EdithConfig:
     """Monte Carlo campaign of dispersed flights of one base sim.
 
     ``from_file`` reads one from a campaign file. Its paths are absolute, and
-    the optional settings the file leaves out are None.
+    the optional settings the file leaves out are None. ``source`` is the base
+    sim's resolved input, which the dispersions' keys index and trials are
+    written from.
     """
 
     path: Path  # The campaign file
@@ -148,15 +151,11 @@ class EdithConfig:
     base_sim: Path
     output_dir: Path
     dispersions: tuple[Dispersion, ...]  # In file order
+    source: InputSource = field(repr=False)
     sampling: Sampling = "lhs"
     workers: int | None = None
     batch_size: int | None = None  # Trials per batch
     trial_timeout_s: float | None = None
-
-    @property
-    def base_folder(self) -> Path:
-        """Return the base sim's folder, which holds every file it reads."""
-        return self.base_sim.parent
 
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
@@ -194,9 +193,9 @@ class EdithConfig:
             EdithConfig: The campaign.
 
         Raises:
-            EdithConfigError: If a key is missing, unknown or invalid, or a
-                dispersion names no value of the base sim. The message names
-                the key at fault.
+            EdithConfigError: If a key is missing, unknown or invalid, the
+                base sim does not build, or a dispersion names no value of it.
+                The message names the key at fault.
         """
         path = Path(path).resolve()
         _check_keys(table, "", _REQUIRED_KEYS, _OPTIONAL_KEYS, _CAMPAIGN_USAGE)
@@ -208,14 +207,15 @@ class EdithConfig:
         trial_timeout_s = _optional_timeout_s(table)
         base_sim = _base_sim(table["base_sim"], path.parent)
         output_dir = _output_dir(table["output_dir"], path.parent)
-        _check_outside(path, base_sim.parent, output_dir)
+        base = BaseSim.load(base_sim)
         return cls(
             path=path,
             trials=trials,
             master_seed=master_seed,
             base_sim=base_sim,
             output_dir=output_dir,
-            dispersions=_dispersions(table["dispersions"], BaseFolder(base_sim.parent)),
+            dispersions=_dispersions(table["dispersions"], base),
+            source=base.source,
             sampling=sampling,
             workers=workers,
             batch_size=batch_size,
@@ -405,34 +405,6 @@ def _output_dir(value: object, folder: Path) -> Path:
     return path
 
 
-def _check_outside(campaign: Path, base_folder: Path, output_dir: Path) -> None:
-    """Check the campaign file and output folder lie outside the base sim's folder.
-
-    Every trial copies the base sim's folder, so neither may be inside it, and
-    the output folder may not hold it either.
-
-    Raises:
-        EdithConfigError: Naming the key whose path breaks this.
-    """
-    folder = display_path(base_folder)
-    if campaign.is_relative_to(base_folder):
-        raise EdithConfigError(
-            f"base_sim: the campaign file is inside {folder}, the base sim's "
-            "folder, which every trial copies; move the campaign file to a "
-            "folder of its own"
-        )
-    if output_dir.is_relative_to(base_folder):
-        raise EdithConfigError(
-            f"output_dir: {display_path(output_dir)} is inside {folder}, the "
-            "base sim's folder, which every trial copies"
-        )
-    if base_folder.is_relative_to(output_dir):
-        raise EdithConfigError(
-            f"output_dir: {display_path(output_dir)} holds {folder}, the base "
-            "sim's folder; pick a folder beside it"
-        )
-
-
 class _Number(NamedTuple):
     """One of a dispersion's numbers, in its nominal value's units."""
 
@@ -440,7 +412,7 @@ class _Number(NamedTuple):
     text: str  # As the campaign file writes it, such as "2 cm"
 
 
-def _dispersions(value: object, base: BaseFolder) -> tuple[Dispersion, ...]:
+def _dispersions(value: object, base: BaseSim) -> tuple[Dispersion, ...]:
     """Read every dispersion table, checking no two change the same value.
 
     Raises:
@@ -450,7 +422,7 @@ def _dispersions(value: object, base: BaseFolder) -> tuple[Dispersion, ...]:
     if not isinstance(value, dict) or not value:
         raise EdithConfigError(
             "dispersions: expected one or more tables, such as "
-            '[dispersions."vehicle.toml:dry_mass_properties.mass"]'
+            '[dispersions."properties.dry_mass_properties.mass"]'
         )
     dispersions = tuple(_dispersion(key, item, base) for key, item in value.items())
     for index, first in enumerate(dispersions):
@@ -466,18 +438,17 @@ def _dispersions(value: object, base: BaseFolder) -> tuple[Dispersion, ...]:
 
 def _shared(first: Target, second: Target) -> str:
     """Return what two targets both change, or "" if nothing."""
-    if first.file != second.file:
+    if first.path != second.path:
         return ""
-    if isinstance(first, TomlTarget) and isinstance(second, TomlTarget):
-        same = first.path == second.path
-        return f"{first.file}:{value_path(first.path)}" if same else ""
-    if isinstance(first, CsvTarget) and isinstance(second, CsvTarget):
+    if isinstance(first, ValueTarget) and isinstance(second, ValueTarget):
+        return value_path(first.path)
+    if isinstance(first, AeroTarget) and isinstance(second, AeroTarget):
         columns = [column for column in first.columns if column in second.columns]
-        return f"the {columns[0]} column of {first.file}" if columns else ""
+        return f"the {columns[0]} column of {first.file.name}" if columns else ""
     return ""
 
 
-def _dispersion(key: str, value: object, base: BaseFolder) -> Dispersion:
+def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
     """Read one dispersion table, whose key names the value it disperses.
 
     Raises:
@@ -503,7 +474,7 @@ def _dispersion(key: str, value: object, base: BaseFolder) -> Dispersion:
         if dist_type == "normal"
         else _uniform(numbers, nominal, where, keys.usage)
     )
-    if isinstance(target, CsvTarget):
+    if isinstance(target, AeroTarget):
         _check_factor(distribution, where)
     return Dispersion(key, target, nominal.value, distribution, nominal.units)
 
