@@ -83,6 +83,7 @@ def test_main_prepares_and_runs_as_separate_steps(
 
     main(["run", str(run), "--no-show"])
     assert (run / "telemetry.csv").is_file()
+    assert (run / "plots" / "trajectory.png").is_file()
 
 
 def test_main_needs_a_sim_file(capsys: pytest.CaptureFixture[str]) -> None:

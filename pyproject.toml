@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 flight_sim = "flight_sim.__main__:main"
+edith = "edith.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
@@ -74,3 +75,12 @@ source = ["flight_sim"]
 
 [tool.coverage.report]
 exclude_also = ['if __name__ == "__main__":']
+
+[project.optional-dependencies]
+edith = [
+    "tomlkit>=0.13,<1",
+    "zarr>=3,<4",
+]
+
+[tool.uv.build-backend]
+module-name = ["flight_sim", "edith"]
