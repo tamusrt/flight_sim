@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 
 from edith.config import (
-    CsvTarget,
+    AeroTarget,
     Dispersion,
     EdithConfig,
     EdithConfigError,
     Normal,
-    TomlTarget,
     Uniform,
+    ValueTarget,
 )
 from flight_sim.config import ConfigError
 
@@ -28,7 +28,7 @@ output_dir = "../out"
 """
 
 _MASS = """
-[dispersions."vehicle.toml:dry_mass_properties.mass"]
+[dispersions."properties.dry_mass_properties.mass"]
 dist_type = "normal"
 sigma = "0.25 kg"
 """
@@ -38,7 +38,7 @@ def _campaign(tmp_path: Path, dispersions: str, header: str = _HEADER) -> Path:
     """Write a campaign file beside a copy of the example, and return its path."""
     base = tmp_path / "base"
     if not base.exists():
-        shutil.copytree(_EXAMPLE, base)
+        shutil.copytree(_EXAMPLE, base, ignore=shutil.ignore_patterns("out"))
     folder = tmp_path / "mc"
     folder.mkdir(exist_ok=True)
     path = folder / "edith_config.toml"
@@ -61,13 +61,14 @@ def _dispersion(tmp_path: Path, table: str) -> Dispersion:
 
 
 def test_example_campaign_reads_every_dispersion() -> None:
-    """The example builds its settings and nine dispersions in base-file units."""
+    """The example builds its settings and nine dispersions in base-sim units."""
     config = EdithConfig.from_file(_CAMPAIGN)
+    aero = (_EXAMPLE / "aero.csv").resolve()
     wind_speed = config.dispersions[4]
 
     assert (config.trials, config.master_seed, config.sampling) == (500, 9999, "lhs")
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
-    assert config.base_folder == _EXAMPLE.resolve()
+    assert config.source.path == config.base_sim
     assert config.output_dir == Path("out/edith_sol_invictus").resolve()
     assert (config.workers, config.batch_size, config.trial_timeout_s) == (
         None,
@@ -76,41 +77,38 @@ def test_example_campaign_reads_every_dispersion() -> None:
     )
     assert config.dispersions[:4] == (
         Dispersion(
-            "vehicle.toml:dry_mass_properties.mass",
-            TomlTarget("vehicle.toml", ("dry_mass_properties", "mass")),
+            "properties.dry_mass_properties.mass",
+            ValueTarget(("properties", "dry_mass_properties", "mass")),
             17.0,
             Normal(0.25),
             "kg",
         ),
         Dispersion(
-            "vehicle.toml:dry_mass_properties.cg_location.value[0]",
-            TomlTarget(
-                "vehicle.toml", ("dry_mass_properties", "cg_location", "value", 0)
+            "properties.dry_mass_properties.cg_location.value[0]",
+            ValueTarget(
+                ("properties", "dry_mass_properties", "cg_location", "value", 0)
             ),
             -1.0,
             Normal(0.02),
             "m",
         ),
         Dispersion(
-            "sim.toml:config.truth.launch_rail.elevation",
-            TomlTarget("sim.toml", ("config", "truth", "launch_rail", "elevation")),
+            "config.truth.launch_rail.elevation",
+            ValueTarget(("config", "truth", "launch_rail", "elevation")),
             85.0,
             Normal(0.5, high=90.0),
             "deg",
         ),
         Dispersion(
-            "sim.toml:config.truth.launch_rail.friction_coefficient",
-            TomlTarget(
-                "sim.toml",
-                ("config", "truth", "launch_rail", "friction_coefficient"),
-            ),
+            "config.truth.launch_rail.friction_coefficient",
+            ValueTarget(("config", "truth", "launch_rail", "friction_coefficient")),
             0.0,
             Uniform(0.0, 0.2),
             "",
         ),
     )
     assert (wind_speed.key, wind_speed.nominal, wind_speed.units) == (
-        "site.toml:wind.speed",
+        "config.truth.wind.speed",
         0.0,
         "m/s",
     )
@@ -119,20 +117,32 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
     assert config.dispersions[5:] == (
         Dispersion(
-            "site.toml:wind.from_azimuth",
-            TomlTarget("site.toml", ("wind", "from_azimuth")),
+            "config.truth.wind.from_azimuth",
+            ValueTarget(("config", "truth", "wind", "from_azimuth")),
             0.0,
             Uniform(-30.0, 30.0),
             "deg",
         ),
         Dispersion(
-            "aero.csv:Cx", CsvTarget("aero.csv", ("Cx",)), 1.0, Normal(0.05), ""
+            "properties.aero_table:Cx",
+            AeroTarget(("properties", "aero_table"), aero, ("Cx",)),
+            1.0,
+            Normal(0.05),
+            "",
         ),
         Dispersion(
-            "aero.csv:Cy+Cz", CsvTarget("aero.csv", ("Cy", "Cz")), 1.0, Normal(0.1), ""
+            "properties.aero_table:Cy+Cz",
+            AeroTarget(("properties", "aero_table"), aero, ("Cy", "Cz")),
+            1.0,
+            Normal(0.1),
+            "",
         ),
         Dispersion(
-            "aero.csv:xCP", CsvTarget("aero.csv", ("xCP",)), 1.0, Normal(0.02), ""
+            "properties.aero_table:xCP",
+            AeroTarget(("properties", "aero_table"), aero, ("xCP",)),
+            1.0,
+            Normal(0.02),
+            "",
         ),
     )
 
@@ -172,7 +182,7 @@ def test_byte_order_mark_is_read(tmp_path: Path) -> None:
 
 def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
     """A syntax error is reported with the file and its line."""
-    message = _error(tmp_path, '\n[dispersions."vehicle.toml:x"\n')
+    message = _error(tmp_path, '\n[dispersions."properties.x"\n')
 
     assert "edith_config.toml" in message
     assert "line 7" in message
@@ -205,51 +215,54 @@ def test_top_level_errors_name_the_key(
     assert expected in _error(tmp_path, _MASS, header)
 
 
-def test_campaign_file_inside_the_base_folder_is_rejected(tmp_path: Path) -> None:
-    """Every trial copies the base folder, so the campaign file stays out of it."""
+def test_a_base_sim_that_does_not_build_is_named(tmp_path: Path) -> None:
+    """flight_sim's error for the base sim is reported under base_sim."""
+    _campaign(tmp_path, _MASS)
+    sim = tmp_path / "base" / "sim.toml"
+    sim.write_text(
+        sim.read_text(encoding="utf-8").replace('max_time = "300 s"', "max_time = 300"),
+        encoding="utf-8",
+    )
+
+    message = _error(tmp_path, _MASS)
+
+    assert "base_sim: " in message
+    assert "max_time" in message
+
+
+def test_a_campaign_file_may_sit_beside_the_base_sim(tmp_path: Path) -> None:
+    """The campaign file and output folder may lie anywhere, even beside the sim."""
     _campaign(tmp_path, _MASS)
     inside = tmp_path / "base" / "edith_config.toml"
-    inside.write_text(_HEADER.replace("../base/", "") + _MASS, encoding="utf-8")
+    header = _HEADER.replace("../base/", "").replace('"../out"', '"out/edith"')
+    inside.write_text(header + _MASS, encoding="utf-8")
 
-    with pytest.raises(EdithConfigError, match="campaign file is inside"):
-        EdithConfig.from_file(inside)
+    config = EdithConfig.from_file(inside)
 
-
-@pytest.mark.parametrize(
-    ("output_dir", "expected"),
-    [("../base/out", "is inside"), ("..", "holds")],
-)
-def test_output_dir_stays_out_of_the_base_folder(
-    tmp_path: Path, output_dir: str, expected: str
-) -> None:
-    """The output folder may neither sit in the base folder nor hold it."""
-    header = _HEADER.replace('"../out"', f'"{output_dir}"')
-
-    message = _error(tmp_path, _MASS, header)
-
-    assert message.split(": ")[1] == "output_dir"
-    assert expected in message
+    assert config.output_dir == (tmp_path / "base" / "out" / "edith").resolve()
 
 
 @pytest.mark.parametrize(
     ("key", "expected"),
     [
-        ("vehicle.dry_mass", "name a file of the base sim and a value in it"),
-        ("vehicl.toml:dry_mass_properties.mass", "vehicl.toml is not in"),
-        ("Vehicle.toml:dry_mass_properties.mass", "but the file is vehicle.toml"),
-        ("sub/vehicle.toml:mass", "directly in the base sim's folder"),
-        ("vehicle.toml:dry_mass_properties.mas", "did you mean"),
+        ("properties.dry_mass_properties.mas", "did you mean"),
+        ("propertys.dry_mass_properties.mass", "has no propertys (did you mean"),
+        ("properties.dry_mass_properties.cg_location", "cg_location.value[0]"),
+        ("properties.dry_mass_properties.cg_location.value[3]", "has 3 items"),
+        ("properties.aero_table.frame", 'is "missile", not a number'),
+        ("properties.dry mass", "cannot read the key path"),
+        ("vehicle.toml:dry_mass_properties.mass", "the base sim has no vehicle"),
+        ("properties.dry_mass_properties", "the value is a table"),
+        ("properties.dry_mass_properties.cg_location.value", "the value is a list"),
         (
-            "sim.toml:properties.dry_mass_properties.mass",
-            'so disperse "vehicle.toml:dry_mass_properties.mass"',
+            "properties.aero_table",
+            'scale its columns, such as "properties.aero_table:Cx"',
         ),
-        ("vehicle.toml:dry_mass_properties.cg_location", "cg_location.value[0]"),
-        ("vehicle.toml:dry_mass_properties.cg_location.value[3]", "has 3 items"),
-        ("vehicle.toml:aero_table.frame", 'is "missile", not a number'),
-        ("vehicle.toml:dry mass", "cannot read the key path"),
+        ("config.truth.launch_rail:Cx", "launch_rail is not an aero table"),
+        ("config.truth.atmosphere.launch_temperature", "the value is None"),
     ],
 )
-def test_bad_toml_targets_are_named(tmp_path: Path, key: str, expected: str) -> None:
+def test_bad_targets_are_named(tmp_path: Path, key: str, expected: str) -> None:
     """A key that names no number of the base sim says what is wrong."""
     dispersion = f'[dispersions."{key}"]\ndist_type = "normal"\nsigma = "1 m"\n'
 
@@ -263,30 +276,23 @@ def test_bad_toml_targets_are_named(tmp_path: Path, key: str, expected: str) -> 
     ("key", "expected"),
     [
         (
-            "aero.csv:Cd",
+            "properties.aero_table:Cd",
             "'Cd' is not a column the aero table reads; scale Cx, Cy, Cz, CMx, "
             "xCP or CxPowerOn, where Cx holds the drag",
         ),
-        ("aero.csv:Mach", "Mach is a grid column"),
-        ("aero.csv:CMy", "'CMy' is not a column the aero table reads"),
-        ("aero.csv:Cx+Cx", "names a column twice"),
+        ("properties.aero_table:Mach", "'Mach' is not a column the aero table reads"),
+        ("properties.aero_table:Cx+Cx", "names a column twice"),
+        (
+            "properties.aero_table:CxPowerOn",
+            "aero.csv has no CxPowerOn column; its columns are Mach, Alpha, Phi, Cx",
+        ),
     ],
 )
 def test_bad_aero_columns_are_named(tmp_path: Path, key: str, expected: str) -> None:
-    """Only coefficient columns can be scaled, each by one dispersion."""
+    """Only coefficient columns the CSV has can be scaled, each by one dispersion."""
     dispersion = f'[dispersions."{key}"]\ndist_type = "normal"\nsigma = 0.05\n'
 
     assert expected in _error(tmp_path, dispersion)
-
-
-def test_a_missing_aero_column_lists_the_columns(tmp_path: Path) -> None:
-    """A coefficient the CSV lacks is named with the columns it has."""
-    _campaign(tmp_path, "")
-    csv = tmp_path / "base" / "aero.csv"
-    csv.write_text("Mach,Alpha,Phi,Cx\n0,0,0,-0.45\n", encoding="utf-8")
-    dispersion = '[dispersions."aero.csv:xCP"]\ndist_type = "normal"\nsigma = 0.05\n'
-
-    assert "has no xCP column; its columns are Mach" in _error(tmp_path, dispersion)
 
 
 @pytest.mark.parametrize(
@@ -311,7 +317,7 @@ def test_a_missing_aero_column_lists_the_columns(tmp_path: Path) -> None:
 def test_bad_normal_numbers_are_named(tmp_path: Path, body: str, expected: str) -> None:
     """A normal's numbers convert to the nominal's units and bracket it."""
     dispersion = (
-        '[dispersions."vehicle.toml:dry_mass_properties.mass"]\n'
+        '[dispersions."properties.dry_mass_properties.mass"]\n'
         f'dist_type = "normal"\n{body}\n'
     )
 
@@ -341,7 +347,7 @@ def test_bad_normal_numbers_are_named(tmp_path: Path, body: str, expected: str) 
 )
 def test_bad_distributions_are_named(tmp_path: Path, body: str, expected: str) -> None:
     """Each distribution type takes its own keys."""
-    dispersion = f'[dispersions."site.toml:wind.speed"]\n{body}\n'
+    dispersion = f'[dispersions."config.truth.wind.speed"]\n{body}\n'
 
     assert expected in _error(tmp_path, dispersion)
 
@@ -349,7 +355,7 @@ def test_bad_distributions_are_named(tmp_path: Path, body: str, expected: str) -
 @pytest.mark.parametrize("sigma", ["0.1 m", "20 percent"])
 def test_a_plain_nominal_takes_plain_numbers(tmp_path: Path, sigma: str) -> None:
     """Rail friction is a plain number in sim.toml, so its spread is too."""
-    key = "sim.toml:config.truth.launch_rail.friction_coefficient"
+    key = "config.truth.launch_rail.friction_coefficient"
 
     message = _error(
         tmp_path, f'[dispersions."{key}"]\ndist_type = "normal"\nsigma = "{sigma}"\n'
@@ -360,10 +366,10 @@ def test_a_plain_nominal_takes_plain_numbers(tmp_path: Path, sigma: str) -> None
 
 
 def test_numbers_convert_to_the_nominal_units(tmp_path: Path) -> None:
-    """Spreads in other units arrive in the units the base file writes."""
+    """Spreads in other units arrive in the units the base sim writes."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."vehicle.toml:dry_mass_properties.mass"]\n'
+        '[dispersions."properties.dry_mass_properties.mass"]\n'
         'dist_type = "normal"\nsigma = "250 g"\nlow = "30 lb"\nhigh = "18 kg"\n',
     )
 
@@ -374,16 +380,32 @@ def test_numbers_convert_to_the_nominal_units(tmp_path: Path) -> None:
     assert dispersion.distribution.high == pytest.approx(18.0)
 
 
+def test_a_default_value_can_be_dispersed(tmp_path: Path) -> None:
+    """A value the base sim leaves to its default is in the resolved input."""
+    dispersion = _dispersion(
+        tmp_path,
+        '[dispersions."config.truth.atmosphere.barometric_pressure"]\n'
+        'dist_type = "normal"\nsigma = "1 kPa"\n',
+    )
+
+    assert (dispersion.nominal, dispersion.units) == (101325.0, "Pa")
+    assert dispersion.distribution == Normal(1000.0)
+
+
 @pytest.mark.parametrize("sigma", ["18 degF", "10 delta_degC", "10 K"])
 def test_spreads_convert_as_differences(tmp_path: Path, sigma: str) -> None:
     """A sigma of 18 degF is 10 degC, while a bound of 50 degF is 10 degC too."""
     _campaign(tmp_path, "")
-    (tmp_path / "base" / "pad.toml").write_text(
-        'temperature = "20 degC"\n', encoding="utf-8"
+    site = tmp_path / "base" / "site.toml"
+    site.write_text(
+        site.read_text(encoding="utf-8").replace(
+            "[atmosphere]", '[atmosphere]\nlaunch_temperature = "20 degC"'
+        ),
+        encoding="utf-8",
     )
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."pad.toml:temperature"]\n'
+        '[dispersions."config.truth.atmosphere.launch_temperature"]\n'
         f'dist_type = "normal"\nsigma = "{sigma}"\nlow = "50 degF"\n',
     )
 
@@ -396,7 +418,7 @@ def test_spreads_convert_as_differences(tmp_path: Path, sigma: str) -> None:
 def test_angles_are_not_plain_numbers(tmp_path: Path) -> None:
     """Pint converts "5 percent" to 0.05 rad, but an angle's spread is an angle."""
     table = (
-        '[dispersions."sim.toml:config.truth.launch_rail.elevation"]\n'
+        '[dispersions."config.truth.launch_rail.elevation"]\n'
         'dist_type = "normal"\nsigma = "{}"\n'
     )
 
@@ -413,7 +435,7 @@ def test_a_uniform_may_leave_out_the_nominal(tmp_path: Path) -> None:
     """A uniform's low and high are absolute, so a calm nominal wind may lie outside."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."site.toml:wind.speed"]\n'
+        '[dispersions."config.truth.wind.speed"]\n'
         'dist_type = "uniform"\nlow = "2 m/s"\nhigh = "8 m/s"\n',
     )
 
@@ -425,7 +447,7 @@ def test_a_normal_may_be_truncated_at_its_nominal(tmp_path: Path) -> None:
     """A bound equal to the nominal value, in any units, is allowed."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."sim.toml:config.truth.launch_rail.elevation"]\n'
+        '[dispersions."config.truth.launch_rail.elevation"]\n'
         'dist_type = "normal"\nsigma = "1 deg"\nhigh = "1.4835298641951802 rad"\n',
     )
 
@@ -446,14 +468,17 @@ def test_aero_factors_are_plain_and_stay_positive(
     tmp_path: Path, body: str, expected: str
 ) -> None:
     """An aero factor about 1 takes plain numbers that keep it above 0."""
-    assert expected in _error(tmp_path, f'[dispersions."aero.csv:Cx"]\n{body}\n')
+    assert expected in _error(
+        tmp_path, f'[dispersions."properties.aero_table:Cx"]\n{body}\n'
+    )
 
 
 def test_a_wide_aero_factor_with_low_is_allowed(tmp_path: Path) -> None:
     """A large sigma is fine once low keeps the factor above 0."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."aero.csv:Cx"]\ndist_type = "normal"\nsigma = 0.25\nlow = 0.5\n',
+        '[dispersions."properties.aero_table:Cx"]\n'
+        'dist_type = "normal"\nsigma = 0.25\nlow = 0.5\n',
     )
 
     assert dispersion.distribution == Normal(0.25, low=0.5)
@@ -462,24 +487,26 @@ def test_a_wide_aero_factor_with_low_is_allowed(tmp_path: Path) -> None:
 def test_two_dispersions_of_one_value_are_rejected(tmp_path: Path) -> None:
     """A value or column is dispersed by one dispersion at most."""
     twice = """
-[dispersions."vehicle.toml:dry_mass_properties.cg_location.value[0]"]
+[dispersions."properties.dry_mass_properties.cg_location.value[0]"]
 dist_type = "normal"
 sigma = "1 cm"
 
-[dispersions."vehicle.toml:dry_mass_properties.cg_location.value[00]"]
+[dispersions."properties.dry_mass_properties.cg_location.value[00]"]
 dist_type = "normal"
 sigma = "1 cm"
 """
     columns = """
-[dispersions."aero.csv:Cx"]
+[dispersions."properties.aero_table:Cx"]
 dist_type = "normal"
 sigma = 0.05
 
-[dispersions."aero.csv:Cz+Cx"]
+[dispersions."properties.aero_table:Cz+Cx"]
 dist_type = "normal"
 sigma = 0.05
 """
-    assert "which dispersions" in _error(tmp_path, twice)
+    assert "changes properties.dry_mass_properties.cg_location.value[0], which" in (
+        _error(tmp_path, twice)
+    )
     assert "changes the Cx column of aero.csv" in _error(tmp_path, columns)
 
 
