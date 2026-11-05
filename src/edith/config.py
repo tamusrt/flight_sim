@@ -38,12 +38,9 @@ __all__ = [
     "DispersionClass",
     "Distribution",
     "EdithConfig",
-    "EdithConfigError",
     "Normal",
     "Sampling",
     "Uniform",
-    "ValueTarget",
-    "read_edith_config",
 ]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
@@ -192,7 +189,7 @@ class EdithConfig:
                 the key at fault.
         """
         path = Path(path).resolve()
-        table = read_edith_config(path)
+        table = _read_table(path)
         try:
             return cls.from_table(table, path)
         except EdithConfigError as error:
@@ -242,19 +239,12 @@ class EdithConfig:
         )
 
 
-def read_edith_config(path: str | Path) -> dict[str, object]:
+def _read_table(path: Path) -> dict[str, object]:
     """Read a campaign file's table without checking it.
-
-    Args:
-        path (str | Path): Campaign file.
-
-    Returns:
-        dict[str, object]: The file's top-level table.
 
     Raises:
         EdithConfigError: If the file cannot be read or is not valid TOML.
     """
-    path = Path(path)
     # Not load_toml: a campaign file takes no include or extends
     try:
         # utf-8-sig also reads files that editors saved with a byte-order mark
