@@ -1,9 +1,11 @@
 """Read and check EDITH campaign files, such as edith_config.toml.
 
 A campaign file names the base sim, the number of trials, the master seed and
-the values to disperse, each by the dispersion's key, as ``edith.targets``
-describes. A dispersion's numbers are converted to the units its nominal value
-is written in.
+the values to disperse, each by its key path in the base sim's resolved input,
+as ``edith.targets`` describes. Each dispersion's ``dispersion`` table names
+the class that draws its values; for now that is always StandardDispersion,
+which draws a number from a normal or uniform distribution. A dispersion's
+numbers are converted to the units its nominal value is written in.
 """
 
 import contextlib
@@ -21,10 +23,8 @@ from pint import DimensionalityError
 from edith.errors import EdithConfigError
 from edith.targets import (
     UNREADABLE_UNITS,
-    AeroTarget,
     BaseSim,
     Nominal,
-    Target,
     ValueTarget,
     parse_quantity,
     value_path,
@@ -69,12 +69,12 @@ class _Keys(NamedTuple):
 
 _DISTRIBUTION_KEYS = {
     "normal": _Keys(
-        ("dist_type", "sigma"),
+        ("dispersion", "dist_type", "sigma"),
         ("low", "high"),
         "a normal dispersion takes sigma, and optionally low and high",
     ),
     "uniform": _Keys(
-        ("dist_type",),
+        ("dispersion", "dist_type"),
         ("half_width", "low", "high"),
         "a uniform dispersion takes half_width, or low and high",
     ),
@@ -86,26 +86,27 @@ _SPREAD_KEYS = ("sigma", "half_width", "low", "high")
 _DIFFERENCE_KEYS = ("sigma", "half_width")
 
 _DISPERSION_USAGE = (
-    "for now every dispersion is a StandardDispersion: leave dispersion out, "
-    'or write dispersion = { module = "StandardDispersion", '
-    'class = "StandardDispersion" }'
+    "for now every dispersion names its class as dispersion = "
+    '{ module = "StandardDispersion", class = "StandardDispersion" }'
 )
 
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
+
 @dataclass(frozen=True)
 class DispersionClass:
     """Class that draws a dispersion's values, as its ``dispersion`` table names it."""
- 
+
     module: str  # Such as "StandardDispersion"
     class_name: str  # The table's class, such as "StandardDispersion"
- 
- 
+
+
 # Draws a number of the base sim from a normal or uniform distribution
 STANDARD_DISPERSION = DispersionClass("StandardDispersion", "StandardDispersion")
- 
+
 # The classes a dispersion may name; for the CDR, only the standard one
 _DISPERSION_CLASSES = (STANDARD_DISPERSION,)
+
 
 @dataclass(frozen=True)
 class Normal:
@@ -141,13 +142,16 @@ class Dispersion:
     # Key of its table in the campaign file, such as
     # "properties.dry_mass_properties.mass"
     key: str
-    target: Target
-    nominal: float  # Value in the base sim; 1 for an aero factor
+    target: ValueTarget
+    nominal: float  # Value in the base sim
     distribution: Distribution
 
     # Units of the nominal value as the input writes them, such as "kg"; ""
-    # for a plain number or an aero factor
+    # for a plain number
     units: str
+
+    # Class that draws its values, as its dispersion table names it
+    dispersion_class: DispersionClass = STANDARD_DISPERSION
 
 
 @dataclass(frozen=True)
@@ -454,7 +458,7 @@ def _dispersions(value: object, base: BaseSim) -> tuple[Dispersion, ...]:
 
 def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
     """Read one dispersion table, whose key names the value it disperses.
- 
+
     Raises:
         EdithConfigError: If the table names no dispersion class EDITH has,
             the key names no value of the base sim, or the table does not
@@ -463,7 +467,8 @@ def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
     where = _key_path("dispersions", key)
     if not isinstance(value, dict):
         raise EdithConfigError(
-            f"{where}: expected a table of dist_type and its spread, got {value!r}"
+            f"{where}: expected a table of dispersion, dist_type and its spread, "
+            f"got {value!r}"
         )
     dispersion_class = _dispersion_class(value, where)
     target, nominal = base.target(key, where)
@@ -483,20 +488,17 @@ def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
     return Dispersion(
         key, target, nominal.value, distribution, nominal.units, dispersion_class
     )
- 
- 
+
+
 def _dispersion_class(table: Mapping[str, object], where: str) -> DispersionClass:
     """Return the class a dispersion's ``dispersion`` table names.
- 
-    A dispersion that leaves ``dispersion`` out takes the standard class, the
-    only one for now.
- 
+
     Raises:
-        EdithConfigError: If ``dispersion`` is not a table of module and
-            class, or names a class EDITH does not have.
+        EdithConfigError: If the table is missing or malformed, or names a
+            class EDITH does not have.
     """
     if "dispersion" not in table:
-        return STANDARD_DISPERSION
+        raise EdithConfigError(f"{where}: missing dispersion; {_DISPERSION_USAGE}")
     block = table["dispersion"]
     block_where = _key_path(where, "dispersion")
     if not isinstance(block, dict):
@@ -522,11 +524,11 @@ def _dispersion_class(table: Mapping[str, object], where: str) -> DispersionClas
             f"{chosen.class_name!r}; {_DISPERSION_USAGE}"
         )
     return chosen
- 
- 
+
+
 def _class_name(value: object, where: str) -> str:
     """Return the name of a dispersion's module or class.
- 
+
     Raises:
         EdithConfigError: If the value is not a string.
     """
@@ -535,11 +537,11 @@ def _class_name(value: object, where: str) -> str:
             f'{where}: expected a name such as "StandardDispersion", got {value!r}'
         )
     return value
- 
- 
+
+
 def _dist_type(table: Mapping[str, object], where: str) -> str:
     """Return a dispersion's distribution type.
- 
+
     Raises:
         EdithConfigError: If it is missing, or not "normal" or "uniform".
     """
@@ -552,14 +554,14 @@ def _dist_type(table: Mapping[str, object], where: str) -> str:
             f"got {dist_type!r}"
         )
     return dist_type
- 
- 
+
+
 def _number(value: object, name: str, where: str, nominal: Nominal) -> _Number:
     """Return one of a dispersion's numbers, converted to its nominal value's units.
- 
+
     A nominal value with units, such as "17 kg", takes a number with units of
     the same kind; a plain number takes a plain number.
- 
+
     Raises:
         EdithConfigError: If the value is not a finite number in that form, or
             its units do not convert to the nominal value's.
@@ -599,27 +601,27 @@ def _number(value: object, name: str, where: str, nominal: Nominal) -> _Number:
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error
     return _Number(_finite(converted, where, value), text)
- 
- 
+
+
 def _finite(number: float, where: str, value: object) -> float:
     """Return a number, checking it is finite.
- 
+
     Raises:
         EdithConfigError: If it is infinite or NaN.
     """
     if not math.isfinite(number):
         raise EdithConfigError(f"{where}: expected a finite number, got {value!r}")
     return number
- 
- 
+
+
 def _above(first: float, second: float) -> bool:
     """Return whether one number is above another by more than rounding."""
     return first > second and not math.isclose(first, second, abs_tol=1e-12)
- 
- 
+
+
 def _normal(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Normal:
     """Return a normal distribution, checking sigma and its bounds.
- 
+
     Raises:
         EdithConfigError: If sigma is negative, or low and high do not lie on
             either side of the nominal value.
@@ -646,13 +648,13 @@ def _normal(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Nor
         None if low is None else low.value,
         None if high is None else high.value,
     )
- 
- 
+
+
 def _uniform(
     numbers: Mapping[str, _Number], nominal: Nominal, where: str, usage: str
 ) -> Uniform:
     """Return a uniform distribution of half_width about the nominal, or low to high.
- 
+
     Raises:
         EdithConfigError: If it has both forms or neither, half_width is
             negative, or low is not below high.
@@ -680,11 +682,11 @@ def _uniform(
         )
     _check_order(low, high, where)
     return Uniform(low.value, high.value)
- 
- 
+
+
 def _check_order(low: _Number | None, high: _Number | None, where: str) -> None:
     """Check low is below high where both are given.
- 
+
     Raises:
         EdithConfigError: If it is not.
     """
