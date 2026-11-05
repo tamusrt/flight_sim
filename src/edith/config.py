@@ -447,7 +447,7 @@ def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
     distribution: Distribution = (
         _normal(numbers, nominal, where)
         if dist_type == "normal"
-        else _uniform(numbers, nominal, where, keys.usage)
+        else _uniform(numbers, nominal, where)
     )
     return Dispersion(
         key, target, nominal.value, distribution, nominal.units, dispersion_class
@@ -618,15 +618,14 @@ def _normal(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Nor
     )
 
 
-def _uniform(
-    numbers: Mapping[str, _Number], nominal: Nominal, where: str, usage: str
-) -> Uniform:
+def _uniform(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Uniform:
     """Return a uniform distribution of half_width about the nominal, or low to high.
 
     Raises:
         EdithConfigError: If it has both forms or neither, half_width is
             negative, or low is not below high.
     """
+    usage = _DISTRIBUTION_KEYS["uniform"].usage
     half_width = numbers.get("half_width")
     low, high = numbers.get("low"), numbers.get("high")
     if half_width is not None:
