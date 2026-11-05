@@ -29,11 +29,11 @@ class AeroCoefficients:
 
 
 # CSV columns, in the order of the table's last axis
-AERO_COLUMNS: tuple[str, ...] = ("Cx", "Cy", "Cz", "CMx", "xCP")
+_AERO_COLUMNS: tuple[str, ...] = ("Cx", "Cy", "Cz", "CMx", "xCP")
 
 # Optional last column: Cx while the motor burns, as base drag falls with the
 # exhaust filling the wake
-POWER_ON_COLUMN = "CxPowerOn"
+_POWER_ON_COLUMN = "CxPowerOn"
 
 # Largest jump in xCP, in reference lengths, from the first nonzero alpha row
 # to the zero alpha row before it is flagged
@@ -104,12 +104,12 @@ class AeroTable(UnitChecked):
             )
         shape = (len(self.mach_axis), len(self.alpha_axis), len(self.phi_axis))
         if self.values.shape[:3] != shape or self.values.shape[3] not in (
-            len(AERO_COLUMNS),
-            len(AERO_COLUMNS) + 1,
+            len(_AERO_COLUMNS),
+            len(_AERO_COLUMNS) + 1,
         ):
             raise ValueError(
-                f"Aero table values must have shape {(*shape, len(AERO_COLUMNS))}"
-                f", or one more column for {POWER_ON_COLUMN}"
+                f"Aero table values must have shape {(*shape, len(_AERO_COLUMNS))}"
+                f", or one more column for {_POWER_ON_COLUMN}"
             )
         if not np.all(np.isfinite(self.values)):
             raise ValueError("Aero table values must be finite")
@@ -220,9 +220,9 @@ def aero_table_from_csv(
     alpha_axis = np.sort(data_frame["Alpha"].unique())
     phi_axis = np.sort(data_frame["Phi"].unique())
 
-    columns = AERO_COLUMNS
-    if POWER_ON_COLUMN in data_frame.columns:
-        columns += (POWER_ON_COLUMN,)
+    columns = _AERO_COLUMNS
+    if _POWER_ON_COLUMN in data_frame.columns:
+        columns += (_POWER_ON_COLUMN,)
     values = np.stack(
         [
             data_frame.pivot_table(

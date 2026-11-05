@@ -4,34 +4,33 @@ A campaign file names the base sim, the number of trials, the master seed and
 the values to disperse, each by its key path in the base sim's resolved input,
 as ``edith.targets`` describes. Each dispersion's ``dispersion`` table names
 the class that draws its values; for now that is always StandardDispersion,
-which draws a number from a normal or uniform distribution. A dispersion's
+which draws a number from a normal or uniform distribution and is the default
+for a dispersion that leaves the table out. A dispersion's
 numbers are converted to the units its nominal value is written in.
 """
 
 import contextlib
-import difflib
 import math
-import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, NamedTuple, Self, TypeAlias
+from typing import Literal, NamedTuple, Self, TypeAlias, cast, get_args
 
-from pint import DimensionalityError
+from pint import DimensionalityError, OffsetUnitCalculusError
 
-from edith.errors import EdithConfigError
+from edith.errors import EdithConfigError, closest
 from edith.targets import (
-    UNREADABLE_UNITS,
-    BaseSim,
     Nominal,
     ValueTarget,
-    parse_quantity,
+    find_target,
+    load_base_sim,
     value_path,
 )
 from flight_sim.config import InputSource
-from flight_sim.config.toml_files import display_path
-from flight_sim.units import scalar, ureg
+from flight_sim.config.toml_files import display_path, key_path
+from flight_sim.config.writing import toml_key
+from flight_sim.units import UNREADABLE_UNITS, convert, parse_quantity
 
 __all__ = [
     "STANDARD_DISPERSION",
@@ -48,19 +47,24 @@ __all__ = [
 ]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
-_SAMPLINGS: dict[str, Sampling] = {"lhs": "lhs", "random": "random"}
+
+
+def _listed(keys: Sequence[str]) -> str:
+    """Return keys as a list in prose, such as "a, b and c"."""
+    return " and ".join((", ".join(keys[:-1]), keys[-1])) if len(keys) > 1 else keys[0]
+
 
 # Keys of a campaign file
 _REQUIRED_KEYS = ("N", "master_seed", "base_sim", "output_dir", "dispersions")
 _OPTIONAL_KEYS = ("sampling", "workers", "batch_size", "trial_timeout")
 _CAMPAIGN_USAGE = (
-    "a campaign file needs N, master_seed, base_sim, output_dir and "
-    "dispersions, and takes sampling, workers, batch_size and trial_timeout"
+    f"a campaign file needs {_listed(_REQUIRED_KEYS)}, "
+    f"and takes {_listed(_OPTIONAL_KEYS)}"
 )
 
 
 class _Keys(NamedTuple):
-    """Keys a dispersion of one type needs and takes, and how errors say so."""
+    """Keys one dist_type needs and takes besides its own, and how errors say so."""
 
     required: tuple[str, ...]
     optional: tuple[str, ...]
@@ -69,28 +73,24 @@ class _Keys(NamedTuple):
 
 _DISTRIBUTION_KEYS = {
     "normal": _Keys(
-        ("dispersion", "dist_type", "sigma"),
+        ("sigma",),
         ("low", "high"),
         "a normal dispersion takes sigma, and optionally low and high",
     ),
     "uniform": _Keys(
-        ("dispersion", "dist_type"),
+        (),
         ("half_width", "low", "high"),
         "a uniform dispersion takes half_width, or low and high",
     ),
 }
 
-# Keys of a dispersion that hold its numbers, and those that are differences
-# from the nominal value rather than values of it
+# Keys of a dispersion that hold its numbers
 _SPREAD_KEYS = ("sigma", "half_width", "low", "high")
-_DIFFERENCE_KEYS = ("sigma", "half_width")
 
 _DISPERSION_USAGE = (
-    "for now every dispersion names its class as dispersion = "
-    '{ module = "StandardDispersion", class = "StandardDispersion" }'
+    "for now every dispersion leaves dispersion out, or names its class as "
+    'dispersion = { module = "StandardDispersion", class = "StandardDispersion" }'
 )
-
-_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @dataclass(frozen=True)
@@ -226,15 +226,15 @@ class EdithConfig:
         trial_timeout_s = _optional_timeout_s(table)
         base_sim = _base_sim(table["base_sim"], path.parent)
         output_dir = _output_dir(table["output_dir"], path.parent)
-        base = BaseSim.load(base_sim)
+        source = load_base_sim(base_sim)
         return cls(
             path=path,
             trials=trials,
             master_seed=master_seed,
             base_sim=base_sim,
             output_dir=output_dir,
-            dispersions=_dispersions(table["dispersions"], base),
-            source=base.source,
+            dispersions=_dispersions(table["dispersions"], source),
+            source=source,
             sampling=sampling,
             workers=workers,
             batch_size=batch_size,
@@ -255,6 +255,7 @@ def read_edith_config(path: str | Path) -> dict[str, object]:
         EdithConfigError: If the file cannot be read or is not valid TOML.
     """
     path = Path(path)
+    # Not load_toml: a campaign file takes no include or extends
     try:
         # utf-8-sig also reads files that editors saved with a byte-order mark
         text = path.read_text(encoding="utf-8-sig")
@@ -273,16 +274,13 @@ def read_edith_config(path: str | Path) -> dict[str, object]:
 
 def _key_path(where: str, key: str) -> str:
     """Return the key path of a key in the table at ``where``, quoted if need be."""
-    if not _BARE_KEY.fullmatch(key):
-        key = '"' + key.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return f"{where}.{key}" if where else key
+    return key_path(where, toml_key(key))
 
 
 def _did_you_mean(key: str, known: Sequence[str]) -> str:
     """Return a hint naming the known key closest to a misspelt one, if any."""
-    same = [option for option in known if option.lower() == key.lower()]
-    close = same or difflib.get_close_matches(key, known, n=1)
-    return f" (did you mean {close[0]}?)" if close else ""
+    close = closest(key, known)
+    return f" (did you mean {close}?)" if close is not None else ""
 
 
 def _check_keys(
@@ -334,34 +332,9 @@ def _sampling(value: object) -> Sampling:
     Raises:
         EdithConfigError: If it is not "lhs" or "random".
     """
-    if isinstance(value, str) and value in _SAMPLINGS:
-        return _SAMPLINGS[value]
+    if isinstance(value, str) and value in get_args(Sampling):
+        return cast(Sampling, value)
     raise EdithConfigError(f'sampling: expected "lhs" or "random", got {value!r}')
-
-
-def _convert(number: float, units: str, to_units: str, difference: bool) -> float:
-    """Return a number in other units of the same kind.
-
-    Units are of the same kind when their root units are the same, which keeps
-    angles apart from plain numbers, though Pint converts "5 percent" to
-    0.05 rad. A difference, such as a sigma, converts without the units'
-    offsets: a sigma of 18 degF is 10 degC, or 10 delta_degC, where the
-    temperature 18 degF is -7.8 degC.
-
-    Raises:
-        DimensionalityError: If the units are of different kinds.
-    """
-    root = ureg.get_root_units(units)[1]
-    if root != ureg.get_root_units(to_units)[1]:
-        raise DimensionalityError(units, to_units)
-    if not difference:
-        return float(scalar(number, units).m_as(to_units))
-    return number * (_step(units, str(root)) / _step(to_units, str(root)))
-
-
-def _step(units: str, root: str) -> float:
-    """Return the size of one of ``units`` in its root units, without offset."""
-    return float(scalar(1.0, units).m_as(root)) - float(scalar(0.0, units).m_as(root))
 
 
 def _optional_timeout_s(table: Mapping[str, object]) -> float | None:
@@ -377,7 +350,7 @@ def _optional_timeout_s(table: Mapping[str, object]) -> float | None:
     seconds = math.nan
     if quantity is not None:
         with contextlib.suppress(*UNREADABLE_UNITS):
-            seconds = _convert(quantity[0], quantity[1], "s", False)
+            seconds = convert(quantity[0], quantity[1], "s")
     if not 0.0 < seconds < math.inf:
         raise EdithConfigError(
             f'trial_timeout: expected a time above 0, such as "10 min", got {value!r}'
@@ -431,7 +404,7 @@ class _Number(NamedTuple):
     text: str  # As the campaign file writes it, such as "2 cm"
 
 
-def _dispersions(value: object, base: BaseSim) -> tuple[Dispersion, ...]:
+def _dispersions(value: object, source: InputSource) -> tuple[Dispersion, ...]:
     """Read every dispersion table, checking no two change the same value.
 
     Raises:
@@ -443,7 +416,7 @@ def _dispersions(value: object, base: BaseSim) -> tuple[Dispersion, ...]:
             "dispersions: expected one or more tables, such as "
             '[dispersions."properties.dry_mass_properties.mass"]'
         )
-    dispersions = tuple(_dispersion(key, item, base) for key, item in value.items())
+    dispersions = tuple(_dispersion(key, item, source) for key, item in value.items())
     first_of: dict[ValueTarget, Dispersion] = {}
     for dispersion in dispersions:
         first = first_of.setdefault(dispersion.target, dispersion)
@@ -456,7 +429,7 @@ def _dispersions(value: object, base: BaseSim) -> tuple[Dispersion, ...]:
     return dispersions
 
 
-def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
+def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
     """Read one dispersion table, whose key names the value it disperses.
 
     Raises:
@@ -471,12 +444,18 @@ def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
             f"got {value!r}"
         )
     dispersion_class = _dispersion_class(value, where)
-    target, nominal = base.target(key, where)
+    target, nominal = find_target(source, key, where)
     dist_type = _dist_type(value, where)
     keys = _DISTRIBUTION_KEYS[dist_type]
-    _check_keys(value, where, keys.required, keys.optional, keys.usage)
+    _check_keys(
+        value,
+        where,
+        ("dist_type", *keys.required),
+        ("dispersion", *keys.optional),
+        keys.usage,
+    )
     numbers = {
-        name: _number(value[name], name, _key_path(where, name), nominal)
+        name: _number(value[name], _key_path(where, name), nominal)
         for name in _SPREAD_KEYS
         if name in value
     }
@@ -491,14 +470,14 @@ def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
 
 
 def _dispersion_class(table: Mapping[str, object], where: str) -> DispersionClass:
-    """Return the class a dispersion's ``dispersion`` table names.
+    """Return the class a ``dispersion`` table names, or the standard one.
 
     Raises:
-        EdithConfigError: If the table is missing or malformed, or names a
-            class EDITH does not have.
+        EdithConfigError: If the table is malformed, or names a class EDITH
+            does not have.
     """
     if "dispersion" not in table:
-        raise EdithConfigError(f"{where}: missing dispersion; {_DISPERSION_USAGE}")
+        return STANDARD_DISPERSION
     block = table["dispersion"]
     block_where = _key_path(where, "dispersion")
     if not isinstance(block, dict):
@@ -556,11 +535,12 @@ def _dist_type(table: Mapping[str, object], where: str) -> str:
     return dist_type
 
 
-def _number(value: object, name: str, where: str, nominal: Nominal) -> _Number:
+def _number(value: object, where: str, nominal: Nominal) -> _Number:
     """Return one of a dispersion's numbers, converted to its nominal value's units.
 
     A nominal value with units, such as "17 kg", takes a number with units of
-    the same kind; a plain number takes a plain number.
+    the same kind; a plain number takes a plain number. A nominal value in
+    units with an offset, such as degC, takes numbers in those units only.
 
     Raises:
         EdithConfigError: If the value is not a finite number in that form, or
@@ -590,13 +570,16 @@ def _number(value: object, name: str, where: str, nominal: Nominal) -> _Number:
             f"{nominal.text}; got {value!r}"
         )
     try:
-        converted = _convert(
-            number, quantity[1], nominal.units, name in _DIFFERENCE_KEYS
-        )
+        converted = convert(number, quantity[1], nominal.units)
     except DimensionalityError as error:
         raise EdithConfigError(
             f'{where}: "{text}" does not convert to {nominal.units}, the units '
             f"of the nominal value, {nominal.text}"
+        ) from error
+    except OffsetUnitCalculusError as error:
+        raise EdithConfigError(
+            f"{where}: write {text!r} in {nominal.units}, the units of the nominal "
+            f"value, {nominal.text}, since a spread and a value convert differently"
         ) from error
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error

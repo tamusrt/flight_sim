@@ -10,6 +10,7 @@ are pinned to a concrete type, which is what lets the rest of the codebase
 type-check under strict mypy.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import fields
 from functools import cache
@@ -27,7 +28,13 @@ from typing import (
 )
 
 import numpy as np
-from pint import DimensionalityError, Quantity, UnitRegistry
+from pint import (
+    DimensionalityError,
+    OffsetUnitCalculusError,
+    PintError,
+    Quantity,
+    UnitRegistry,
+)
 from pint.facets.plain import PlainUnit
 from pint.util import UnitsContainer
 
@@ -99,6 +106,64 @@ def scalar(magnitude: float, units: str) -> Scalar:
     """
     result: Scalar = ureg.Quantity(magnitude, parse_units(units))
     return result
+
+
+# What Pint raises for units it cannot read, AssertionError among them for
+# some malformed ones, such as "m/"
+UNREADABLE_UNITS = (
+    PintError,
+    AssertionError,
+    AttributeError,
+    SyntaxError,
+    TypeError,
+    ValueError,
+)
+
+# A number and its units, such as "0.25 kg", "-2.08 m" or "1e-5 m/s"
+_QUANTITY = re.compile(
+    r"(?P<number>[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*"
+    r"(?P<units>(?![eE][+-]?\d)[A-Za-z].*)"
+)
+
+
+def parse_quantity(text: str) -> tuple[float, str] | None:
+    """Return the number and units of a quantity such as "0.25 kg", or None."""
+    match = _QUANTITY.fullmatch(text.strip())
+    if match is None:
+        return None
+    return float(match["number"]), match["units"]
+
+
+def convert(number: float, units: str, to_units: str) -> float:
+    """Convert a number to other units of the same kind.
+
+    Units are of the same kind when their root units match, which keeps angles
+    apart from plain numbers.
+
+    Args:
+        number (float): Magnitude in ``units``.
+        units (str): Pint unit expression the number is in, such as "cm".
+        to_units (str): Pint unit expression to convert to, such as "m".
+
+    Returns:
+        float: The number in ``to_units``.
+
+    Raises:
+        DimensionalityError: If the units are of different kinds.
+        OffsetUnitCalculusError: If the units differ and either has an offset,
+            such as degC, since a difference and a value convert differently.
+    """
+    root = str(ureg.get_root_units(units)[1])
+    if root != str(ureg.get_root_units(to_units)[1]):
+        raise DimensionalityError(units, to_units)
+    if units != to_units and (_has_offset(units, root) or _has_offset(to_units, root)):
+        raise OffsetUnitCalculusError(units, to_units)
+    return float(scalar(number, units).m_as(to_units))
+
+
+def _has_offset(units: str, root: str) -> bool:
+    """Return whether zero in ``units`` is not zero in its root units."""
+    return float(scalar(0.0, units).m_as(root)) != 0.0
 
 
 def vector(components: tuple[float, float, float] | np.ndarray, units: str) -> Vector:

@@ -50,7 +50,8 @@ sampling = "lhs"
 # "config.truth.atmosphere.barometric_pressure".
 #
 # dispersion names the class that draws the value. For now every dispersion
-# takes the standard one, which draws a number from the distribution below:
+# takes the standard one, which draws a number from the distribution below,
+# and which a dispersion that leaves dispersion out takes too:
 #
 #   dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 #
@@ -63,8 +64,8 @@ sampling = "lhs"
 # sigma, half_width, low and high carry units of the same kind as the
 # nominal value's, such as "0.25 kg" or "5 mph", and EDITH converts them to
 # the nominal value's units. A plain number in the input takes plain
-# numbers: sigma = 0.05. A sigma or half_width of 0 keeps the value at its
-# nominal.
+# numbers: sigma = 0.05. A value in degC or degF takes its numbers in those
+# units. A sigma or half_width of 0 keeps the value at its nominal.
 # ---------------------------------------------------------------------------
 
 # Dry mass, a placeholder 17 kg in vehicle.toml

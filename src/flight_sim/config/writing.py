@@ -47,14 +47,14 @@ def _toml_table(
             continue
         text = _toml_value(value)
         line = (
-            f"{_toml_key(key)} = {text}"
+            f"{toml_key(key)} = {text}"
             if text is not None
-            else f"# {_toml_key(key)} = {value!r}"
+            else f"# {toml_key(key)} = {value!r}"
         )
         lines.append(_commented(line, comments.get(key_where)))
     for key, value, key_where in sections:
         keys = (*header, key)
-        name = ".".join(_toml_key(part) for part in keys)
+        name = ".".join(toml_key(part) for part in keys)
         if isinstance(value, Mapping):
             comment = comments.get(key_where)
             # A table holding only tables needs no header of its own
@@ -89,7 +89,7 @@ def _toml_value(value: Any) -> str | None:
         items = [(key, _toml_value(item)) for key, item in value.items()]
         if any(text is None for _, text in items):
             return None
-        pairs = ", ".join(f"{_toml_key(key)} = {text}" for key, text in items)
+        pairs = ", ".join(f"{toml_key(key)} = {text}" for key, text in items)
         return f"{{ {pairs} }}" if pairs else "{}"
     if isinstance(value, list | tuple):
         texts = [_toml_value(item) for item in value]
@@ -102,7 +102,7 @@ def _toml_value(value: Any) -> str | None:
         return None
 
 
-def _toml_key(key: str) -> str:
+def toml_key(key: str) -> str:
     """Return a key bare if TOML allows it, or quoted."""
     if re.fullmatch(r"[A-Za-z0-9_-]+", key):
         return key

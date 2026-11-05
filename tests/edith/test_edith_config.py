@@ -60,7 +60,6 @@ def _error(tmp_path: Path, dispersions: str, header: str = _HEADER) -> str:
     """Return the message of the error a campaign file raises."""
     with pytest.raises(EdithConfigError) as error:
         EdithConfig.from_file(_campaign(tmp_path, dispersions, header))
-    print(error.value)
     return str(error.value)
 
 
@@ -262,10 +261,11 @@ def test_included_files_may_lie_anywhere(tmp_path: Path) -> None:
         _STANDARD,
         'dispersion.module = "StandardDispersion"\n'
         'dispersion.class = "StandardDispersion"',
+        "",
     ],
 )
 def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
-    """A dispersion names the class that draws it, inline or in dotted keys."""
+    """A dispersion names its class inline or in dotted keys, or takes the default."""
     found = _dispersion(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
     assert found.dispersion_class == DispersionClass(
@@ -277,12 +277,6 @@ def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
 @pytest.mark.parametrize(
     ("dispersion", "expected"),
     [
-        (
-            "",
-            f'dispersions."{_MASS_KEY}": missing dispersion; for now every '
-            "dispersion names its class as dispersion = "
-            '{ module = "StandardDispersion", class = "StandardDispersion" }',
-        ),
         (
             'dispersion = "StandardDispersion"',
             "dispersion: expected a table of module and class, got "
@@ -313,7 +307,7 @@ def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
 def test_bad_dispersion_classes_are_named(
     tmp_path: Path, dispersion: str, expected: str
 ) -> None:
-    """For now every dispersion names StandardDispersion, by module and class."""
+    """A dispersion table that does not name StandardDispersion is rejected."""
     assert expected in _error(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
 
@@ -444,8 +438,8 @@ def test_a_default_value_can_be_dispersed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("sigma", ["18 degF", "10 delta_degC", "10 K"])
-def test_spreads_convert_as_differences(tmp_path: Path, sigma: str) -> None:
-    """A sigma of 18 degF is 10 degC, while a bound of 50 degF is 10 degC too."""
+def test_offset_nominals_take_their_own_units(tmp_path: Path, sigma: str) -> None:
+    """A degC nominal takes spreads in degC, and no other temperature units."""
     _campaign(tmp_path, "")
     site = tmp_path / "base" / "site.toml"
     site.write_text(
@@ -454,18 +448,18 @@ def test_spreads_convert_as_differences(tmp_path: Path, sigma: str) -> None:
         ),
         encoding="utf-8",
     )
+    key = "config.truth.atmosphere.launch_temperature"
+
     dispersion = _dispersion(
         tmp_path,
-        _table(
-            "config.truth.atmosphere.launch_temperature",
-            f'dist_type = "normal"\nsigma = "{sigma}"\nlow = "50 degF"',
-        ),
+        _table(key, 'dist_type = "normal"\nsigma = "10 degC"\nlow = "10 degC"'),
     )
 
     assert (dispersion.nominal, dispersion.units) == (20.0, "degC")
-    assert isinstance(dispersion.distribution, Normal)
-    assert dispersion.distribution.sigma == pytest.approx(10.0)
-    assert dispersion.distribution.low == pytest.approx(10.0)
+    assert dispersion.distribution == Normal(10.0, 10.0)
+    assert f"write '{sigma}' in degC" in _error(
+        tmp_path, _table(key, f'dist_type = "normal"\nsigma = "{sigma}"')
+    )
 
 
 def test_angles_are_not_plain_numbers(tmp_path: Path) -> None:
