@@ -27,13 +27,7 @@ from edith.dispersion import (
     Uniform,
 )
 from edith.errors import EdithConfigError, closest
-from edith.targets import (
-    Nominal,
-    ValueTarget,
-    find_target,
-    load_base_sim,
-    value_path,
-)
+from edith.targets import Nominal, find_target, load_base_sim
 from flight_sim.config import InputSource
 from flight_sim.config.toml_files import display_path, key_path
 from flight_sim.config.writing import toml_key
@@ -341,17 +335,18 @@ def _dispersions(value: object, source: InputSource) -> tuple[Dispersion, ...]:
             "dispersions: expected one or more tables, such as "
             '[dispersions."properties.dry_mass_properties.mass"]'
         )
-    dispersions = tuple(_dispersion(key, item, source) for key, item in value.items())
-    first_of: dict[ValueTarget, Dispersion] = {}
-    for dispersion in dispersions:
-        first = first_of.setdefault(dispersion.target, dispersion)
-        if first is not dispersion:
+    dispersions = []
+    first_of: dict[str, str] = {}  # Campaign key of each key path's dispersion
+    for key, item in value.items():
+        dispersion = _dispersion(key, item, source)
+        first = first_of.setdefault(dispersion.key, key)
+        if first != key:
             raise EdithConfigError(
-                f"{_key_path('dispersions', dispersion.key)}: changes "
-                f"{value_path(dispersion.target.path)}, which "
-                f"{_key_path('dispersions', first.key)} changes too"
+                f"{_key_path('dispersions', key)}: changes {dispersion.key}, "
+                f"which {_key_path('dispersions', first)} changes too"
             )
-    return dispersions
+        dispersions.append(dispersion)
+    return tuple(dispersions)
 
 
 def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
@@ -369,7 +364,7 @@ def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
             f"got {value!r}"
         )
     dispersion_class = _dispersion_class(value, where)
-    target, nominal = find_target(source, key, where)
+    key_path_, nominal = find_target(source, key, where)
     dist_type = _dist_type(value, where)
     keys = _DISTRIBUTION_KEYS[dist_type]
     _check_keys(
@@ -390,7 +385,7 @@ def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
         else _uniform(numbers, nominal, where)
     )
     return Dispersion(
-        key, target, nominal.value, distribution, nominal.units, dispersion_class
+        key_path_, nominal.value, distribution, nominal.units, dispersion_class
     )
 
 

@@ -10,7 +10,6 @@ files are laid out.
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
@@ -24,15 +23,6 @@ _KEY_PART = re.compile(r"(?P<name>[A-Za-z0-9_-]+)(?P<indices>(?:\[\d+\])*)")
 
 # What a key path finds when it leads nowhere, since a value may be None
 _MISSING = object()
-
-
-@dataclass(frozen=True)
-class ValueTarget:
-    """Number at a key path in the base sim's resolved input."""
-
-    # Table keys and list indices down to the number, such as
-    # ("properties", "dry_mass_properties", "cg_location", "value", 0)
-    path: tuple[str | int, ...]
 
 
 class Nominal(NamedTuple):
@@ -75,10 +65,8 @@ def load_base_sim(path: Path) -> InputSource:
     return simulation.source
 
 
-def find_target(
-    source: InputSource, key: str, where: str
-) -> tuple[ValueTarget, Nominal]:
-    """Return the value a dispersion's key names, and its nominal value.
+def find_target(source: InputSource, key: str, where: str) -> tuple[str, Nominal]:
+    """Return the key path a dispersion's key names, and its nominal value.
 
     Args:
         source (InputSource): The base sim's resolved input.
@@ -86,7 +74,9 @@ def find_target(
         where (str): Key path of the dispersion, for messages.
 
     Returns:
-        tuple[ValueTarget, Nominal]: Where the value is, and the value.
+        tuple[str, Nominal]: The key path as ``InputSource.table_with`` takes
+            it, such as "cg_location.value[0]" for a key written
+            "cg_location.value[00]", and the value there.
 
     Raises:
         EdithConfigError: If the key is malformed or names no number of the
@@ -94,7 +84,7 @@ def find_target(
     """
     path = _key_parts(key, where)
     node, parents = _walk(source.table, path, where)
-    return ValueTarget(path), _leaf(node, _units_owner(path, parents), path, where)
+    return value_path(path), _leaf(node, _units_owner(path, parents), path, where)
 
 
 def _key_parts(text: str, where: str) -> tuple[str | int, ...]:

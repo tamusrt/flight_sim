@@ -7,8 +7,6 @@ all in the units its nominal value is written in.
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from edith.targets import ValueTarget
-
 __all__ = [
     "STANDARD_DISPERSION",
     "Dispersion",
@@ -53,10 +51,10 @@ class Dispersion:
     The nominal value and the distribution's numbers are all in ``units``.
     """
 
-    # Key of its table in the campaign file, such as
+    # Key path of the value in the base sim's resolved input, as
+    # InputSource.table_with takes it, such as
     # "properties.dry_mass_properties.mass"
     key: str
-    target: ValueTarget
     nominal: float  # Value in the base sim
     distribution: Distribution
 
