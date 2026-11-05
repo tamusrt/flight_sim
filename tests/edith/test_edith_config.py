@@ -36,9 +36,9 @@ _MASS_KEY = "properties.dry_mass_properties.mass"
 _MASS_BODY = 'dist_type = "normal"\nsigma = "0.25 kg"'
 
 
-def _table(key: str, body: str) -> str:
-    """Return a dispersion table of a key and its body."""
-    return f'\n[dispersions."{key}"]\n{body}\n'
+def _table(key: str, body: str, dispersion: str = _STANDARD) -> str:
+    """Return a dispersion table: its key, its dispersion class and its body."""
+    return f'\n[dispersions."{key}"]\n{dispersion}\n{body}\n'
 
 
 _MASS = _table(_MASS_KEY, _MASS_BODY)
@@ -256,20 +256,6 @@ def test_included_files_may_lie_anywhere(tmp_path: Path) -> None:
     assert (dispersion.nominal, dispersion.units) == (17.0, "kg")
 
 
-def test_the_standard_dispersion_is_the_default(tmp_path: Path) -> None:
-    """A dispersion that leaves out its dispersion table takes the standard class."""
-    dispersion = _dispersion(
-        tmp_path,
-        '[dispersions."properties.dry_mass_properties.mass"]\n'
-        'dist_type = "normal"\nsigma = "0.25 kg"\n',
-    )
-
-    assert dispersion.dispersion_class == STANDARD_DISPERSION
-    assert dispersion.dispersion_class == DispersionClass(
-        "StandardDispersion", "StandardDispersion"
-    )
-
-
 @pytest.mark.parametrize(
     "dispersion",
     [
@@ -278,10 +264,13 @@ def test_the_standard_dispersion_is_the_default(tmp_path: Path) -> None:
         'dispersion.class = "StandardDispersion"',
     ],
 )
-def test_the_standard_dispersion_may_be_named(tmp_path: Path, dispersion: str) -> None:
-    """A dispersion may still name the standard class, inline or in dotted keys."""
-    found = _dispersion(tmp_path, _table(_MASS_KEY, f"{dispersion}\n{_MASS_BODY}"))
+def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
+    """A dispersion names the class that draws it, inline or in dotted keys."""
+    found = _dispersion(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
+    assert found.dispersion_class == DispersionClass(
+        "StandardDispersion", "StandardDispersion"
+    )
     assert found.dispersion_class == STANDARD_DISPERSION
 
 
@@ -289,8 +278,10 @@ def test_the_standard_dispersion_may_be_named(tmp_path: Path, dispersion: str) -
     ("dispersion", "expected"),
     [
         (
-            _STANDARD.replace("dispersion =", "dispersoin ="),
-            "dispersoin: unknown key (did you mean dispersion?)",
+            "",
+            f'dispersions."{_MASS_KEY}": missing dispersion; for now every '
+            "dispersion names its class as dispersion = "
+            '{ module = "StandardDispersion", class = "StandardDispersion" }',
         ),
         (
             'dispersion = "StandardDispersion"',
@@ -311,8 +302,7 @@ def test_the_standard_dispersion_may_be_named(tmp_path: Path, dispersion: str) -
         ),
         (
             'dispersion = { module = "AeroDispersion", class = "AeroDispersion" }',
-            "dispersion.module: EDITH has no dispersion module 'AeroDispersion'; "
-            "for now every dispersion is a StandardDispersion: leave dispersion out",
+            "dispersion.module: EDITH has no dispersion module 'AeroDispersion'",
         ),
         (
             'dispersion = { module = "StandardDispersion", class = "Standard" }',
@@ -323,15 +313,13 @@ def test_the_standard_dispersion_may_be_named(tmp_path: Path, dispersion: str) -
 def test_bad_dispersion_classes_are_named(
     tmp_path: Path, dispersion: str, expected: str
 ) -> None:
-    """A dispersion table, where given, names StandardDispersion by module and class."""
-    message = _error(tmp_path, _table(_MASS_KEY, f"{dispersion}\n{_MASS_BODY}"))
-
-    assert expected in message
+    """For now every dispersion names StandardDispersion, by module and class."""
+    assert expected in _error(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
 
 def test_a_dispersion_is_a_table(tmp_path: Path) -> None:
     """Each item under dispersions is a table, not a bare value."""
-    assert "dispersions.mass: expected a table of dist_type and its spread, got 5" in (
+    assert "dispersions.mass: expected a table of dispersion, dist_type and its" in (
         _error(tmp_path, "dispersions = { mass = 5 }\n")
     )
 
