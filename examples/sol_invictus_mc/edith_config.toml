@@ -43,19 +43,17 @@ sampling = "lhs"
 #   "properties.dry_mass_properties.inertia.diag[1]"       135.0 of a diag
 #   "config.truth.launch_rail.elevation"                   "85 deg"
 #
-# Included files sit under the key that includes them, so the dry mass in
+# Included files sit under the key that includes them, wherever they are on
+# disk: sim.toml includes vehicle.toml as properties, so the dry mass in
 # vehicle.toml is "properties.dry_mass_properties.mass". A value the input
 # leaves to its default can be dispersed too, such as
 # "config.truth.atmosphere.barometric_pressure".
 #
-# "<aero table>:<column>" scales a whole column of an aero table by one
-# factor whose nominal value is 1: Cx, the axial force, which holds the drag;
-# Cy and Cz, the side and normal forces; CMx, the rolling moment; xCP, the
-# center of pressure's distance from the reference point; and CxPowerOn,
-# where the table has it. "properties.aero_table:Cy+Cz" scales both columns
-# by the same factor. The pitching and yawing moments follow from the forces
-# acting at xCP, so scaling Cz leaves the center of pressure in place. A
-# table with CxPowerOn scales it with Cx: "properties.aero_table:Cx+CxPowerOn".
+# dispersion, which every table below leaves out, names the class that draws
+# the value. It defaults to the standard class, the only one for now, which
+# draws a number from the distribution dist_type names. Written out, it is:
+#
+#   dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 #
 # dist_type = "normal"   sigma about the nominal value. Optional low and
 #                        high truncate it, as absolute values on either
@@ -65,10 +63,9 @@ sampling = "lhs"
 #
 # sigma, half_width, low and high carry units of the same kind as the
 # nominal value's, such as "0.25 kg" or "5 mph", and EDITH converts them to
-# the nominal value's units. A plain number in the input, and an aero
-# factor, take plain numbers: sigma = 0.05. A sigma or half_width of 0
-# keeps the value at its nominal. An aero factor's normal without low needs
-# sigma below 0.2, which keeps the factor above 0 to five sigma.
+# the nominal value's units. A plain number in the input takes plain
+# numbers: sigma = 0.05. A sigma or half_width of 0 keeps the value at its
+# nominal.
 # ---------------------------------------------------------------------------
 
 # Dry mass, a placeholder 17 kg in vehicle.toml
@@ -103,18 +100,3 @@ high = "15 mph"
 [dispersions."config.truth.wind.from_azimuth"]
 dist_type = "uniform"
 half_width = "30 deg"
-
-# Drag, 5 % at one sigma
-[dispersions."properties.aero_table:Cx"]
-dist_type = "normal"
-sigma = 0.05
-
-# Side and normal force together, 10 % at one sigma
-[dispersions."properties.aero_table:Cy+Cz"]
-dist_type = "normal"
-sigma = 0.10
-
-# Center of pressure, 2 % of its distance from the nose at one sigma
-[dispersions."properties.aero_table:xCP"]
-dist_type = "normal"
-sigma = 0.02
