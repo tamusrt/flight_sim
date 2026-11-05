@@ -2,11 +2,11 @@
 
 A campaign file names the base sim, the number of trials, the master seed and
 the values to disperse, each by its key path in the base sim's resolved input,
-as ``edith.targets`` describes. Each dispersion's ``dispersion`` table names
-the class that draws its values; for now that is always StandardDispersion,
-which draws a number from a normal or uniform distribution and is the default
-for a dispersion that leaves the table out. A dispersion's
-numbers are converted to the units its nominal value is written in.
+as ``edith.targets`` describes. A dispersion's optional ``dispersion`` key
+names the class that draws its values; for now that is always
+"StandardDispersion", the default, which draws a number from a normal or
+uniform distribution. A dispersion's numbers are converted to the units its
+nominal value is written in, and ``edith.dispersion`` holds what is read.
 """
 
 import contextlib
@@ -19,6 +19,13 @@ from typing import Literal, NamedTuple, Self, TypeAlias, cast, get_args
 
 from pint import DimensionalityError, OffsetUnitCalculusError
 
+from edith.dispersion import (
+    STANDARD_DISPERSION,
+    Dispersion,
+    Distribution,
+    Normal,
+    Uniform,
+)
 from edith.errors import EdithConfigError, closest
 from edith.targets import (
     Nominal,
@@ -32,16 +39,7 @@ from flight_sim.config.toml_files import display_path, key_path
 from flight_sim.config.writing import toml_key
 from flight_sim.units import UNREADABLE_UNITS, convert, parse_quantity
 
-__all__ = [
-    "STANDARD_DISPERSION",
-    "Dispersion",
-    "DispersionClass",
-    "Distribution",
-    "EdithConfig",
-    "Normal",
-    "Sampling",
-    "Uniform",
-]
+__all__ = ["EdithConfig", "Sampling"]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
 
@@ -84,71 +82,13 @@ _DISTRIBUTION_KEYS = {
 # Keys of a dispersion that hold its numbers
 _SPREAD_KEYS = ("sigma", "half_width", "low", "high")
 
-_DISPERSION_USAGE = (
-    "for now every dispersion leaves dispersion out, or names its class as "
-    'dispersion = { module = "StandardDispersion", class = "StandardDispersion" }'
-)
-
-
-@dataclass(frozen=True)
-class DispersionClass:
-    """Class that draws a dispersion's values, as its ``dispersion`` table names it."""
-
-    module: str  # Such as "StandardDispersion"
-    class_name: str  # The table's class, such as "StandardDispersion"
-
-
-# Draws a number of the base sim from a normal or uniform distribution
-STANDARD_DISPERSION = DispersionClass("StandardDispersion", "StandardDispersion")
-
-# The classes a dispersion may name; for the CDR, only the standard one
+# The dispersion classes a dispersion may name; for the CDR, only the standard one
 _DISPERSION_CLASSES = (STANDARD_DISPERSION,)
 
-
-@dataclass(frozen=True)
-class Normal:
-    """Normal distribution about the dispersion's nominal value.
-
-    ``low`` and ``high``, where given, truncate it on either side of the
-    nominal value.
-    """
-
-    sigma: float
-    low: float | None = None
-    high: float | None = None
-
-
-@dataclass(frozen=True)
-class Uniform:
-    """Uniform distribution from ``low`` to ``high``."""
-
-    low: float
-    high: float
-
-
-Distribution: TypeAlias = Normal | Uniform
-
-
-@dataclass(frozen=True)
-class Dispersion:
-    """One value of the base sim and the distribution its trials draw it from.
-
-    The nominal value and the distribution's numbers are all in ``units``.
-    """
-
-    # Key of its table in the campaign file, such as
-    # "properties.dry_mass_properties.mass"
-    key: str
-    target: ValueTarget
-    nominal: float  # Value in the base sim
-    distribution: Distribution
-
-    # Units of the nominal value as the input writes them, such as "kg"; ""
-    # for a plain number
-    units: str
-
-    # Class that draws its values, as its dispersion table names it
-    dispersion_class: DispersionClass = STANDARD_DISPERSION
+_DISPERSION_USAGE = (
+    "for now every dispersion leaves dispersion out, or writes dispersion = "
+    '"StandardDispersion"'
+)
 
 
 @dataclass(frozen=True)
@@ -454,53 +394,26 @@ def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
     )
 
 
-def _dispersion_class(table: Mapping[str, object], where: str) -> DispersionClass:
-    """Return the class a ``dispersion`` table names, or the standard one.
+def _dispersion_class(table: Mapping[str, object], where: str) -> str:
+    """Return the dispersion class a dispersion names, or the standard one.
 
     Raises:
-        EdithConfigError: If the table is malformed, or names a class EDITH
-            does not have.
+        EdithConfigError: If ``dispersion`` is not a string, or not the name
+            of a class EDITH has.
     """
     if "dispersion" not in table:
         return STANDARD_DISPERSION
-    block = table["dispersion"]
-    block_where = _key_path(where, "dispersion")
-    if not isinstance(block, dict):
+    name = table["dispersion"]
+    where = _key_path(where, "dispersion")
+    if not isinstance(name, str):
         raise EdithConfigError(
-            f"{block_where}: expected a table of module and class, got {block!r}; "
-            f"{_DISPERSION_USAGE}"
+            f"{where}: expected a string, got {name!r}; {_DISPERSION_USAGE}"
         )
-    _check_keys(block, block_where, ("module", "class"), (), _DISPERSION_USAGE)
-    module_where = _key_path(block_where, "module")
-    class_where = _key_path(block_where, "class")
-    chosen = DispersionClass(
-        _class_name(block["module"], module_where),
-        _class_name(block["class"], class_where),
-    )
-    if chosen.module not in {option.module for option in _DISPERSION_CLASSES}:
+    if name not in _DISPERSION_CLASSES:
         raise EdithConfigError(
-            f"{module_where}: EDITH has no dispersion module {chosen.module!r}; "
-            f"{_DISPERSION_USAGE}"
+            f"{where}: EDITH has no dispersion class {name!r}; {_DISPERSION_USAGE}"
         )
-    if chosen not in _DISPERSION_CLASSES:
-        raise EdithConfigError(
-            f"{class_where}: {chosen.module} has no dispersion class "
-            f"{chosen.class_name!r}; {_DISPERSION_USAGE}"
-        )
-    return chosen
-
-
-def _class_name(value: object, where: str) -> str:
-    """Return the name of a dispersion's module or class.
-
-    Raises:
-        EdithConfigError: If the value is not a string.
-    """
-    if not isinstance(value, str):
-        raise EdithConfigError(
-            f'{where}: expected a name such as "StandardDispersion", got {value!r}'
-        )
-    return value
+    return name
 
 
 def _dist_type(table: Mapping[str, object], where: str) -> str:
