@@ -34,14 +34,14 @@ from flight_sim.config.toml_files import display_path
 from flight_sim.units import scalar, ureg
 
 __all__ = [
-    "AeroTarget",
+    "STANDARD_DISPERSION",
     "Dispersion",
+    "DispersionClass",
     "Distribution",
     "EdithConfig",
     "EdithConfigError",
     "Normal",
     "Sampling",
-    "Target",
     "Uniform",
     "ValueTarget",
     "read_edith_config",
@@ -85,12 +85,27 @@ _DISTRIBUTION_KEYS = {
 _SPREAD_KEYS = ("sigma", "half_width", "low", "high")
 _DIFFERENCE_KEYS = ("sigma", "half_width")
 
-# Sigmas below its nominal value of 1 that an aero factor's normal
-# distribution without low stays above 0
-_FACTOR_SIGMAS = 5.0
+_DISPERSION_USAGE = (
+    "for now every dispersion is a StandardDispersion: leave dispersion out, "
+    'or write dispersion = { module = "StandardDispersion", '
+    'class = "StandardDispersion" }'
+)
 
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
+@dataclass(frozen=True)
+class DispersionClass:
+    """Class that draws a dispersion's values, as its ``dispersion`` table names it."""
+ 
+    module: str  # Such as "StandardDispersion"
+    class_name: str  # The table's class, such as "StandardDispersion"
+ 
+ 
+# Draws a number of the base sim from a normal or uniform distribution
+STANDARD_DISPERSION = DispersionClass("StandardDispersion", "StandardDispersion")
+ 
+# The classes a dispersion may name; for the CDR, only the standard one
+_DISPERSION_CLASSES = (STANDARD_DISPERSION,)
 
 @dataclass(frozen=True)
 class Normal:
@@ -425,41 +440,32 @@ def _dispersions(value: object, base: BaseSim) -> tuple[Dispersion, ...]:
             '[dispersions."properties.dry_mass_properties.mass"]'
         )
     dispersions = tuple(_dispersion(key, item, base) for key, item in value.items())
-    for index, first in enumerate(dispersions):
-        for second in dispersions[index + 1 :]:
-            shared = _shared(first.target, second.target)
-            if shared:
-                raise EdithConfigError(
-                    f"{_key_path('dispersions', second.key)}: changes {shared}, "
-                    f"which {_key_path('dispersions', first.key)} changes too"
-                )
+    first_of: dict[ValueTarget, Dispersion] = {}
+    for dispersion in dispersions:
+        first = first_of.setdefault(dispersion.target, dispersion)
+        if first is not dispersion:
+            raise EdithConfigError(
+                f"{_key_path('dispersions', dispersion.key)}: changes "
+                f"{value_path(dispersion.target.path)}, which "
+                f"{_key_path('dispersions', first.key)} changes too"
+            )
     return dispersions
-
-
-def _shared(first: Target, second: Target) -> str:
-    """Return what two targets both change, or "" if nothing."""
-    if first.path != second.path:
-        return ""
-    if isinstance(first, ValueTarget) and isinstance(second, ValueTarget):
-        return value_path(first.path)
-    if isinstance(first, AeroTarget) and isinstance(second, AeroTarget):
-        columns = [column for column in first.columns if column in second.columns]
-        return f"the {columns[0]} column of {first.file.name}" if columns else ""
-    return ""
 
 
 def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
     """Read one dispersion table, whose key names the value it disperses.
-
+ 
     Raises:
-        EdithConfigError: If the key names no value of the base sim, or the
-            table does not describe a distribution of it.
+        EdithConfigError: If the table names no dispersion class EDITH has,
+            the key names no value of the base sim, or the table does not
+            describe a distribution of it.
     """
     where = _key_path("dispersions", key)
     if not isinstance(value, dict):
         raise EdithConfigError(
             f"{where}: expected a table of dist_type and its spread, got {value!r}"
         )
+    dispersion_class = _dispersion_class(value, where)
     target, nominal = base.target(key, where)
     dist_type = _dist_type(value, where)
     keys = _DISTRIBUTION_KEYS[dist_type]
@@ -474,14 +480,66 @@ def _dispersion(key: str, value: object, base: BaseSim) -> Dispersion:
         if dist_type == "normal"
         else _uniform(numbers, nominal, where, keys.usage)
     )
-    if isinstance(target, AeroTarget):
-        _check_factor(distribution, where)
-    return Dispersion(key, target, nominal.value, distribution, nominal.units)
-
-
+    return Dispersion(
+        key, target, nominal.value, distribution, nominal.units, dispersion_class
+    )
+ 
+ 
+def _dispersion_class(table: Mapping[str, object], where: str) -> DispersionClass:
+    """Return the class a dispersion's ``dispersion`` table names.
+ 
+    A dispersion that leaves ``dispersion`` out takes the standard class, the
+    only one for now.
+ 
+    Raises:
+        EdithConfigError: If ``dispersion`` is not a table of module and
+            class, or names a class EDITH does not have.
+    """
+    if "dispersion" not in table:
+        return STANDARD_DISPERSION
+    block = table["dispersion"]
+    block_where = _key_path(where, "dispersion")
+    if not isinstance(block, dict):
+        raise EdithConfigError(
+            f"{block_where}: expected a table of module and class, got {block!r}; "
+            f"{_DISPERSION_USAGE}"
+        )
+    _check_keys(block, block_where, ("module", "class"), (), _DISPERSION_USAGE)
+    module_where = _key_path(block_where, "module")
+    class_where = _key_path(block_where, "class")
+    chosen = DispersionClass(
+        _class_name(block["module"], module_where),
+        _class_name(block["class"], class_where),
+    )
+    if chosen.module not in {option.module for option in _DISPERSION_CLASSES}:
+        raise EdithConfigError(
+            f"{module_where}: EDITH has no dispersion module {chosen.module!r}; "
+            f"{_DISPERSION_USAGE}"
+        )
+    if chosen not in _DISPERSION_CLASSES:
+        raise EdithConfigError(
+            f"{class_where}: {chosen.module} has no dispersion class "
+            f"{chosen.class_name!r}; {_DISPERSION_USAGE}"
+        )
+    return chosen
+ 
+ 
+def _class_name(value: object, where: str) -> str:
+    """Return the name of a dispersion's module or class.
+ 
+    Raises:
+        EdithConfigError: If the value is not a string.
+    """
+    if not isinstance(value, str):
+        raise EdithConfigError(
+            f'{where}: expected a name such as "StandardDispersion", got {value!r}'
+        )
+    return value
+ 
+ 
 def _dist_type(table: Mapping[str, object], where: str) -> str:
     """Return a dispersion's distribution type.
-
+ 
     Raises:
         EdithConfigError: If it is missing, or not "normal" or "uniform".
     """
@@ -494,14 +552,14 @@ def _dist_type(table: Mapping[str, object], where: str) -> str:
             f"got {dist_type!r}"
         )
     return dist_type
-
-
+ 
+ 
 def _number(value: object, name: str, where: str, nominal: Nominal) -> _Number:
     """Return one of a dispersion's numbers, converted to its nominal value's units.
-
+ 
     A nominal value with units, such as "17 kg", takes a number with units of
-    the same kind; a plain number, or an aero factor, takes a plain number.
-
+    the same kind; a plain number takes a plain number.
+ 
     Raises:
         EdithConfigError: If the value is not a finite number in that form, or
             its units do not convert to the nominal value's.
@@ -541,27 +599,27 @@ def _number(value: object, name: str, where: str, nominal: Nominal) -> _Number:
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error
     return _Number(_finite(converted, where, value), text)
-
-
+ 
+ 
 def _finite(number: float, where: str, value: object) -> float:
     """Return a number, checking it is finite.
-
+ 
     Raises:
         EdithConfigError: If it is infinite or NaN.
     """
     if not math.isfinite(number):
         raise EdithConfigError(f"{where}: expected a finite number, got {value!r}")
     return number
-
-
+ 
+ 
 def _above(first: float, second: float) -> bool:
     """Return whether one number is above another by more than rounding."""
     return first > second and not math.isclose(first, second, abs_tol=1e-12)
-
-
+ 
+ 
 def _normal(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Normal:
     """Return a normal distribution, checking sigma and its bounds.
-
+ 
     Raises:
         EdithConfigError: If sigma is negative, or low and high do not lie on
             either side of the nominal value.
@@ -588,13 +646,13 @@ def _normal(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Nor
         None if low is None else low.value,
         None if high is None else high.value,
     )
-
-
+ 
+ 
 def _uniform(
     numbers: Mapping[str, _Number], nominal: Nominal, where: str, usage: str
 ) -> Uniform:
     """Return a uniform distribution of half_width about the nominal, or low to high.
-
+ 
     Raises:
         EdithConfigError: If it has both forms or neither, half_width is
             negative, or low is not below high.
@@ -622,36 +680,15 @@ def _uniform(
         )
     _check_order(low, high, where)
     return Uniform(low.value, high.value)
-
-
+ 
+ 
 def _check_order(low: _Number | None, high: _Number | None, where: str) -> None:
     """Check low is below high where both are given.
-
+ 
     Raises:
         EdithConfigError: If it is not.
     """
     if low is not None and high is not None and not low.value < high.value:
         raise EdithConfigError(
             f"{where}: low ({low.text}) must be below high ({high.text})"
-        )
-
-
-def _check_factor(distribution: Distribution, where: str) -> None:
-    """Check an aero factor's distribution stays above 0.
-
-    Raises:
-        EdithConfigError: If its low end is 0 or less, or a normal without low
-            comes within five sigma of 0.
-    """
-    if isinstance(distribution, Normal) and distribution.low is None:
-        if _FACTOR_SIGMAS * distribution.sigma >= 1.0:
-            raise EdithConfigError(
-                f"{_key_path(where, 'sigma')}: {distribution.sigma:g} puts 0 "
-                f"within {_FACTOR_SIGMAS:g} sigma of the factor's nominal value "
-                "of 1; set low above 0 as well, such as low = 0.5"
-            )
-    elif distribution.low is not None and distribution.low <= 0.0:
-        raise EdithConfigError(
-            f"{where}: the factor's low end is {distribution.low:g}; keep it "
-            "above 0, or the coefficients vanish or change sign"
         )

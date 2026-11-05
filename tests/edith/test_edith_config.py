@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from edith.config import (
-    AeroTarget,
+    STANDARD_DISPERSION,
     Dispersion,
+    DispersionClass,
     EdithConfig,
     EdithConfigError,
     Normal,
@@ -27,11 +28,20 @@ base_sim = "../base/sim.toml"
 output_dir = "../out"
 """
 
-_MASS = """
-[dispersions."properties.dry_mass_properties.mass"]
-dist_type = "normal"
-sigma = "0.25 kg"
-"""
+_STANDARD = (
+    'dispersion = { module = "StandardDispersion", class = "StandardDispersion" }'
+)
+
+_MASS_KEY = "properties.dry_mass_properties.mass"
+_MASS_BODY = 'dist_type = "normal"\nsigma = "0.25 kg"'
+
+
+def _table(key: str, body: str) -> str:
+    """Return a dispersion table of a key and its body."""
+    return f'\n[dispersions."{key}"]\n{body}\n'
+
+
+_MASS = _table(_MASS_KEY, _MASS_BODY)
 
 
 def _campaign(tmp_path: Path, dispersions: str, header: str = _HEADER) -> Path:
@@ -61,9 +71,8 @@ def _dispersion(tmp_path: Path, table: str) -> Dispersion:
 
 
 def test_example_campaign_reads_every_dispersion() -> None:
-    """The example builds its settings and nine dispersions in base-sim units."""
+    """The example builds its settings and six dispersions in base-sim units."""
     config = EdithConfig.from_file(_CAMPAIGN)
-    aero = (_EXAMPLE / "aero.csv").resolve()
     wind_speed = config.dispersions[4]
 
     assert (config.trials, config.master_seed, config.sampling) == (500, 9999, "lhs")
@@ -123,28 +132,10 @@ def test_example_campaign_reads_every_dispersion() -> None:
             Uniform(-30.0, 30.0),
             "deg",
         ),
-        Dispersion(
-            "properties.aero_table:Cx",
-            AeroTarget(("properties", "aero_table"), aero, ("Cx",)),
-            1.0,
-            Normal(0.05),
-            "",
-        ),
-        Dispersion(
-            "properties.aero_table:Cy+Cz",
-            AeroTarget(("properties", "aero_table"), aero, ("Cy", "Cz")),
-            1.0,
-            Normal(0.1),
-            "",
-        ),
-        Dispersion(
-            "properties.aero_table:xCP",
-            AeroTarget(("properties", "aero_table"), aero, ("xCP",)),
-            1.0,
-            Normal(0.02),
-            "",
-        ),
     )
+    assert {dispersion.dispersion_class for dispersion in config.dispersions} == {
+        STANDARD_DISPERSION
+    }
 
 
 def test_config_survives_pickling() -> None:
@@ -242,6 +233,109 @@ def test_a_campaign_file_may_sit_beside_the_base_sim(tmp_path: Path) -> None:
     assert config.output_dir == (tmp_path / "base" / "out" / "edith").resolve()
 
 
+def test_included_files_may_lie_anywhere(tmp_path: Path) -> None:
+    """flight_sim resolves includes in other folders, so the key path is the same."""
+    _campaign(tmp_path, _MASS)
+    elsewhere = tmp_path / "elsewhere" / "vehicles"
+    elsewhere.mkdir(parents=True)
+    for name in ("vehicle.toml", "aero.csv", "Loki_M3464LB.eng"):
+        shutil.move(tmp_path / "base" / name, elsewhere / name)
+    sim = tmp_path / "base" / "sim.toml"
+    sim.write_text(
+        sim.read_text(encoding="utf-8").replace(
+            '"vehicle.toml"', '"../elsewhere/vehicles/vehicle.toml"'
+        ),
+        encoding="utf-8",
+    )
+
+    dispersion = _dispersion(tmp_path, _MASS)
+
+    assert dispersion.target == ValueTarget(
+        ("properties", "dry_mass_properties", "mass")
+    )
+    assert (dispersion.nominal, dispersion.units) == (17.0, "kg")
+
+
+def test_the_standard_dispersion_is_the_default(tmp_path: Path) -> None:
+    """A dispersion that leaves out its dispersion table takes the standard class."""
+    dispersion = _dispersion(
+        tmp_path,
+        '[dispersions."properties.dry_mass_properties.mass"]\n'
+        'dist_type = "normal"\nsigma = "0.25 kg"\n',
+    )
+
+    assert dispersion.dispersion_class == STANDARD_DISPERSION
+    assert dispersion.dispersion_class == DispersionClass(
+        "StandardDispersion", "StandardDispersion"
+    )
+
+
+@pytest.mark.parametrize(
+    "dispersion",
+    [
+        _STANDARD,
+        'dispersion.module = "StandardDispersion"\n'
+        'dispersion.class = "StandardDispersion"',
+    ],
+)
+def test_the_standard_dispersion_may_be_named(tmp_path: Path, dispersion: str) -> None:
+    """A dispersion may still name the standard class, inline or in dotted keys."""
+    found = _dispersion(tmp_path, _table(_MASS_KEY, f"{dispersion}\n{_MASS_BODY}"))
+
+    assert found.dispersion_class == STANDARD_DISPERSION
+
+
+@pytest.mark.parametrize(
+    ("dispersion", "expected"),
+    [
+        (
+            _STANDARD.replace("dispersion =", "dispersoin ="),
+            "dispersoin: unknown key (did you mean dispersion?)",
+        ),
+        (
+            'dispersion = "StandardDispersion"',
+            "dispersion: expected a table of module and class, got "
+            "'StandardDispersion'",
+        ),
+        (
+            _STANDARD.replace("module", "modul"),
+            "dispersion.modul: unknown key (did you mean module?)",
+        ),
+        (
+            'dispersion = { module = "StandardDispersion" }',
+            "dispersion: missing class;",
+        ),
+        (
+            "dispersion = { module = 1, class = 2 }",
+            'dispersion.module: expected a name such as "StandardDispersion", got 1',
+        ),
+        (
+            'dispersion = { module = "AeroDispersion", class = "AeroDispersion" }',
+            "dispersion.module: EDITH has no dispersion module 'AeroDispersion'; "
+            "for now every dispersion is a StandardDispersion: leave dispersion out",
+        ),
+        (
+            'dispersion = { module = "StandardDispersion", class = "Standard" }',
+            "dispersion.class: StandardDispersion has no dispersion class 'Standard'",
+        ),
+    ],
+)
+def test_bad_dispersion_classes_are_named(
+    tmp_path: Path, dispersion: str, expected: str
+) -> None:
+    """A dispersion table, where given, names StandardDispersion by module and class."""
+    message = _error(tmp_path, _table(_MASS_KEY, f"{dispersion}\n{_MASS_BODY}"))
+
+    assert expected in message
+
+
+def test_a_dispersion_is_a_table(tmp_path: Path) -> None:
+    """Each item under dispersions is a table, not a bare value."""
+    assert "dispersions.mass: expected a table of dist_type and its spread, got 5" in (
+        _error(tmp_path, "dispersions = { mass = 5 }\n")
+    )
+
+
 @pytest.mark.parametrize(
     ("key", "expected"),
     [
@@ -249,50 +343,22 @@ def test_a_campaign_file_may_sit_beside_the_base_sim(tmp_path: Path) -> None:
         ("propertys.dry_mass_properties.mass", "has no propertys (did you mean"),
         ("properties.dry_mass_properties.cg_location", "cg_location.value[0]"),
         ("properties.dry_mass_properties.cg_location.value[3]", "has 3 items"),
+        ("properties.dry_mass_properties.mass.value", "mass is '17 kg'"),
         ("properties.aero_table.frame", 'is "missile", not a number'),
         ("properties.dry mass", "cannot read the key path"),
-        ("vehicle.toml:dry_mass_properties.mass", "the base sim has no vehicle"),
+        ("vehicle.toml:dry_mass_properties.mass", "cannot read the key path"),
         ("properties.dry_mass_properties", "the value is a table"),
+        ("properties.aero_table", "the value is a table"),
         ("properties.dry_mass_properties.cg_location.value", "the value is a list"),
-        (
-            "properties.aero_table",
-            'scale its columns, such as "properties.aero_table:Cx"',
-        ),
-        ("config.truth.launch_rail:Cx", "launch_rail is not an aero table"),
         ("config.truth.atmosphere.launch_temperature", "the value is None"),
     ],
 )
 def test_bad_targets_are_named(tmp_path: Path, key: str, expected: str) -> None:
     """A key that names no number of the base sim says what is wrong."""
-    dispersion = f'[dispersions."{key}"]\ndist_type = "normal"\nsigma = "1 m"\n'
-
-    message = _error(tmp_path, dispersion)
+    message = _error(tmp_path, _table(key, 'dist_type = "normal"\nsigma = "1 m"'))
 
     assert f'dispersions."{key}"' in message
     assert expected in message
-
-
-@pytest.mark.parametrize(
-    ("key", "expected"),
-    [
-        (
-            "properties.aero_table:Cd",
-            "'Cd' is not a column the aero table reads; scale Cx, Cy, Cz, CMx, "
-            "xCP or CxPowerOn, where Cx holds the drag",
-        ),
-        ("properties.aero_table:Mach", "'Mach' is not a column the aero table reads"),
-        ("properties.aero_table:Cx+Cx", "names a column twice"),
-        (
-            "properties.aero_table:CxPowerOn",
-            "aero.csv has no CxPowerOn column; its columns are Mach, Alpha, Phi, Cx",
-        ),
-    ],
-)
-def test_bad_aero_columns_are_named(tmp_path: Path, key: str, expected: str) -> None:
-    """Only coefficient columns the CSV has can be scaled, each by one dispersion."""
-    dispersion = f'[dispersions."{key}"]\ndist_type = "normal"\nsigma = 0.05\n'
-
-    assert expected in _error(tmp_path, dispersion)
 
 
 @pytest.mark.parametrize(
@@ -316,10 +382,7 @@ def test_bad_aero_columns_are_named(tmp_path: Path, key: str, expected: str) -> 
 )
 def test_bad_normal_numbers_are_named(tmp_path: Path, body: str, expected: str) -> None:
     """A normal's numbers convert to the nominal's units and bracket it."""
-    dispersion = (
-        '[dispersions."properties.dry_mass_properties.mass"]\n'
-        f'dist_type = "normal"\n{body}\n'
-    )
+    dispersion = _table(_MASS_KEY, f'dist_type = "normal"\n{body}')
 
     assert expected in _error(tmp_path, dispersion)
 
@@ -347,9 +410,7 @@ def test_bad_normal_numbers_are_named(tmp_path: Path, body: str, expected: str) 
 )
 def test_bad_distributions_are_named(tmp_path: Path, body: str, expected: str) -> None:
     """Each distribution type takes its own keys."""
-    dispersion = f'[dispersions."config.truth.wind.speed"]\n{body}\n'
-
-    assert expected in _error(tmp_path, dispersion)
+    assert expected in _error(tmp_path, _table("config.truth.wind.speed", body))
 
 
 @pytest.mark.parametrize("sigma", ["0.1 m", "20 percent"])
@@ -357,9 +418,7 @@ def test_a_plain_nominal_takes_plain_numbers(tmp_path: Path, sigma: str) -> None
     """Rail friction is a plain number in sim.toml, so its spread is too."""
     key = "config.truth.launch_rail.friction_coefficient"
 
-    message = _error(
-        tmp_path, f'[dispersions."{key}"]\ndist_type = "normal"\nsigma = "{sigma}"\n'
-    )
+    message = _error(tmp_path, _table(key, f'dist_type = "normal"\nsigma = "{sigma}"'))
 
     assert "takes a plain number, since the nominal value is 0.0, a plain" in message
     assert message.endswith(f"got '{sigma}'")
@@ -369,8 +428,10 @@ def test_numbers_convert_to_the_nominal_units(tmp_path: Path) -> None:
     """Spreads in other units arrive in the units the base sim writes."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."properties.dry_mass_properties.mass"]\n'
-        'dist_type = "normal"\nsigma = "250 g"\nlow = "30 lb"\nhigh = "18 kg"\n',
+        _table(
+            _MASS_KEY,
+            'dist_type = "normal"\nsigma = "250 g"\nlow = "30 lb"\nhigh = "18 kg"',
+        ),
     )
 
     assert (dispersion.nominal, dispersion.units) == (17.0, "kg")
@@ -384,8 +445,10 @@ def test_a_default_value_can_be_dispersed(tmp_path: Path) -> None:
     """A value the base sim leaves to its default is in the resolved input."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."config.truth.atmosphere.barometric_pressure"]\n'
-        'dist_type = "normal"\nsigma = "1 kPa"\n',
+        _table(
+            "config.truth.atmosphere.barometric_pressure",
+            'dist_type = "normal"\nsigma = "1 kPa"',
+        ),
     )
 
     assert (dispersion.nominal, dispersion.units) == (101325.0, "Pa")
@@ -405,8 +468,10 @@ def test_spreads_convert_as_differences(tmp_path: Path, sigma: str) -> None:
     )
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."config.truth.atmosphere.launch_temperature"]\n'
-        f'dist_type = "normal"\nsigma = "{sigma}"\nlow = "50 degF"\n',
+        _table(
+            "config.truth.atmosphere.launch_temperature",
+            f'dist_type = "normal"\nsigma = "{sigma}"\nlow = "50 degF"',
+        ),
     )
 
     assert (dispersion.nominal, dispersion.units) == (20.0, "degC")
@@ -417,17 +482,16 @@ def test_spreads_convert_as_differences(tmp_path: Path, sigma: str) -> None:
 
 def test_angles_are_not_plain_numbers(tmp_path: Path) -> None:
     """Pint converts "5 percent" to 0.05 rad, but an angle's spread is an angle."""
-    table = (
-        '[dispersions."config.truth.launch_rail.elevation"]\n'
-        'dist_type = "normal"\nsigma = "{}"\n'
-    )
+    key = "config.truth.launch_rail.elevation"
 
-    dispersion = _dispersion(tmp_path, table.format("0.01 rad"))
+    dispersion = _dispersion(
+        tmp_path, _table(key, 'dist_type = "normal"\nsigma = "0.01 rad"')
+    )
 
     assert isinstance(dispersion.distribution, Normal)
     assert dispersion.distribution.sigma == pytest.approx(0.5729577951308232)
     assert '"5 percent" does not convert to deg' in _error(
-        tmp_path, table.format("5 percent")
+        tmp_path, _table(key, 'dist_type = "normal"\nsigma = "5 percent"')
     )
 
 
@@ -435,8 +499,10 @@ def test_a_uniform_may_leave_out_the_nominal(tmp_path: Path) -> None:
     """A uniform's low and high are absolute, so a calm nominal wind may lie outside."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."config.truth.wind.speed"]\n'
-        'dist_type = "uniform"\nlow = "2 m/s"\nhigh = "8 m/s"\n',
+        _table(
+            "config.truth.wind.speed",
+            'dist_type = "uniform"\nlow = "2 m/s"\nhigh = "8 m/s"',
+        ),
     )
 
     assert dispersion.nominal == 0.0
@@ -447,67 +513,25 @@ def test_a_normal_may_be_truncated_at_its_nominal(tmp_path: Path) -> None:
     """A bound equal to the nominal value, in any units, is allowed."""
     dispersion = _dispersion(
         tmp_path,
-        '[dispersions."config.truth.launch_rail.elevation"]\n'
-        'dist_type = "normal"\nsigma = "1 deg"\nhigh = "1.4835298641951802 rad"\n',
+        _table(
+            "config.truth.launch_rail.elevation",
+            'dist_type = "normal"\nsigma = "1 deg"\nhigh = "1.4835298641951802 rad"',
+        ),
     )
 
     assert isinstance(dispersion.distribution, Normal)
     assert dispersion.distribution.high == pytest.approx(85.0)
 
 
-@pytest.mark.parametrize(
-    ("body", "expected"),
-    [
-        ('dist_type = "normal"\nsigma = "0.05 kg"', "takes a plain number"),
-        ('dist_type = "normal"\nsigma = 0.25', "sigma: 0.25 puts 0 within 5 sigma"),
-        ('dist_type = "normal"\nsigma = 0.05\nlow = 0', "the factor's low end is 0"),
-        ('dist_type = "uniform"\nhalf_width = 1.5', "the factor's low end is -0.5"),
-    ],
-)
-def test_aero_factors_are_plain_and_stay_positive(
-    tmp_path: Path, body: str, expected: str
-) -> None:
-    """An aero factor about 1 takes plain numbers that keep it above 0."""
-    assert expected in _error(
-        tmp_path, f'[dispersions."properties.aero_table:Cx"]\n{body}\n'
-    )
-
-
-def test_a_wide_aero_factor_with_low_is_allowed(tmp_path: Path) -> None:
-    """A large sigma is fine once low keeps the factor above 0."""
-    dispersion = _dispersion(
-        tmp_path,
-        '[dispersions."properties.aero_table:Cx"]\n'
-        'dist_type = "normal"\nsigma = 0.25\nlow = 0.5\n',
-    )
-
-    assert dispersion.distribution == Normal(0.25, low=0.5)
-
-
 def test_two_dispersions_of_one_value_are_rejected(tmp_path: Path) -> None:
-    """A value or column is dispersed by one dispersion at most."""
-    twice = """
-[dispersions."properties.dry_mass_properties.cg_location.value[0]"]
-dist_type = "normal"
-sigma = "1 cm"
+    """A value is dispersed by one dispersion at most, however its key is written."""
+    cg = "properties.dry_mass_properties.cg_location.value"
+    body = 'dist_type = "normal"\nsigma = "1 cm"'
+    twice = _table(f"{cg}[0]", body) + _table(f"{cg}[00]", body)
 
-[dispersions."properties.dry_mass_properties.cg_location.value[00]"]
-dist_type = "normal"
-sigma = "1 cm"
-"""
-    columns = """
-[dispersions."properties.aero_table:Cx"]
-dist_type = "normal"
-sigma = 0.05
-
-[dispersions."properties.aero_table:Cz+Cx"]
-dist_type = "normal"
-sigma = 0.05
-"""
-    assert "changes properties.dry_mass_properties.cg_location.value[0], which" in (
+    assert f'dispersions."{cg}[00]": changes {cg}[0], which' in (
         _error(tmp_path, twice)
     )
-    assert "changes the Cx column of aero.csv" in _error(tmp_path, columns)
 
 
 def test_no_dispersions_is_rejected(tmp_path: Path) -> None:
