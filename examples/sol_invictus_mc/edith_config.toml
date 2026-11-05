@@ -49,11 +49,11 @@ sampling = "lhs"
 # leaves to its default can be dispersed too, such as
 # "config.truth.atmosphere.barometric_pressure".
 #
-# dispersion names the class that draws the value. For now every dispersion
-# takes the standard one, which draws a number from the distribution below,
-# and which a dispersion that leaves dispersion out takes too:
+# dispersion names the class that draws the value. Left out, as in every
+# table below, it is the standard one, the only one for now, which draws a
+# number from the distribution dist_type names. Written out, it is:
 #
-#   dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
+#   dispersion = "StandardDispersion"
 #
 # dist_type = "normal"   sigma about the nominal value. Optional low and
 #                        high truncate it, as absolute values on either
@@ -70,39 +70,33 @@ sampling = "lhs"
 
 # Dry mass, a placeholder 17 kg in vehicle.toml
 [dispersions."properties.dry_mass_properties.mass"]
-dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 dist_type = "normal"
 sigma = "0.25 kg"
 
 # Dry CG along the body axis, from the nose tip
 [dispersions."properties.dry_mass_properties.cg_location.value[0]"]
-dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 dist_type = "normal"
 sigma = "2 cm"
 
 # Rail elevation, never past vertical
 [dispersions."config.truth.launch_rail.elevation"]
-dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 dist_type = "normal"
 sigma = "0.5 deg"
 high = "90 deg"
 
 # Rail friction, a plain number in sim.toml, so its bounds are plain too
 [dispersions."config.truth.launch_rail.friction_coefficient"]
-dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 dist_type = "uniform"
 low = 0.0
 high = 0.2
 
 # Wind speed, anywhere from calm to 15 mph
 [dispersions."config.truth.wind.speed"]
-dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 dist_type = "uniform"
 low = "0 mph"
 high = "15 mph"
 
 # Wind direction, within 30 deg of the azimuth in site.toml
 [dispersions."config.truth.wind.from_azimuth"]
-dispersion = { module = "StandardDispersion", class = "StandardDispersion" }
 dist_type = "uniform"
 half_width = "30 deg"
