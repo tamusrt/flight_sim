@@ -277,12 +277,6 @@ def _key_path(where: str, key: str) -> str:
     return key_path(where, toml_key(key))
 
 
-def _did_you_mean(key: str, known: Sequence[str]) -> str:
-    """Return a hint naming the known key closest to a misspelt one, if any."""
-    close = closest(key, known)
-    return f" (did you mean {close}?)" if close is not None else ""
-
-
 def _check_keys(
     table: Mapping[str, object],
     where: str,
@@ -298,7 +292,8 @@ def _check_keys(
     known = (*required, *optional)
     for key in table:
         if key not in known:
-            hint = _did_you_mean(key, known)
+            close = closest(key, known)
+            hint = f" (did you mean {close}?)" if close is not None else ""
             raise EdithConfigError(
                 f"{_key_path(where, key)}: unknown key{hint}; {usage}"
             )

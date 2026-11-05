@@ -1,4 +1,4 @@
-"""Error raised for campaign files that cannot be read or describe no campaign."""
+"""Error raised for invalid campaign files, and help for its messages."""
 
 import difflib
 from collections.abc import Sequence
