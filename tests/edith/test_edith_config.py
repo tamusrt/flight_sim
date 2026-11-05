@@ -11,11 +11,11 @@ from edith.config import (
     Dispersion,
     DispersionClass,
     EdithConfig,
-    EdithConfigError,
     Normal,
     Uniform,
-    ValueTarget,
 )
+from edith.errors import EdithConfigError
+from edith.targets import ValueTarget
 from flight_sim.config import ConfigError
 
 _EXAMPLE = Path("examples/sol_invictus")
