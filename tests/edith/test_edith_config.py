@@ -6,14 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from edith.config import (
-    STANDARD_DISPERSION,
-    Dispersion,
-    DispersionClass,
-    EdithConfig,
-    Normal,
-    Uniform,
-)
+from edith.config import EdithConfig
+from edith.dispersion import STANDARD_DISPERSION, Dispersion, Normal, Uniform
 from edith.errors import EdithConfigError
 from edith.targets import ValueTarget
 from flight_sim.config import ConfigError
@@ -28,9 +22,7 @@ base_sim = "../base/sim.toml"
 output_dir = "../out"
 """
 
-_STANDARD = (
-    'dispersion = { module = "StandardDispersion", class = "StandardDispersion" }'
-)
+_STANDARD = 'dispersion = "StandardDispersion"'
 
 _MASS_KEY = "properties.dry_mass_properties.mass"
 _MASS_BODY = 'dist_type = "normal"\nsigma = "0.25 kg"'
@@ -255,59 +247,45 @@ def test_included_files_may_lie_anywhere(tmp_path: Path) -> None:
     assert (dispersion.nominal, dispersion.units) == (17.0, "kg")
 
 
-@pytest.mark.parametrize(
-    "dispersion",
-    [
-        _STANDARD,
-        'dispersion.module = "StandardDispersion"\n'
-        'dispersion.class = "StandardDispersion"',
-        "",
-    ],
-)
+@pytest.mark.parametrize("dispersion", [_STANDARD, ""])
 def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
-    """A dispersion names its class inline or in dotted keys, or takes the default."""
+    """A dispersion names StandardDispersion, or leaves it out for the default."""
     found = _dispersion(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
-    assert found.dispersion_class == DispersionClass(
-        "StandardDispersion", "StandardDispersion"
-    )
-    assert found.dispersion_class == STANDARD_DISPERSION
+    assert found.dispersion_class == STANDARD_DISPERSION == "StandardDispersion"
 
 
 @pytest.mark.parametrize(
     ("dispersion", "expected"),
     [
         (
-            'dispersion = "StandardDispersion"',
-            "dispersion: expected a table of module and class, got "
-            "'StandardDispersion'",
+            'dispersion = "AeroDispersion"',
+            "dispersion: EDITH has no dispersion class 'AeroDispersion'; for now "
+            'every dispersion leaves dispersion out, or writes dispersion = "'
+            'StandardDispersion"',
         ),
         (
-            _STANDARD.replace("module", "modul"),
-            "dispersion.modul: unknown key (did you mean module?)",
+            'dispersion = "standarddispersion"',
+            "dispersion: EDITH has no dispersion class 'standarddispersion'",
         ),
         (
-            'dispersion = { module = "StandardDispersion" }',
-            "dispersion: missing class;",
+            'dispersion = { module = "StandardDispersion", '
+            'class = "StandardDispersion" }',
+            "dispersion: expected a string, got {'module': 'StandardDispersion', "
+            "'class': 'StandardDispersion'}; for now every dispersion leaves "
+            "dispersion out",
         ),
+        ("dispersion = 1", "dispersion: expected a string, got 1; for now every"),
         (
-            "dispersion = { module = 1, class = 2 }",
-            'dispersion.module: expected a name such as "StandardDispersion", got 1',
-        ),
-        (
-            'dispersion = { module = "AeroDispersion", class = "AeroDispersion" }',
-            "dispersion.module: EDITH has no dispersion module 'AeroDispersion'",
-        ),
-        (
-            'dispersion = { module = "StandardDispersion", class = "Standard" }',
-            "dispersion.class: StandardDispersion has no dispersion class 'Standard'",
+            'dispersoin = "StandardDispersion"',
+            "dispersoin: unknown key (did you mean dispersion?)",
         ),
     ],
 )
 def test_bad_dispersion_classes_are_named(
     tmp_path: Path, dispersion: str, expected: str
 ) -> None:
-    """A dispersion table that does not name StandardDispersion is rejected."""
+    """A dispersion that names anything but StandardDispersion is rejected."""
     assert expected in _error(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
 
