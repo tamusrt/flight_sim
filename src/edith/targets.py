@@ -8,36 +8,16 @@ the sim's files wherever they sit, so the key path is the same however the
 files are laid out.
 """
 
-import difflib
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
-from pint import PintError
-
-from edith.errors import EdithConfigError
+from edith.errors import EdithConfigError, closest
 from flight_sim.config import ConfigError, InputSource
 from flight_sim.simulation import Simulation
-from flight_sim.units import parse_units
-
-# What Pint raises for units it cannot read, AssertionError among them for
-# some malformed ones, such as "m/"
-UNREADABLE_UNITS = (
-    PintError,
-    AssertionError,
-    AttributeError,
-    SyntaxError,
-    TypeError,
-    ValueError,
-)
-
-# A number and its units, such as "0.25 kg", "-2.08 m" or "1e-5 m/s"
-_QUANTITY = re.compile(
-    r"(?P<number>[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*"
-    r"(?P<units>(?![eE][+-]?\d)[A-Za-z].*)"
-)
+from flight_sim.units import UNREADABLE_UNITS, parse_quantity, parse_units
 
 # One key of a key path, with any list indices after it, such as "value[0]"
 _KEY_PART = re.compile(r"(?P<name>[A-Za-z0-9_-]+)(?P<indices>(?:\[\d+\])*)")
@@ -74,59 +54,47 @@ def value_path(path: Sequence[str | int]) -> str:
     return text
 
 
-def parse_quantity(text: str) -> tuple[float, str] | None:
-    """Return the number and units of a quantity such as "0.25 kg", or None."""
-    match = _QUANTITY.fullmatch(text.strip())
-    if match is None:
-        return None
-    return float(match["number"]), match["units"]
+def load_base_sim(path: Path) -> InputSource:
+    """Build the base sim from its input file and return its resolved input.
+
+    Args:
+        path (Path): The sim input file.
+
+    Returns:
+        InputSource: The resolved input, with includes and defaults filled in
+            and paths made absolute.
+
+    Raises:
+        EdithConfigError: If flight_sim cannot read or build the sim.
+    """
+    try:
+        simulation = Simulation.from_file(path)
+    except ConfigError as error:
+        raise EdithConfigError(f"base_sim: {error}") from error
+    assert simulation.source is not None
+    return simulation.source
 
 
-class BaseSim:
-    """Resolved input of the base sim, which its dispersions' keys index."""
+def find_target(
+    source: InputSource, key: str, where: str
+) -> tuple[ValueTarget, Nominal]:
+    """Return the value a dispersion's key names, and its nominal value.
 
-    def __init__(self, source: InputSource) -> None:
-        """Index the resolved input a sim was built from."""
-        self.source = source
+    Args:
+        source (InputSource): The base sim's resolved input.
+        key (str): Such as "properties.dry_mass_properties.mass".
+        where (str): Key path of the dispersion, for messages.
 
-    @classmethod
-    def load(cls, path: Path) -> "BaseSim":
-        """Build the base sim from its input file and keep the resolved input.
+    Returns:
+        tuple[ValueTarget, Nominal]: Where the value is, and the value.
 
-        Args:
-            path (Path): The sim input file.
-
-        Returns:
-            BaseSim: The resolved input, with includes and defaults filled in
-                and paths made absolute.
-
-        Raises:
-            EdithConfigError: If flight_sim cannot read or build the sim.
-        """
-        try:
-            simulation = Simulation.from_file(path)
-        except ConfigError as error:
-            raise EdithConfigError(f"base_sim: {error}") from error
-        assert simulation.source is not None
-        return cls(simulation.source)
-
-    def target(self, key: str, where: str) -> tuple[ValueTarget, Nominal]:
-        """Return the value a dispersion's key names, and its nominal value.
-
-        Args:
-            key (str): Such as "properties.dry_mass_properties.mass".
-            where (str): Key path of the dispersion, for messages.
-
-        Returns:
-            tuple[ValueTarget, Nominal]: Where the value is, and the value.
-
-        Raises:
-            EdithConfigError: If the key is malformed or names no number of
-                the base sim.
-        """
-        path = _key_parts(key, where)
-        node, parents = _walk(self.source.table, path, where)
-        return ValueTarget(path), _leaf(node, _units_owner(path, parents), path, where)
+    Raises:
+        EdithConfigError: If the key is malformed or names no number of the
+            base sim.
+    """
+    path = _key_parts(key, where)
+    node, parents = _walk(source.table, path, where)
+    return ValueTarget(path), _leaf(node, _units_owner(path, parents), path, where)
 
 
 def _key_parts(text: str, where: str) -> tuple[str | int, ...]:
@@ -254,10 +222,9 @@ def _no_value(
     found = path[:depth]
     message = f"{where}: the base sim has no {value_path(path[: depth + 1])}"
     if isinstance(node, dict):
-        keys = [str(key) for key in node]
-        close = difflib.get_close_matches(str(path[depth]), keys, n=1)
-        if close:
-            message += f" (did you mean {value_path((*found, close[0]))}?)"
+        close = closest(str(path[depth]), [str(key) for key in node])
+        if close is not None:
+            message += f" (did you mean {value_path((*found, close))}?)"
     elif isinstance(node, list):
         message += f"; {value_path(found)} has {len(node)} items"
     elif found:

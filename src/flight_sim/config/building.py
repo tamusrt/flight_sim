@@ -7,7 +7,6 @@ callable its ``type`` names, or of the class its field's type hint names.
 import dataclasses
 import importlib
 import inspect
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,7 +23,7 @@ from typing import (
 )
 
 import numpy as np
-from pint import OffsetUnitCalculusError, PintError, Quantity
+from pint import OffsetUnitCalculusError, Quantity
 
 from flight_sim.config.defaults import record_defaults
 from flight_sim.config.errors import ConfigError
@@ -36,7 +35,13 @@ from flight_sim.config.toml_files import (
     source_table,
     untagged,
 )
-from flight_sim.units import parse_units, scalar, ureg
+from flight_sim.units import (
+    UNREADABLE_UNITS,
+    parse_quantity,
+    parse_units,
+    scalar,
+    ureg,
+)
 
 # Built values of these types are never filled into another table's arguments
 _PLAIN_TYPES = (str, int, float, bool)
@@ -316,19 +321,16 @@ def _floats(items: Any, where: str) -> np.ndarray:
         ) from error
 
 
-_LEADING_NUMBER = re.compile(r"\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(.*)")
-
-
 def _parse_quantity(text: str) -> Any:
     """Parse a quantity, reading "30 degC" as a number and an offset unit."""
     try:
         return ureg.Quantity(text)
     except OffsetUnitCalculusError:
         # Parsed whole, "30 degC" is the product 30 * degC, which pint refuses
-        number = _LEADING_NUMBER.fullmatch(text)
+        number = parse_quantity(text)
         if number is None:
             raise
-        return ureg.Quantity(float(number[1]), number[2])
+        return ureg.Quantity(*number)
 
 
 def _quantity(text: str, where: str) -> Any:
@@ -339,7 +341,7 @@ def _quantity(text: str, where: str) -> Any:
     """
     try:
         quantity: Any = _parse_quantity(str(text))
-    except (PintError, AttributeError, SyntaxError, TypeError, ValueError) as error:
+    except UNREADABLE_UNITS as error:
         raise ConfigError(f"{where}: cannot read {text!r} as a quantity") from error
     if not isinstance(quantity, Quantity) or quantity.unitless:
         raise ConfigError(f'{where}: {text!r} needs units, such as "{text} m"')
@@ -362,7 +364,7 @@ def _array(table: dict[str, Any], where: str) -> Any:
     components = _floats(table[key], key_path(where, key))
     try:
         parsed_units = parse_units(str(units))
-    except (PintError, AttributeError, SyntaxError, TypeError, ValueError) as error:
+    except UNREADABLE_UNITS as error:
         raise ConfigError(f"{where}: cannot read units {units!r}") from error
     if key == "diag":
         if components.shape != (3,):
