@@ -9,7 +9,6 @@ import pytest
 from edith.config import EdithConfig
 from edith.dispersion import STANDARD_DISPERSION, Dispersion, Normal, Uniform
 from edith.errors import EdithConfigError
-from edith.targets import ValueTarget
 from flight_sim.config import ConfigError
 
 _EXAMPLE = Path("examples/sol_invictus")
@@ -78,30 +77,24 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert config.dispersions[:4] == (
         Dispersion(
             "properties.dry_mass_properties.mass",
-            ValueTarget(("properties", "dry_mass_properties", "mass")),
             17.0,
             Normal(0.25),
             "kg",
         ),
         Dispersion(
             "properties.dry_mass_properties.cg_location.value[0]",
-            ValueTarget(
-                ("properties", "dry_mass_properties", "cg_location", "value", 0)
-            ),
             -1.0,
             Normal(0.02),
             "m",
         ),
         Dispersion(
             "config.truth.launch_rail.elevation",
-            ValueTarget(("config", "truth", "launch_rail", "elevation")),
             85.0,
             Normal(0.5, high=90.0),
             "deg",
         ),
         Dispersion(
             "config.truth.launch_rail.friction_coefficient",
-            ValueTarget(("config", "truth", "launch_rail", "friction_coefficient")),
             0.0,
             Uniform(0.0, 0.2),
             "",
@@ -118,7 +111,6 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert config.dispersions[5:] == (
         Dispersion(
             "config.truth.wind.from_azimuth",
-            ValueTarget(("config", "truth", "wind", "from_azimuth")),
             0.0,
             Uniform(-30.0, 30.0),
             "deg",
@@ -241,9 +233,7 @@ def test_included_files_may_lie_anywhere(tmp_path: Path) -> None:
 
     dispersion = _dispersion(tmp_path, _MASS)
 
-    assert dispersion.target == ValueTarget(
-        ("properties", "dry_mass_properties", "mass")
-    )
+    assert dispersion.key == "properties.dry_mass_properties.mass"
     assert (dispersion.nominal, dispersion.units) == (17.0, "kg")
 
 
