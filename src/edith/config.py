@@ -34,7 +34,7 @@ _DISPERSION_USAGE = (
 )
 
 # Smallest value of each whole-number setting
-_MINIMUMS = {"num_sims": 1, "master_seed": 0, "workers": 1, "batch_size": 1}
+_MINIMUMS = {"num_sims": 1, "master_seed": 0, "batch_size": 1}
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,6 @@ class CampaignSettings(UnitChecked):
     base_sim: Path  # The sim input file every trial disperses
     output_dir: Path  # Gets the trials and their results; need not exist yet
     sampling: Sampling = "lhs"
-    workers: int | None = None
     batch_size: int | None = None  # Trials per batch
     trial_timeout: Annotated[Scalar | None, "s"] = None
     stopping: StoppingSettings = field(default_factory=StoppingSettings)
