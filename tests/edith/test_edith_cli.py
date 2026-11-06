@@ -35,10 +35,10 @@ def test_prepare_describes_the_campaign_and_writes_its_run_directories(
         + (campaign.parent.parent / "base" / "sim.toml").as_posix()
         + ", lhs sampling, seed 7"
     )
-    assert lines[1].startswith(
-        "  StandardDispersion(key='properties.dry_mass_properties.mass', "
-        "nominal=17.0, distribution=Normal(mean=17.0, sigma=0.25, "
-    )
+    assert lines[1].split() == ["key", "nominal", "distribution"]
+    assert lines[2].split()[0] == "properties.dry_mass_properties.mass"
+    assert "  17 kg  " in lines[2] and lines[2].endswith("normal, sigma 0.25 kg")
+    assert lines[4].endswith("uniform from 0 to 0.2")
     assert lines[-2] == f"Prepared 3 run directories in {runs.as_posix()}"
     assert lines[-1].startswith("wall time: read ")
     assert lines[-1].endswith(" s") and ", prepare " in lines[-1]

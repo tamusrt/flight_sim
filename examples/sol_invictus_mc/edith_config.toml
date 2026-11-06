@@ -1,6 +1,6 @@
 # EDITH campaign: dispersed flights of the Sol Invictus example. Read with:
 #
-#   uv sync --extra edith
+#   uv sync
 #   uv run edith examples/sol_invictus_mc/edith_config.toml -n 7
 #
 # -n is the worker processes, each flying one trial at a time; left out,
