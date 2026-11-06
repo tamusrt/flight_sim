@@ -6,14 +6,16 @@ from collections.abc import Sequence
 
 from edith.config import EdithConfig
 from edith.errors import EdithConfigError
+from edith.runner import run_campaign
 from flight_sim.config.toml_files import display_path
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Read a campaign file from the command line and print what it describes.
+    """Read a campaign file from the command line, print it, and run it.
 
-    Running the campaign is not built yet, so the command ends after printing
-    the campaign's settings and dispersions.
+    The command prints the campaign's settings and dispersions, then flies its
+    trials in batches until the stopping rule is met or ``num_sims`` trials
+    have run, and prints the estimate. ``--dry-run`` stops after printing.
 
     Args:
         argv (Sequence[str] | None, optional): Command-line arguments.
@@ -27,6 +29,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         prog="edith", description="Run a Monte Carlo campaign of a sim."
     )
     parser.add_argument("config", help="Campaign input file, such as edith_config.toml")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Read and print the campaign only"
+    )
     argv = sys.argv[1:] if argv is None else argv
     if not argv:
         parser.print_help(sys.stderr)
@@ -45,7 +50,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     for dispersion in config.dispersions:
         nominal = f"{dispersion.nominal:g} {dispersion.units}".rstrip()
         print(f"  {dispersion.key}: {nominal}, {dispersion.distribution!r}")
-    print("Running the campaign is not built yet.")
+    if args.dry_run:
+        print("Dry run: no trials were flown.")
+        return
+    result = run_campaign(config)
+    if result.stopped_by == "num_sims" and config.stopping.rule != "fixed":
+        print(f"Warning: stopped at num_sims before the {config.stopping.rule} target")
+    print(result.summary())
+    print(f"Trials: {display_path(result.trials_path)}")
 
 
 if __name__ == "__main__":

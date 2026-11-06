@@ -27,7 +27,7 @@ def test_a_campaign_file_is_read_and_described(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Given the example, the command prints its settings and every dispersion."""
-    main([_CAMPAIGN])
+    main([_CAMPAIGN, "--dry-run"])
 
     lines = capsys.readouterr().out.splitlines()
 
@@ -42,7 +42,7 @@ def test_a_campaign_file_is_read_and_described(
     assert lines[4] == (
         "  config.truth.launch_rail.friction_coefficient: 0, Uniform(low=0.0, high=0.2)"
     )
-    assert lines[-1] == "Running the campaign is not built yet."
+    assert lines[-1] == "Dry run: no trials were flown."
 
 
 def test_an_invalid_campaign_file_exits_with_its_error(

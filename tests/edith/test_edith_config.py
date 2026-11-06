@@ -510,18 +510,20 @@ def test_angles_are_not_plain_numbers(tmp_path: Path) -> None:
     )
 
 
-def test_a_uniform_may_leave_out_the_nominal(tmp_path: Path) -> None:
-    """A uniform's low and high are absolute, so a calm nominal wind may lie outside."""
-    dispersion = _dispersion(
-        tmp_path,
-        _table(
-            "config.truth.wind.speed",
-            'dist_type = "uniform"\nlow = "2 m/s"\nhigh = "8 m/s"',
-        ),
-    )
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ('low = "2 m/s"\nhigh = "8 m/s"', "low: 2 m/s is above the nominal value"),
+        ('low = "-8 m/s"\nhigh = "-2 m/s"', "high: -2 m/s is below the nominal value"),
+    ],
+)
+def test_a_uniform_must_contain_the_nominal(
+    tmp_path: Path, body: str, expected: str
+) -> None:
+    """A uniform's low and high bracket the nominal value, wind speed 0 here."""
+    dispersion = _table("config.truth.wind.speed", f'dist_type = "uniform"\n{body}')
 
-    assert dispersion.nominal == 0.0
-    assert dispersion.distribution == Uniform(2.0, 8.0)
+    assert expected in _error(tmp_path, dispersion)
 
 
 def test_a_normal_may_be_truncated_at_its_nominal(tmp_path: Path) -> None:

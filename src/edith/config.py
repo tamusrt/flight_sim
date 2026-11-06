@@ -32,6 +32,7 @@ from edith.dispersion import (
     ParameterError,
 )
 from edith.errors import EdithConfigError, closest
+from edith.statistics.stopping import STOPPING_RULES
 from edith.targets import Nominal, find_target, load_base_sim
 from flight_sim.config import ConfigError, InputSource, build, load_toml
 from flight_sim.config.toml_files import display_path, key_path
@@ -44,7 +45,7 @@ from flight_sim.units import (
     parse_quantity,
 )
 
-__all__ = ["CampaignSettings", "EdithConfig", "Sampling"]
+__all__ = ["CampaignSettings", "EdithConfig", "Sampling", "StoppingSettings"]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
 
@@ -69,6 +70,39 @@ _MINIMUMS = {"num_sims": 1, "master_seed": 0, "workers": 1, "batch_size": 1}
 
 
 @dataclass(frozen=True)
+class StoppingSettings(UnitChecked):
+    """The ``[stopping]`` table: when the apogee estimate is good enough.
+
+    ``num_sims`` caps every rule. ``target`` is the apogee's standard error or
+    confidence interval half-width the campaign stops at.
+    """
+
+    rule: str = "fixed"
+    target: Annotated[Scalar | None, "m"] = None
+    confidence: float = 0.95
+
+    def __post_init__(self) -> None:
+        """Check the rule, target and confidence.
+
+        Raises:
+            ValueError: Naming the setting at fault.
+        """
+        super().__post_init__()
+        if self.rule not in STOPPING_RULES:
+            names = _listed([f'"{name}"' for name in STOPPING_RULES], "or")
+            raise ValueError(f"rule must be {names}, got {self.rule!r}")
+        if self.rule != "fixed":
+            if self.target is None:
+                raise ValueError(f'rule "{self.rule}" needs a target, such as "5 m"')
+            if not 0.0 < float(self.target.m_as("m")) < math.inf:
+                raise ValueError(f"target must be above 0, got {self.target:~}")
+        if not 0.0 < self.confidence < 1.0:
+            raise ValueError(
+                f"confidence must be between 0 and 1, got {self.confidence}"
+            )
+
+
+@dataclass(frozen=True)
 class CampaignSettings(UnitChecked):
     """Settings of a campaign file: every top-level key but ``dispersions``.
 
@@ -86,6 +120,7 @@ class CampaignSettings(UnitChecked):
     workers: int | None = None
     batch_size: int | None = None  # Trials per batch
     trial_timeout: Annotated[Scalar | None, "s"] = None
+    stopping: StoppingSettings = field(default_factory=StoppingSettings)
 
     def __post_init__(self) -> None:
         """Check the settings' ranges, and the base sim and output folder.
@@ -142,6 +177,7 @@ class EdithConfig:
     workers: int | None = None
     batch_size: int | None = None  # Trials per batch
     trial_timeout_s: float | None = None
+    stopping: StoppingSettings = field(default_factory=StoppingSettings)
 
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
@@ -217,6 +253,7 @@ class EdithConfig:
             workers=settings.workers,
             batch_size=settings.batch_size,
             trial_timeout_s=None if timeout is None else float(timeout.m_as("s")),
+            stopping=settings.stopping,
         )
 
 
