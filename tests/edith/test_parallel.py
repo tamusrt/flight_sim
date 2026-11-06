@@ -1,10 +1,11 @@
 """EDITH parallel tests: flying run directories in persistent worker processes."""
 
+import time
 from itertools import islice
 from pathlib import Path
 
 from edith.config import EdithConfig
-from edith.parallel import CAMPAIGN_LOG, WORKER_LOGS, Status, run
+from edith.parallel import CAMPAIGN_LOG, WORKER_LOGS, Status, Workers, run
 from edith.runner import prepare
 from edith.sampler import sample
 from edith.worker import LOG, fly_directory
@@ -83,3 +84,13 @@ def test_run_flies_every_directory_and_logs_each(campaign: Path) -> None:
         "1.log",
         "2.log",
     ]
+
+
+def test_workers_start_at_once_and_say_when_they_are_ready(tmp_path: Path) -> None:
+    """Started together, the processes come to answer READY while nothing flies."""
+    with Workers(2, tmp_path / "workers") as workers:
+        deadline = time.perf_counter() + 60.0
+        while not workers.settled() and time.perf_counter() < deadline:
+            time.sleep(0.1)
+
+        assert (workers.count, workers.ready(), workers.settled()) == (2, 2, True)
