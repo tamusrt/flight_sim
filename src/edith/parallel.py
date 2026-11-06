@@ -109,6 +109,14 @@ class Workers:
         """Return how many worker processes there are."""
         return len(self._workers)
 
+    def ready(self) -> int:
+        """Return how many processes have imported flight_sim and answered READY."""
+        return sum(worker.ready for worker in self._workers)
+
+    def settled(self) -> bool:
+        """Return whether every process has answered READY or ended."""
+        return all(worker.ready or not worker.alive for worker in self._workers)
+
     def __enter__(self) -> Self:
         """Return the workers, to be ended with the block."""
         return self
@@ -222,7 +230,18 @@ class _Worker:
         self._log = log
         self._process: subprocess.Popen[str] | None = None
         self._replies: queue.Queue[str | None] = queue.Queue()
-        self._ready = False  # Whether the process has answered READY
+        self._answered = threading.Event()  # Set once the process answers READY
+        self._ready = False  # Whether that answer has been taken
+
+    @property
+    def ready(self) -> bool:
+        """Return whether the process has imported flight_sim and answered READY."""
+        return self._answered.is_set()
+
+    @property
+    def alive(self) -> bool:
+        """Return whether the process is running."""
+        return self._process is not None and self._process.poll() is None
 
     def fly(self, directory: Path, timeout_s: float | None) -> Result:
         """Fly a run directory in the process, starting one if there is none.
@@ -282,6 +301,7 @@ class _Worker:
         if self._process is not None:
             return
         self._replies = queue.Queue()
+        self._answered = threading.Event()
         self._ready = False
         with self._log.open("a", encoding="utf-8") as log:
             self._process = subprocess.Popen(  # pylint: disable=consider-using-with
@@ -295,7 +315,9 @@ class _Worker:
                 env={**os.environ, **_WORKER_ENV},
             )
         threading.Thread(
-            target=_read, args=(self._process.stdout, self._replies), daemon=True
+            target=_read,
+            args=(self._process.stdout, self._replies, self._answered),
+            daemon=True,
         ).start()
 
     def _await_ready(self) -> None:
@@ -321,10 +343,18 @@ class _Worker:
         return process.wait()
 
 
-def _read(stdout: IO[str], replies: "queue.Queue[str | None]") -> None:
-    """Queue each line a worker process writes, then None when it ends."""
+def _read(
+    stdout: IO[str], replies: "queue.Queue[str | None]", answered: threading.Event
+) -> None:
+    """Queue each line a worker process writes, then None when it ends.
+
+    Sets ``answered`` as soon as the process answers READY.
+    """
     for line in stdout:
-        replies.put(line.rstrip("\r\n"))
+        reply = line.rstrip("\r\n")
+        if reply == READY:
+            answered.set()
+        replies.put(reply)
     replies.put(None)
 
 
