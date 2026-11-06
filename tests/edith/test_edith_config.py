@@ -153,17 +153,17 @@ def test_errors_are_config_errors() -> None:
 
 
 def test_optional_settings(tmp_path: Path) -> None:
-    """Workers, batch size, timeout, sampling and compression are read."""
+    """Workers, batch size, timeout, sampling and input mode are read."""
     header = _HEADER + (
         'sampling = "random"\nbatch_size = 4\ntrial_timeout = "10 min"\n'
-        "compress_inputs = false\n"
+        'input_mode = "lightweight"\n'
     )
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
 
     assert config.sampling == "random"
     assert config.batch_size == 4
     assert config.trial_timeout == scalar(600.0, "s")
-    assert config.compress_inputs is False
+    assert config.input_mode == "lightweight"
 
 
 def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:
