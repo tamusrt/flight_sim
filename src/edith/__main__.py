@@ -38,7 +38,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     except EdithConfigError as error:
         raise SystemExit(f"Cannot read {args.config}:\n  {error}") from None
     print(
-        f"{display_path(config.path)}: {config.trials} trials of "
+        f"{display_path(config.path)}: {config.num_sims} trials of "
         f"{display_path(config.base_sim)}, {config.sampling} sampling, "
         f"seed {config.master_seed}"
     )
