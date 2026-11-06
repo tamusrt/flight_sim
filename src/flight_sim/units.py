@@ -34,11 +34,14 @@ from pint import (
     PintError,
     Quantity,
     UnitRegistry,
+    set_application_registry,
 )
 from pint.facets.plain import PlainUnit
 from pint.util import UnitsContainer
 
 ureg: UnitRegistry[Any] = UnitRegistry()
+# So quantities unpickle into this registry, for worker processes
+set_application_registry(ureg)  # type: ignore[no-untyped-call]
 
 # A single measurement, such as a mass in kilograms.
 Scalar: TypeAlias = Quantity[float]

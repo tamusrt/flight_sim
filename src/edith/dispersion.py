@@ -16,6 +16,7 @@ from typing import ClassVar, NamedTuple, Self, TypeAlias, get_args
 from edith.targets import Nominal
 
 __all__ = [
+    "DISPERSION_CLASSES",
     "DISTRIBUTIONS",
     "STANDARD_DISPERSION",
     "BaseDispersion",
@@ -46,6 +47,12 @@ class StandardDispersion(BaseDispersion):
 
 # The default dispersion class's name, as a campaign file writes it
 STANDARD_DISPERSION = StandardDispersion.__name__
+
+# Each dispersion class, by the name a campaign writes; adding a subclass of
+# BaseDispersion adds it here
+DISPERSION_CLASSES: dict[str, type[BaseDispersion]] = {
+    cls.__name__: cls for cls in BaseDispersion.__subclasses__()
+}
 
 
 class Parameter(NamedTuple):
