@@ -85,19 +85,32 @@ def test_example_campaign_reads_every_dispersion() -> None:
     )
     assert config.dispersions[:4] == (
         StandardDispersion(
-            "properties.dry_mass_properties.mass", 17.0, Normal(0.25), "kg"
+            "properties.dry_mass_properties.mass",
+            17.0,
+            Normal(17.0, 0.25),
+            "kg",
+            quoted=True,
         ),
         StandardDispersion(
             "properties.dry_mass_properties.cg_location.value[0]",
             -1.0,
-            Normal(0.02),
+            Normal(-1.0, 0.02),
             "m",
+            quoted=False,
         ),
         StandardDispersion(
-            "config.truth.launch_rail.elevation", 85.0, Normal(0.5, high=90.0), "deg"
+            "config.truth.launch_rail.elevation",
+            85.0,
+            Normal(85.0, 0.5, high=90.0),
+            "deg",
+            quoted=True,
         ),
         StandardDispersion(
-            "config.truth.launch_rail.friction_coefficient", 0.0, Uniform(0.0, 0.2), ""
+            "config.truth.launch_rail.friction_coefficient",
+            0.0,
+            Uniform(0.0, 0.2),
+            "",
+            quoted=False,
         ),
     )
     assert isinstance(wind_speed, StandardDispersion)
@@ -111,7 +124,11 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
     assert config.dispersions[5:] == (
         StandardDispersion(
-            "config.truth.wind.from_azimuth", 0.0, Uniform(-30.0, 30.0), "deg"
+            "config.truth.wind.from_azimuth",
+            0.0,
+            Uniform(-30.0, 30.0),
+            "deg",
+            quoted=True,
         ),
     )
 
@@ -461,7 +478,7 @@ def test_a_default_value_can_be_dispersed(tmp_path: Path) -> None:
     )
 
     assert (dispersion.nominal, dispersion.units) == (101325.0, "Pa")
-    assert dispersion.distribution == Normal(1000.0)
+    assert dispersion.distribution == Normal(101325.0, 1000.0)
 
 
 @pytest.mark.parametrize("sigma", ["18 degF", "10 delta_degC", "10 K"])
@@ -483,7 +500,7 @@ def test_offset_nominals_take_their_own_units(tmp_path: Path, sigma: str) -> Non
     )
 
     assert (dispersion.nominal, dispersion.units) == (20.0, "degC")
-    assert dispersion.distribution == Normal(10.0, low=10.0)
+    assert dispersion.distribution == Normal(20.0, 10.0, low=10.0)
     assert f"write '{sigma}' in degC" in _error(
         tmp_path, _table(key, f'dist_type = "normal"\nsigma = "{sigma}"')
     )
@@ -561,7 +578,7 @@ def test_zero_spread_is_allowed(tmp_path: Path) -> None:
     """A sigma of 0 keeps a value at its nominal."""
     dispersion = _dispersion(tmp_path, _MASS.replace('"0.25 kg"', '"0 kg"'))
 
-    assert dispersion.distribution == Normal(0.0)
+    assert dispersion.distribution == Normal(17.0, 0.0)
 
 
 @pytest.mark.parametrize(
