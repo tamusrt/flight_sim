@@ -36,11 +36,13 @@ def test_a_campaign_file_is_read_and_described(
         "lhs sampling, seed 9999"
     )
     assert lines[1] == (
-        "  properties.dry_mass_properties.mass: 17 kg, "
-        "Normal(sigma=0.25, low=None, high=None)"
+        "  StandardDispersion(key='properties.dry_mass_properties.mass', "
+        "nominal=17.0, distribution=Normal(sigma=0.25, low=None, high=None), "
+        "units='kg')"
     )
     assert lines[4] == (
-        "  config.truth.launch_rail.friction_coefficient: 0, Uniform(low=0.0, high=0.2)"
+        "  StandardDispersion(key='config.truth.launch_rail.friction_coefficient', "
+        "nominal=0.0, distribution=Uniform(low=0.0, high=0.2), units='')"
     )
     assert lines[-1] == "Dry run: no trials were flown."
 

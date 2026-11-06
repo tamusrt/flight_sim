@@ -8,14 +8,16 @@ import pytest
 
 from edith.config import EdithConfig
 from edith.dispersion import (
+    DISPERSION_CLASSES,
     DISTRIBUTIONS,
     STANDARD_DISPERSION,
-    Dispersion,
     Normal,
+    StandardDispersion,
     Uniform,
 )
 from edith.errors import EdithConfigError
 from flight_sim.config import ConfigError
+from flight_sim.units import scalar
 
 _EXAMPLE = Path("examples/sol_invictus")
 _CAMPAIGN = Path("examples/sol_invictus_mc/edith_config.toml")
@@ -60,9 +62,10 @@ def _error(tmp_path: Path, dispersions: str, header: str = _HEADER) -> str:
     return str(error.value)
 
 
-def _dispersion(tmp_path: Path, table: str) -> Dispersion:
+def _dispersion(tmp_path: Path, table: str) -> StandardDispersion:
     """Return the one dispersion a campaign file of one table describes."""
     (dispersion,) = EdithConfig.from_file(_campaign(tmp_path, table)).dispersions
+    assert isinstance(dispersion, StandardDispersion)
     return dispersion
 
 
@@ -75,37 +78,29 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.source.path == config.base_sim
     assert config.output_dir == Path("out/edith_sol_invictus").resolve()
-    assert (config.workers, config.batch_size, config.trial_timeout_s) == (
+    assert (config.workers, config.batch_size, config.trial_timeout) == (
         None,
         None,
         None,
     )
     assert config.dispersions[:4] == (
-        Dispersion(
-            "properties.dry_mass_properties.mass",
-            17.0,
-            Normal(0.25),
-            "kg",
+        StandardDispersion(
+            "properties.dry_mass_properties.mass", 17.0, Normal(0.25), "kg"
         ),
-        Dispersion(
+        StandardDispersion(
             "properties.dry_mass_properties.cg_location.value[0]",
             -1.0,
             Normal(0.02),
             "m",
         ),
-        Dispersion(
-            "config.truth.launch_rail.elevation",
-            85.0,
-            Normal(0.5, high=90.0),
-            "deg",
+        StandardDispersion(
+            "config.truth.launch_rail.elevation", 85.0, Normal(0.5, high=90.0), "deg"
         ),
-        Dispersion(
-            "config.truth.launch_rail.friction_coefficient",
-            0.0,
-            Uniform(0.0, 0.2),
-            "",
+        StandardDispersion(
+            "config.truth.launch_rail.friction_coefficient", 0.0, Uniform(0.0, 0.2), ""
         ),
     )
+    assert isinstance(wind_speed, StandardDispersion)
     assert (wind_speed.key, wind_speed.nominal, wind_speed.units) == (
         "config.truth.wind.speed",
         0.0,
@@ -115,16 +110,10 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert wind_speed.distribution.low == 0.0
     assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
     assert config.dispersions[5:] == (
-        Dispersion(
-            "config.truth.wind.from_azimuth",
-            0.0,
-            Uniform(-30.0, 30.0),
-            "deg",
+        StandardDispersion(
+            "config.truth.wind.from_azimuth", 0.0, Uniform(-30.0, 30.0), "deg"
         ),
     )
-    assert {dispersion.dispersion_class for dispersion in config.dispersions} == {
-        STANDARD_DISPERSION
-    }
 
 
 def test_config_survives_pickling() -> None:
@@ -149,7 +138,7 @@ def test_optional_settings(tmp_path: Path) -> None:
 
     assert config.sampling == "random"
     assert (config.workers, config.batch_size) == (3, 4)
-    assert config.trial_timeout_s == pytest.approx(600.0)
+    assert config.trial_timeout == scalar(600.0, "s")
 
 
 def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:
@@ -295,7 +284,7 @@ def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
     """A dispersion names StandardDispersion, or leaves it out for the default."""
     found = _dispersion(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
-    assert found.dispersion_class == STANDARD_DISPERSION == "StandardDispersion"
+    assert type(found).__name__ == STANDARD_DISPERSION == "StandardDispersion"
     assert pickle.loads(pickle.dumps(found)) == found
 
 
@@ -342,6 +331,11 @@ def test_bad_dispersion_classes_are_named(
 def test_distributions_are_found_by_their_dist_type() -> None:
     """Each distribution class is found by the dist_type it declares."""
     assert {"normal": Normal, "uniform": Uniform} == DISTRIBUTIONS
+
+
+def test_dispersion_classes_are_found_by_name() -> None:
+    """Each subclass of BaseDispersion is found by its name, and the base is not."""
+    assert {"StandardDispersion": StandardDispersion} == DISPERSION_CLASSES
 
 
 def test_a_dispersion_is_a_table(tmp_path: Path) -> None:
@@ -489,7 +483,7 @@ def test_offset_nominals_take_their_own_units(tmp_path: Path, sigma: str) -> Non
     )
 
     assert (dispersion.nominal, dispersion.units) == (20.0, "degC")
-    assert dispersion.distribution == Normal(10.0, 10.0)
+    assert dispersion.distribution == Normal(10.0, low=10.0)
     assert f"write '{sigma}' in degC" in _error(
         tmp_path, _table(key, f'dist_type = "normal"\nsigma = "{sigma}"')
     )

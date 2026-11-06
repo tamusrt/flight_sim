@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from edith.config import EdithConfig
-from edith.dispersion import Dispersion
+from edith.dispersion import StandardDispersion
 from edith.statistics.estimators import BatchStats
 from edith.statistics.generators import GENERATORS, stream
 from edith.statistics.stopping import (
@@ -108,6 +108,14 @@ def run_campaign(config: EdithConfig) -> CampaignResult:
     return CampaignResult(stats, stopped_by, config.stopping.confidence, trials_path)
 
 
+def _dispersions(config: EdithConfig) -> list[StandardDispersion]:
+    """Return the campaign's dispersions; only the standard class can run so far."""
+    for dispersion in config.dispersions:
+        if not isinstance(dispersion, StandardDispersion):
+            raise NotImplementedError(f"{type(dispersion).__name__} cannot run yet")
+    return [d for d in config.dispersions if isinstance(d, StandardDispersion)]
+
+
 def _make_rule(config: EdithConfig) -> StoppingRule:
     """Return the stopping rule a campaign's ``[stopping]`` table describes."""
     spec = config.stopping
@@ -131,11 +139,13 @@ def _draw_batch(config: EdithConfig, batch: int, size: int) -> Values:
             generator.percentiles(size, stream(config.master_seed, batch, d.key)),
             d.nominal,
         )
-        for d in config.dispersions
+        for d in _dispersions(config)
     }
 
 
-def _as_input(dispersion: Dispersion, value: float, table: dict[str, Any]) -> Any:
+def _as_input(
+    dispersion: StandardDispersion, value: float, table: dict[str, Any]
+) -> Any:
     """Return a drawn value written as the base input writes its nominal value.
 
     Text with units, such as "17 kg", stays text in the same units; a plain
@@ -150,7 +160,7 @@ def _fly(config: EdithConfig, trial: int, drawn: Values, index: int) -> float:
     """Fly one trial, write its folder, and return its apogee in metres."""
     values: dict[str, Any] = {
         d.key: _as_input(d, float(drawn[d.key][index]), config.source.table)
-        for d in config.dispersions
+        for d in _dispersions(config)
     }
     folder = config.output_dir / "runs" / f"trial_{trial:05d}"
     values["output.directory"] = folder.as_posix()
