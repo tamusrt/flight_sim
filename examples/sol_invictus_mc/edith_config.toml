@@ -31,6 +31,13 @@ sampling = "lhs"
 # batch_size = 13           # Trials per batch and per Zarr chunk
 # trial_timeout = "10 min"  # Longer trials stop as TIMEOUT; in s, min or h
 
+# Output settings of every trial, over the base sim's [output]; each trial's
+# directory is its own run directory. Left out, trials write what the base
+# sim writes. Drawing plots is most of a trial's time, and
+# "flight_sim run <run directory>" redraws any trial's on demand.
+[output]
+plots = []
+
 # ---------------------------------------------------------------------------
 # Dispersions
 #

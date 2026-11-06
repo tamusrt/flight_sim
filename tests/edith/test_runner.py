@@ -47,3 +47,18 @@ def test_prepare_refuses_an_existing_runs_folder_unless_overwritten(
         list(prepare(config, samples))
 
     assert list(prepare(config, samples, overwrite=True)) == directories
+
+
+def test_prepare_writes_the_campaigns_output_settings(campaign: Path) -> None:
+    """A trial's input takes the campaign's output keys over the base sim's."""
+    text = campaign.read_text(encoding="utf-8")
+    campaign.write_text(text + "\n[output]\nplots = []\n", encoding="utf-8")
+    config = EdithConfig.from_file(campaign)
+
+    directory = next(prepare(config, sample(config)))
+
+    text = (directory / "resolved_input.toml").read_text(encoding="utf-8")
+    output = tomllib.loads(text)["output"]
+    assert output["plots"] == []
+    assert output["directory"] == "."
+    assert "formats" in output

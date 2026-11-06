@@ -20,10 +20,11 @@ from edith.dispersion import DISPERSION_CLASSES, BaseDispersion, StandardDispers
 from edith.errors import EdithConfigError, quoted_key_path
 from edith.targets import load_base_sim
 from flight_sim.config import ConfigError, InputSource, build, load_toml
-from flight_sim.config.toml_files import display_path
+from flight_sim.config.toml_files import display_path, untagged
+from flight_sim.simulation import Simulation
 from flight_sim.units import Scalar, UnitChecked
 
-__all__ = ["CampaignSettings", "EdithConfig", "Sampling"]
+__all__ = ["CampaignSettings", "EdithConfig", "Sampling", "output_values"]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
 
@@ -31,6 +32,9 @@ _DISPERSION_USAGE = (
     "for now every dispersion leaves dispersion out, or writes dispersion = "
     '"StandardDispersion"'
 )
+
+# Top-level tables of a campaign file read apart from its settings
+_TABLES = ("dispersions", "output")
 
 # Smallest value of each whole-number setting
 _MINIMUMS = {"num_sims": 1, "master_seed": 0, "batch_size": 1}
@@ -93,14 +97,18 @@ class EdithConfig(CampaignSettings):
     """Monte Carlo campaign of dispersed flights of one base sim.
 
     ``from_file`` reads one from a campaign file: its settings, with their
-    paths made absolute, the values it disperses, and ``source``, the base
-    sim's resolved input, which the dispersions' keys index and trials are
-    written from.
+    paths made absolute, the values it disperses, ``source``, the base sim's
+    resolved input, which the dispersions' keys index and trials are written
+    from, and ``output``, the file's output table, which every trial takes
+    over the base sim's.
     """
 
     path: Path  # The campaign file
     dispersions: tuple[BaseDispersion, ...]  # In file order
     source: InputSource = field(repr=False)
+
+    # flight_sim output settings of every trial, by key, such as {"plots": []}
+    output: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
@@ -126,6 +134,7 @@ class EdithConfig(CampaignSettings):
             settings = _settings(table)
             source = load_base_sim(settings.base_sim)
             dispersions = _dispersions(table["dispersions"], source)
+            output = _output(table["output"], source) if "output" in table else {}
         except EdithConfigError as error:
             raise EdithConfigError(f"{display_path(path)}: {error}") from error
         return cls(
@@ -133,7 +142,13 @@ class EdithConfig(CampaignSettings):
             path=path,
             dispersions=dispersions,
             source=source,
+            output=output,
         )
+
+
+def output_values(output: Mapping[str, Any]) -> dict[str, Any]:
+    """Return output settings as the key paths ``InputSource.table_with`` takes."""
+    return {f"output.{key}": value for key, value in output.items()}
 
 
 def _settings(table: Mapping[str, Any]) -> CampaignSettings:
@@ -162,7 +177,7 @@ def _settings(table: Mapping[str, Any]) -> CampaignSettings:
             raise EdithConfigError(f"{key}: a campaign file takes no {key}")
     try:
         settings: CampaignSettings = build(
-            {key: item for key, item in table.items() if key != "dispersions"},
+            {key: item for key, item in table.items() if key not in _TABLES},
             CampaignSettings,
         )
     except ConfigError as error:
@@ -236,3 +251,30 @@ def _dispersion_class(table: Mapping[str, object], where: str) -> type[BaseDispe
             f"{where}: EDITH has no dispersion class {name!r}; {_DISPERSION_USAGE}"
         )
     return DISPERSION_CLASSES[name]
+
+
+def _output(value: object, source: InputSource) -> dict[str, Any]:
+    """Return a campaign's output table, checked by building the base sim with it.
+
+    Raises:
+        EdithConfigError: If it is not a table, names a directory, type or
+            ref, or the base sim does not build with it.
+    """
+    if not isinstance(value, dict):
+        raise EdithConfigError(
+            "output: expected a table of flight_sim output settings, such as "
+            f"plots = [], got {value!r}"
+        )
+    if "directory" in value:
+        raise EdithConfigError(
+            "output.directory: each trial writes to its own run directory"
+        )
+    for key in ("type", "ref"):
+        if key in value:
+            raise EdithConfigError(f"output.{key}: a campaign file takes no {key}")
+    output: dict[str, Any] = untagged(value)
+    try:
+        Simulation.from_table(source.table_with(output_values(output)), source.path)
+    except ConfigError as error:
+        raise EdithConfigError(str(error)) from error
+    return output
