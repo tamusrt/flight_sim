@@ -17,6 +17,7 @@ from flight_sim import plots
 from flight_sim.config import InputSource, write_toml
 from flight_sim.plots import ChannelSource
 from flight_sim.units import Scalar, UnitChecked, UnitSystem
+from flight_sim.utilities.data_loader import read_data_frame
 
 if TYPE_CHECKING:
     from flight_sim.simulation import Flight, Simulation
@@ -174,6 +175,45 @@ def prepare(simulation: "Simulation", *, overwrite: bool = False) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     _write_input(simulation.source, directory)
     return directory
+
+
+def parquet_source(source: InputSource, cache_directory: Path) -> InputSource:
+    """Convert a source's CSV inputs and return a source using the Parquets.
+
+    Args:
+        source (InputSource): Resolved source to convert.
+        cache_directory (Path): Temporary directory for converted files.
+
+    Returns:
+        InputSource: A source whose CSV paths have been replaced by Parquets.
+    """
+    converted: dict[Path, Path] = {}
+    replacements: dict[str, str] = {}
+    paths = dict(source.paths)
+    for where, path in source.paths.items():
+        if path.suffix.lower() != ".csv":
+            continue
+        parquet = converted.get(path)
+        if parquet is None:
+            parquet = cache_directory / f"{path.stem}.parquet"
+            number = 1
+            while parquet in converted.values():
+                number += 1
+                parquet = cache_directory / f"{path.stem}_{number}.parquet"
+            cache_directory.mkdir(parents=True, exist_ok=True)
+            read_data_frame(path).to_parquet(parquet, index=False)
+            converted[path] = parquet
+        paths[where] = parquet
+        replacements[where] = parquet.as_posix()
+    if not replacements:
+        return source
+    return InputSource(
+        path=source.path,
+        table=source.table_with(replacements),
+        defaults=source.defaults,
+        paths=paths,
+        load_time_s=source.load_time_s,
+    )
 
 
 def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path | None:

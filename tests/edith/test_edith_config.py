@@ -76,7 +76,7 @@ def test_example_campaign_reads_every_dispersion() -> None:
     config = EdithConfig.from_file(_CAMPAIGN)
     wind_speed = config.dispersions[4]
 
-    assert (config.num_sims, config.master_seed, config.sampling) == (20, 9999, "lhs")
+    assert (config.num_sims, config.master_seed, config.sampling) == (250, 9999, "lhs")
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.source.path == config.base_sim
     assert config.output_dir.parent == Path("out").resolve()
@@ -153,15 +153,17 @@ def test_errors_are_config_errors() -> None:
 
 
 def test_optional_settings(tmp_path: Path) -> None:
-    """Workers, batch size, timeout and sampling are read when given."""
+    """Workers, batch size, timeout, sampling and compression are read."""
     header = _HEADER + (
         'sampling = "random"\nbatch_size = 4\ntrial_timeout = "10 min"\n'
+        "compress_inputs = false\n"
     )
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
 
     assert config.sampling == "random"
     assert config.batch_size == 4
     assert config.trial_timeout == scalar(600.0, "s")
+    assert config.compress_inputs is False
 
 
 def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:

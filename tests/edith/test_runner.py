@@ -23,7 +23,8 @@ def test_prepare_writes_a_dispersed_run_directory_per_trial(campaign: Path) -> N
         text = (directory / "resolved_input.toml").read_text(encoding="utf-8")
         table = tomllib.loads(text)
         assert table["output"]["directory"] == "."
-        assert (directory / "inputs" / "aero.csv").is_file()
+        assert (directory / "inputs" / "aero.parquet").is_file()
+        assert not (directory / "inputs" / "aero.csv").exists()
         mass = table["properties"]["dry_mass_properties"]["mass"]
         assert mass.endswith(" kg")
         masses.append(float(mass.split()[0]))
@@ -62,3 +63,19 @@ def test_prepare_writes_the_campaigns_output_settings(campaign: Path) -> None:
     assert output["plots"] == []
     assert output["directory"] == "."
     assert "formats" in output
+
+
+def test_prepare_can_leave_csv_inputs_uncompressed(campaign: Path) -> None:
+    """The campaign flag can preserve the source CSVs in prepared runs."""
+    campaign.write_text(
+        campaign.read_text(encoding="utf-8").replace(
+            "num_sims = 3", "num_sims = 3\ncompress_inputs = false"
+        ),
+        encoding="utf-8",
+    )
+    config = EdithConfig.from_file(campaign)
+
+    directory = next(prepare(config, sample(config)))
+
+    assert (directory / "inputs" / "aero.csv").is_file()
+    assert not (directory / "inputs" / "aero.parquet").exists()

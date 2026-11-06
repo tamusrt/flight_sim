@@ -28,6 +28,9 @@ output_dir = "../../out/edith_{name}_{datetime}"
 # "lhs", Latin hypercube sampling, or "random". With "lhs", changing
 # num_sims changes every trial's sample.
 sampling = "lhs"
+# Convert every CSV input used by the sim to a smaller Parquet before copying
+# it into each prepared run directory. Set false to preserve the original CSVs.
+compress_inputs = true
 
 # Left out, EDITH picks these:
 # batch_size = 13           # Trials per batch and per Zarr chunk
