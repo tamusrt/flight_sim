@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import zarr
+import xarray as xr
 
 from edith.config import EdithConfig
 from edith.parallel import CAMPAIGN_LOG, WORKER_LOGS, Status, Workers, run
@@ -35,6 +36,11 @@ def test_fly_directory_flies_a_prepared_run_and_logs_it(campaign: Path) -> None:
     telemetry = cast(Any, group["telemetry"])
     assert telemetry.shape[0] > 0
     assert cast(str, group.attrs["job_output"]).startswith("rail exit")
+    dataset = xr.open_zarr(
+        directory.parents[1] / "results.zarr" / "runs" / directory.name,
+        consolidated=False,
+    )
+    assert dataset["telemetry"].dims == ("time", "channel")
 
 
 def test_fly_directory_reports_a_failure_with_its_log(tmp_path: Path) -> None:
