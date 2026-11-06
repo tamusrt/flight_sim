@@ -306,8 +306,9 @@ def _insert_override(
         if isinstance(next_token, int):
             node[token] = full_node[token]
             return
-        child: dict[str, Any] = {}
-        node[token] = child
+        child = node.setdefault(token, {})
+        if not isinstance(child, dict):
+            raise ValueError(f"Key path conflicts with a value: {where}")
         node = child
         full_node = full_node[token]
 
