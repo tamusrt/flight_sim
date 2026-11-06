@@ -6,8 +6,6 @@ import pytest
 
 from edith.__main__ import main
 
-_CAMPAIGN = "examples/sol_invictus_mc/edith_config.toml"
-
 
 def test_no_arguments_prints_usage_and_exits_2(
     capsys: pytest.CaptureFixture[str],
@@ -23,28 +21,28 @@ def test_no_arguments_prints_usage_and_exits_2(
     assert captured.out == ""
 
 
-def test_a_campaign_file_is_read_and_described(
-    capsys: pytest.CaptureFixture[str],
+def test_prepare_describes_the_campaign_and_writes_its_run_directories(
+    campaign: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Given the example, the command prints its settings and every dispersion."""
-    main([_CAMPAIGN, "--dry-run"])
+    """ "edith prepare" prints the settings and dispersions, then the directories."""
+    main(["prepare", str(campaign)])
 
     lines = capsys.readouterr().out.splitlines()
+    runs = campaign.parent.parent / "out" / "runs"
 
-    assert lines[0] == (
-        f"{_CAMPAIGN}: 500 trials of examples/sol_invictus/sim.toml, "
-        "lhs sampling, seed 9999"
+    assert lines[0].endswith(
+        "3 trials of "
+        + (campaign.parent.parent / "base" / "sim.toml").as_posix()
+        + ", lhs sampling, seed 7"
     )
-    assert lines[1] == (
+    assert lines[1].startswith(
         "  StandardDispersion(key='properties.dry_mass_properties.mass', "
-        "nominal=17.0, distribution=Normal(sigma=0.25, low=None, high=None), "
-        "units='kg')"
+        "nominal=17.0, distribution=Normal(mean=17.0, sigma=0.25, "
     )
-    assert lines[4] == (
-        "  StandardDispersion(key='config.truth.launch_rail.friction_coefficient', "
-        "nominal=0.0, distribution=Uniform(low=0.0, high=0.2), units='')"
-    )
-    assert lines[-1] == "Dry run: no trials were flown."
+    assert lines[-1] == f"Prepared 3 run directories in {runs.as_posix()}"
+    assert sorted(path.name for path in runs.iterdir()) == ["0000", "0001", "0002"]
+    with pytest.raises(SystemExit, match="already exists; pass --overwrite"):
+        main(["prepare", str(campaign)])
 
 
 def test_an_invalid_campaign_file_exits_with_its_error(

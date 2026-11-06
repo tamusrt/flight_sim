@@ -72,8 +72,29 @@ def load_with_source(path: str | Path, cls: type[T]) -> tuple[T, InputSource]:
     Raises:
         ConfigError: If the file cannot be read or does not build a ``cls``.
     """
+    return build_with_source(load_toml(path), path, cls)
+
+
+def build_with_source(
+    table: Mapping[str, Any], path: str | Path, cls: type[T]
+) -> tuple[T, InputSource]:
+    """Build an object from a table, and describe the input it came from.
+
+    Args:
+        table (Mapping[str, Any]): Top-level table, as ``load_toml`` reads it
+            or ``InputSource.table_with`` returns it.
+        path (str | Path): File the table came from, which the source names.
+        cls (type[T]): Class of the object, used when the table names no
+            ``type``.
+
+    Returns:
+        tuple[T, InputSource]: The built object, and the file and resolved
+            table it was built from.
+
+    Raises:
+        ConfigError: If the table does not build a ``cls``.
+    """
     start = clock.perf_counter()
-    table = load_toml(path)
     record = BuildRecord()
     result = build(table, cls, record=record)
     if not isinstance(result, cls):

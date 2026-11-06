@@ -32,6 +32,10 @@ class Nominal(NamedTuple):
     units: str  # As the input writes them, such as "kg"; "" for no units
     text: str  # As messages show it, such as '"17 kg"'
 
+    # Whether the input writes it as a string with its units, such as
+    # "17 kg", rather than bare, as in an array's value list
+    quoted: bool
+
 
 def value_path(path: Sequence[str | int]) -> str:
     """Return a key path such as "dry_mass_properties.cg_location.value[0]"."""
@@ -164,12 +168,13 @@ def _leaf(
     if isinstance(node, int | float) and not isinstance(node, bool):
         units = owner.get("units") if isinstance(owner, dict) else None
         if isinstance(units, str):
-            return _readable(Nominal(float(node), units, f"{node!r} {units}"), where)
-        return Nominal(float(node), "", f"{node!r}, a plain number")
+            nominal = Nominal(float(node), units, f"{node!r} {units}", False)
+            return _readable(nominal, where)
+        return Nominal(float(node), "", f"{node!r}, a plain number", False)
     if isinstance(node, str):
         quantity = parse_quantity(node)
         if quantity is not None:
-            return _readable(Nominal(*quantity, f'"{node}"'), where)
+            return _readable(Nominal(*quantity, f'"{node}"', True), where)
         raise EdithConfigError(f'{where}: the value is "{node}", not a number')
     if isinstance(node, dict) and ("value" in node or "diag" in node):
         part = "value" if "value" in node else "diag"
