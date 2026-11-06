@@ -87,6 +87,11 @@ def find_target(source: InputSource, key: str, where: str) -> tuple[str, Nominal
     return value_path(path), _leaf(node, _units_owner(path, parents), path, where)
 
 
+def node_at(table: Mapping[str, object], key: str) -> object:
+    """Return the node of a table at a key path found by ``find_target``."""
+    return _walk(table, _key_parts(key, key), key)[0]
+
+
 def _key_parts(text: str, where: str) -> tuple[str | int, ...]:
     """Split a key path such as "cg_location.value[0]" into keys and indices.
 

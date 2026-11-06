@@ -18,12 +18,13 @@ from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from edith.dispersion import DISPERSION_CLASSES, BaseDispersion, StandardDispersion
 from edith.errors import EdithConfigError, quoted_key_path
+from edith.statistics.stopping import STOPPING_RULES
 from edith.targets import load_base_sim
 from flight_sim.config import ConfigError, InputSource, build, load_toml
 from flight_sim.config.toml_files import display_path
 from flight_sim.units import Scalar, UnitChecked
 
-__all__ = ["CampaignSettings", "EdithConfig", "Sampling"]
+__all__ = ["CampaignSettings", "EdithConfig", "Sampling", "StoppingSettings"]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
 
@@ -34,6 +35,39 @@ _DISPERSION_USAGE = (
 
 # Smallest value of each whole-number setting
 _MINIMUMS = {"num_sims": 1, "master_seed": 0, "workers": 1, "batch_size": 1}
+
+
+@dataclass(frozen=True)
+class StoppingSettings(UnitChecked):
+    """The ``[stopping]`` table: when the apogee estimate is good enough.
+
+    ``num_sims`` caps every rule. ``target`` is the apogee's standard error or
+    confidence interval half-width the campaign stops at.
+    """
+
+    rule: str = "fixed"
+    target: Annotated[Scalar | None, "m"] = None
+    confidence: float = 0.95
+
+    def __post_init__(self) -> None:
+        """Check the rule, target and confidence.
+
+        Raises:
+            ValueError: Naming the setting at fault.
+        """
+        super().__post_init__()
+        if self.rule not in STOPPING_RULES:
+            names = " or ".join(f'"{name}"' for name in STOPPING_RULES)
+            raise ValueError(f"rule must be {names}, got {self.rule!r}")
+        if self.rule != "fixed":
+            if self.target is None:
+                raise ValueError(f'rule "{self.rule}" needs a target, such as "5 m"')
+            if not 0.0 < float(self.target.m_as("m")) < math.inf:
+                raise ValueError(f"target must be above 0, got {self.target:~}")
+        if not 0.0 < self.confidence < 1.0:
+            raise ValueError(
+                f"confidence must be between 0 and 1, got {self.confidence}"
+            )
 
 
 @dataclass(frozen=True)
@@ -54,6 +88,7 @@ class CampaignSettings(UnitChecked):
     workers: int | None = None
     batch_size: int | None = None  # Trials per batch
     trial_timeout: Annotated[Scalar | None, "s"] = None
+    stopping: StoppingSettings = field(default_factory=StoppingSettings)
 
     def __post_init__(self) -> None:
         """Check the settings' ranges, and the base sim and output folder.
