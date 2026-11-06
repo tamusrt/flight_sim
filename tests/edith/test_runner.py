@@ -110,4 +110,12 @@ def test_prepare_lightweight_writes_only_trial_overrides(campaign: Path) -> None
     assert "config" in table
     assert table["output"]["directory"] == "."
     assert "aero_table" not in table["properties"]
-    assert Simulation.from_file(directory / "resolved_input.toml").name
+    simulation = Simulation.from_file(directory / "resolved_input.toml")
+    assert simulation.name
+    assert simulation.properties.dry_mass_properties.mass.m_as("kg") == pytest.approx(
+        float(table["properties"]["dry_mass_properties"]["mass"].split()[0])
+    )
+    assert simulation.config.truth.launch_rail is not None
+    assert simulation.config.truth.launch_rail.friction_coefficient == pytest.approx(
+        table["config"]["truth"]["launch_rail"]["friction_coefficient"]
+    )
