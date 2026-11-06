@@ -8,10 +8,18 @@ import pytest
 from edith.config import EdithConfig
 from edith.runner import prepare, run_directory
 from edith.sampler import sample
+from flight_sim.simulation import Simulation
 
 
 def test_prepare_writes_a_dispersed_run_directory_per_trial(campaign: Path) -> None:
-    """Each trial gets a run directory whose input holds its drawn values."""
+    """Normal mode copies each source file into every run directory."""
+    campaign.write_text(
+        campaign.read_text(encoding="utf-8").replace(
+            'base_sim = "../base/sim.toml"',
+            'base_sim = "../base/sim.toml"\ninput_mode = "normal"',
+        ),
+        encoding="utf-8",
+    )
     config = EdithConfig.from_file(campaign)
 
     directories = list(prepare(config, sample(config)))
@@ -23,8 +31,8 @@ def test_prepare_writes_a_dispersed_run_directory_per_trial(campaign: Path) -> N
         text = (directory / "resolved_input.toml").read_text(encoding="utf-8")
         table = tomllib.loads(text)
         assert table["output"]["directory"] == "."
-        assert (directory / "inputs" / "aero.parquet").is_file()
-        assert not (directory / "inputs" / "aero.csv").exists()
+        assert (directory / "inputs" / "aero.csv").is_file()
+        assert not (directory / "inputs" / "aero.parquet").exists()
         mass = table["properties"]["dry_mass_properties"]["mass"]
         assert mass.endswith(" kg")
         masses.append(float(mass.split()[0]))
@@ -65,11 +73,11 @@ def test_prepare_writes_the_campaigns_output_settings(campaign: Path) -> None:
     assert "formats" in output
 
 
-def test_prepare_can_leave_csv_inputs_uncompressed(campaign: Path) -> None:
-    """The campaign flag can preserve the source CSVs in prepared runs."""
+def test_prepare_compresses_csv_inputs(campaign: Path) -> None:
+    """Compressed mode converts CSV inputs before copying them."""
     campaign.write_text(
         campaign.read_text(encoding="utf-8").replace(
-            "num_sims = 3", "num_sims = 3\ncompress_inputs = false"
+            "num_sims = 3", 'num_sims = 3\ninput_mode = "compressed"'
         ),
         encoding="utf-8",
     )
@@ -77,5 +85,29 @@ def test_prepare_can_leave_csv_inputs_uncompressed(campaign: Path) -> None:
 
     directory = next(prepare(config, sample(config)))
 
-    assert (directory / "inputs" / "aero.csv").is_file()
-    assert not (directory / "inputs" / "aero.parquet").exists()
+    assert (directory / "inputs" / "aero.parquet").is_file()
+    assert not (directory / "inputs" / "aero.csv").exists()
+
+
+def test_prepare_lightweight_writes_only_trial_overrides(campaign: Path) -> None:
+    """Lightweight mode extends the base sim without copying its inputs."""
+    campaign.write_text(
+        campaign.read_text(encoding="utf-8").replace(
+            "num_sims = 3", 'num_sims = 3\ninput_mode = "lightweight"'
+        ),
+        encoding="utf-8",
+    )
+    config = EdithConfig.from_file(campaign)
+
+    directory = next(prepare(config, sample(config)))
+    text = (directory / "resolved_input.toml").read_text(encoding="utf-8")
+    table = tomllib.loads(text)
+
+    assert not (directory / "inputs").exists()
+    assert table["extends"] == config.base_sim.as_posix()
+    assert Path(table["extends"]).is_absolute()
+    assert "properties" in table
+    assert "config" in table
+    assert table["output"]["directory"] == "."
+    assert "aero_table" not in table["properties"]
+    assert Simulation.from_file(directory / "resolved_input.toml").name

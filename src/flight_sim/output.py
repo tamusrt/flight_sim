@@ -224,6 +224,58 @@ def parquet_source(source: InputSource, cache_directory: Path) -> InputSource:
     )
 
 
+def prepare_lightweight(
+    source: InputSource, values: Mapping[str, Any], directory: Path
+) -> Path:
+    """Write a sparse trial input extending its source sim.
+
+    The file keeps the base sim and all its data paths outside the run
+    directory. Values below a list path include the complete updated list,
+    because TOML table merging replaces lists rather than merging their items.
+
+    Args:
+        source (InputSource): Resolved source of the base sim.
+        values (Mapping[str, Any]): Trial overrides by dotted key path.
+        directory (Path): Run directory receiving the input file.
+
+    Returns:
+        Path: The run directory.
+    """
+    full = source.table_with(values)
+    overrides: dict[str, Any] = {"extends": source.path.as_posix()}
+    for where in values:
+        _insert_override(overrides, where, full, values[where])
+    directory.mkdir(parents=True, exist_ok=True)
+    write_toml(directory / RESOLVED_INPUT, overrides)
+    return directory
+
+
+def _insert_override(
+    overrides: dict[str, Any], where: str, full: Mapping[str, Any], value: Any
+) -> None:
+    """Insert one sparse override, expanding a containing list when needed."""
+    tokens = [
+        int(index) if index else name
+        for name, index in re.findall(r"([^[.\]]+)|\[(\d+)\]", where)
+    ]
+    node: dict[str, Any] = overrides
+    full_node: Any = full
+    for position, token in enumerate(tokens):
+        if isinstance(token, int):
+            raise ValueError(f"Key path cannot start with a list index: {where}")
+        if position == len(tokens) - 1:
+            node[token] = value
+            return
+        next_token = tokens[position + 1]
+        if isinstance(next_token, int):
+            node[token] = full_node[token]
+            return
+        child: dict[str, Any] = {}
+        node[token] = child
+        node = child
+        full_node = full_node[token]
+
+
 def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path | None:
     """Write a flight as its simulation's output table says.
 

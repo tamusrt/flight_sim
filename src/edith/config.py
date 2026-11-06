@@ -26,9 +26,10 @@ from flight_sim.output import OutputConfiguration, fill
 from flight_sim.simulation import Simulation
 from flight_sim.units import Scalar, UnitChecked
 
-__all__ = ["CampaignSettings", "EdithConfig", "Sampling", "output_values"]
+__all__ = ["CampaignSettings", "EdithConfig", "InputMode", "Sampling", "output_values"]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
+InputMode: TypeAlias = Literal["normal", "compressed", "lightweight"]
 
 _DISPERSION_USAGE = (
     "for now every dispersion leaves dispersion out, or writes dispersion = "
@@ -104,7 +105,7 @@ class CampaignSettings(UnitChecked):
     sampling: Sampling = "lhs"
     batch_size: int | None = None  # Trials per batch
     trial_timeout: Annotated[Scalar | None, "s"] = None
-    compress_inputs: bool = True  # Convert CSV inputs to Parquet before copying
+    input_mode: InputMode = "normal"
 
     def __post_init__(self) -> None:
         """Check the settings' ranges, and the base sim and output folder.
