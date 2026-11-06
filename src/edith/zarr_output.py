@@ -42,7 +42,12 @@ def write(
     frame = flight.to_dataframe()
     values = frame.drop(columns="event").to_numpy(dtype=np.float64)
     row_chunk = min(batch_size or len(values), len(values))
-    group.create_array("telemetry", data=values, chunks=(row_chunk, values.shape[1]))
+    group.create_array(
+        "telemetry",
+        data=values,
+        chunks=(row_chunk, values.shape[1]),
+        dimension_names=("time", "channel"),
+    )
     group.attrs.update(
         {
             "columns": list(frame.drop(columns="event").columns),
