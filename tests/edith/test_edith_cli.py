@@ -59,3 +59,26 @@ def test_an_invalid_campaign_file_exits_with_its_error(
 
     assert message.startswith(f"Cannot read {path}:\n  {path.as_posix()}: missing")
     assert capsys.readouterr().out == ""
+
+
+def test_a_campaign_flies_on_the_workers_given(
+    campaign: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ "edith FILE -n 1" prepares and flies every trial on one worker, then tallies."""
+    main([str(campaign), "-n", "1"])
+
+    lines = capsys.readouterr().out.splitlines()
+    out = campaign.parent.parent / "out"
+
+    assert lines[-1] == f"3 trials: 3 OK; see {(out / 'edith.log').as_posix()}"
+    assert len((out / "edith.log").read_text(encoding="utf-8").splitlines()) == 3
+    assert all((out / "runs" / f"000{i}" / "run.toml").is_file() for i in range(3))
+
+
+@pytest.mark.parametrize("workers", ["0", "-2", "two"])
+def test_a_bad_worker_count_is_a_usage_error(campaign: Path, workers: str) -> None:
+    """-n takes a whole number of at least 1, and exits with the usage otherwise."""
+    with pytest.raises(SystemExit) as exit_info:
+        main([str(campaign), "-n", workers])
+
+    assert exit_info.value.code == 2

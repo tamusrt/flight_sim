@@ -82,7 +82,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     timeout = config.trial_timeout
     results = parallel.run(
         directories,
-        config.workers or parallel.default_workers(),
+        args.workers,
         None if timeout is None else float(timeout.m_as("s")),
         config.output_dir / parallel.CAMPAIGN_LOG,
     )
@@ -108,7 +108,33 @@ def _parser(command: str | None) -> argparse.ArgumentParser:
         action="store_true",
         help="Write into the runs folder even if it already exists",
     )
+    if command is None:
+        parser.add_argument(
+            "-n",
+            "--workers",
+            type=_positive,
+            default=parallel.default_workers(),
+            help="Worker processes, each flying one trial at a time; "
+            "default: the CPUs less one",
+        )
     return parser
+
+
+def _positive(text: str) -> int:
+    """Read a command-line integer of at least 1.
+
+    Raises:
+        argparse.ArgumentTypeError: If it is not one.
+    """
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected a whole number, got {text!r}"
+        ) from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"expected 1 or more, got {value}")
+    return value
 
 
 if __name__ == "__main__":

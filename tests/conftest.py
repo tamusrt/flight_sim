@@ -24,7 +24,6 @@ num_sims = 3
 master_seed = 7
 base_sim = "../base/sim.toml"
 output_dir = "../out"
-workers = 3
 
 [dispersions."properties.dry_mass_properties.mass"]
 dist_type = "normal"
