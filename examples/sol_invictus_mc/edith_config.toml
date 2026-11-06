@@ -1,9 +1,10 @@
 # EDITH campaign: dispersed flights of the Sol Invictus example. Read with:
 #
 #   uv sync --extra edith
-#   uv run edith examples/sol_invictus_mc/edith_config.toml
+#   uv run edith examples/sol_invictus_mc/edith_config.toml -n 7
 #
-# Paths are relative to this file. The campaign file and output_dir may lie
+# -n is the worker processes, each flying one trial at a time; left out,
+# it is the CPUs less one. Paths are relative to this file. The campaign file and output_dir may lie
 # anywhere, the base sim's folder included. flight_sim reads this file as it
 # reads sim input files, so include and extends work here too.
 
@@ -27,7 +28,6 @@ output_dir = "../../out/edith_sol_invictus"
 sampling = "lhs"
 
 # Left out, EDITH picks these:
-# workers = 7               # Worker processes; default: CPUs less one
 # batch_size = 13           # Trials per batch and per Zarr chunk
 # trial_timeout = "10 min"  # Longer trials stop as TIMEOUT; in s, min or h
 

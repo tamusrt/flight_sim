@@ -61,7 +61,9 @@ def test_a_dispersions_samples_do_not_depend_on_the_others(
     campaign: Path, sampling: str
 ) -> None:
     """Removing one dispersion leaves the other dispersions' columns unchanged."""
-    config = _edited(campaign, "workers = 3", f'workers = 3\nsampling = "{sampling}"')
+    config = _edited(
+        campaign, "master_seed = 7", f'master_seed = 7\nsampling = "{sampling}"'
+    )
     full = sample(config)
     text = campaign.read_text(encoding="utf-8")
     campaign.write_text(_without_mass(text), encoding="utf-8")

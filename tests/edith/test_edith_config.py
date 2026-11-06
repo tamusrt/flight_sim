@@ -78,11 +78,7 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.source.path == config.base_sim
     assert config.output_dir == Path("out/edith_sol_invictus").resolve()
-    assert (config.workers, config.batch_size, config.trial_timeout) == (
-        None,
-        None,
-        None,
-    )
+    assert (config.batch_size, config.trial_timeout) == (None, None)
     assert config.dispersions[:4] == (
         StandardDispersion(
             "properties.dry_mass_properties.mass",
@@ -149,12 +145,12 @@ def test_errors_are_config_errors() -> None:
 def test_optional_settings(tmp_path: Path) -> None:
     """Workers, batch size, timeout and sampling are read when given."""
     header = _HEADER + (
-        'sampling = "random"\nworkers = 3\nbatch_size = 4\ntrial_timeout = "10 min"\n'
+        'sampling = "random"\nbatch_size = 4\ntrial_timeout = "10 min"\n'
     )
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
 
     assert config.sampling == "random"
-    assert (config.workers, config.batch_size) == (3, 4)
+    assert config.batch_size == 4
     assert config.trial_timeout == scalar(600.0, "s")
 
 
@@ -218,7 +214,6 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
             _HEADER + 'sampling = "LHS"\n',
             "sampling: expected one of 'lhs', 'random', got 'LHS'",
         ),
-        (_HEADER + "workers = 0\n", "workers must be at least 1, got 0"),
         (_HEADER + "batch_size = 0\n", "batch_size must be at least 1, got 0"),
         (
             _HEADER + 'trial_timeout = "10 m"\n',
@@ -587,7 +582,7 @@ def test_zero_spread_is_allowed(tmp_path: Path) -> None:
         (_HEADER, _MASS.replace("normal", "gaussian")),
         (_HEADER.replace("master_seed", "master_sead"), _MASS),
         (_HEADER.replace("num_sims = 10", "num_sims = 0"), _MASS),
-        (_HEADER + "workers = true\n", _MASS),
+        (_HEADER + "batch_size = true\n", _MASS),
     ],
 )
 def test_errors_name_the_campaign_file(
