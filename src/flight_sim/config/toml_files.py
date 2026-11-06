@@ -73,8 +73,8 @@ def load_toml(path: str | Path, chain: Sequence[Path] = ()) -> dict[str, Any]:
             directory of the file each came from.
 
     Raises:
-        ConfigError: If a file cannot be read, is not valid TOML or includes
-            itself.
+        ConfigError: If a file cannot be read, is not UTF-8 text or valid
+            TOML, or includes itself.
     """
     path = Path(path).resolve()
     if path in chain:
@@ -87,6 +87,8 @@ def load_toml(path: str | Path, chain: Sequence[Path] = ()) -> dict[str, Any]:
         raise ConfigError(
             f"{named_by}cannot read {display_path(path)}: {error.strerror}"
         ) from error
+    except UnicodeDecodeError as error:
+        raise ConfigError(f"{display_path(path)} is not UTF-8 text") from error
     except tomllib.TOMLDecodeError as error:
         raise ConfigError(f"{display_path(path)}: {error}") from error
     chain = (*chain, path)

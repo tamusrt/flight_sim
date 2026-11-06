@@ -13,20 +13,18 @@ dispersion and distribution classes a campaign may name, which this module
 finds there rather than listing them itself.
 """
 
-import inspect
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from pint import DimensionalityError, OffsetUnitCalculusError
 
-import edith.dispersion
 from edith.dispersion import (
+    DISPERSION_CLASSES,
     DISTRIBUTIONS,
     STANDARD_DISPERSION,
-    BaseDispersion,
     Dispersion,
     Parameter,
     ParameterError,
@@ -48,16 +46,8 @@ __all__ = ["CampaignSettings", "EdithConfig", "Sampling"]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
 
-
-def _listed(words: Sequence[str], conjunction: str = "and") -> str:
-    """Return words as a list in prose, such as "a, b and c"."""
-    if len(words) < 2:
-        return words[0]
-    return f"{', '.join(words[:-1])} {conjunction} {words[-1]}"
-
-
 # The dist_type values a dispersion may take, as messages list them
-_DIST_TYPES = _listed([f'"{name}"' for name in DISTRIBUTIONS], "or")
+_DIST_TYPES = " or ".join(f'"{name}"' for name in DISTRIBUTIONS)
 
 _DISPERSION_USAGE = (
     "for now every dispersion leaves dispersion out, or writes dispersion = "
@@ -121,27 +111,19 @@ class CampaignSettings(UnitChecked):
             )
 
 
-@dataclass(frozen=True)
-class EdithConfig:
+@dataclass(frozen=True, kw_only=True)
+class EdithConfig(CampaignSettings):
     """Monte Carlo campaign of dispersed flights of one base sim.
 
-    ``from_file`` reads one from a campaign file. Its paths are absolute, and
-    the optional settings the file leaves out are None. ``source`` is the base
+    ``from_file`` reads one from a campaign file: its settings, with their
+    paths made absolute, the values it disperses, and ``source``, the base
     sim's resolved input, which the dispersions' keys index and trials are
     written from.
     """
 
     path: Path  # The campaign file
-    num_sims: int  # Trials to run
-    master_seed: int
-    base_sim: Path
-    output_dir: Path
     dispersions: tuple[Dispersion, ...]  # In file order
     source: InputSource = field(repr=False)
-    sampling: Sampling = "lhs"
-    workers: int | None = None
-    batch_size: int | None = None  # Trials per batch
-    trial_timeout_s: float | None = None
 
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
@@ -163,61 +145,56 @@ class EdithConfig:
             table = load_toml(path)
         except ConfigError as error:  # Its message names the file already
             raise EdithConfigError(str(error)) from error
-        except UnicodeDecodeError as error:
-            raise EdithConfigError(f"{display_path(path)} is not UTF-8 text") from error
         try:
-            return cls.from_table(table, path)
+            settings = _settings(table)
+            source = load_base_sim(settings.base_sim)
+            dispersions = _dispersions(table["dispersions"], source)
         except EdithConfigError as error:
             raise EdithConfigError(f"{display_path(path)}: {error}") from error
-
-    @classmethod
-    def from_table(cls, table: Mapping[str, Any], path: str | Path) -> Self:
-        """Check a campaign file's table and build the campaign it describes.
-
-        Args:
-            table (Mapping[str, Any]): The file's table, as
-                ``flight_sim.config.load_toml`` reads it, which keeps its
-                paths relative to the file.
-            path (str | Path): The campaign file.
-
-        Returns:
-            EdithConfig: The campaign.
-
-        Raises:
-            EdithConfigError: If a setting is missing, unknown or invalid, the
-                base sim does not build, or a dispersion names no value of it.
-                The message names the key at fault.
-        """
-        if "dispersions" not in table:
-            raise EdithConfigError(
-                "missing dispersions, a table of each value to disperse, such as "
-                '[dispersions."properties.dry_mass_properties.mass"]'
-            )
-        for key in ("type", "ref"):
-            if key in table:
-                raise EdithConfigError(f"{key}: a campaign file takes no {key}")
-        try:
-            settings: CampaignSettings = build(
-                {key: item for key, item in table.items() if key != "dispersions"},
-                CampaignSettings,
-            )
-        except ConfigError as error:
-            raise EdithConfigError(str(error)) from error
-        source = load_base_sim(settings.base_sim)
-        timeout = settings.trial_timeout
         return cls(
-            path=Path(path).resolve(),
-            num_sims=settings.num_sims,
-            master_seed=settings.master_seed,
-            base_sim=settings.base_sim.resolve(),
-            output_dir=settings.output_dir.resolve(),
-            dispersions=_dispersions(table["dispersions"], source),
+            **{item.name: getattr(settings, item.name) for item in fields(settings)},
+            path=path,
+            dispersions=dispersions,
             source=source,
-            sampling=settings.sampling,
-            workers=settings.workers,
-            batch_size=settings.batch_size,
-            trial_timeout_s=None if timeout is None else float(timeout.m_as("s")),
         )
+
+
+def _settings(table: Mapping[str, Any]) -> CampaignSettings:
+    """Build a campaign file's settings, with their paths made absolute.
+
+    Args:
+        table (Mapping[str, Any]): The file's table, as
+            ``flight_sim.config.load_toml`` reads it, whose strings remember
+            the file's folder for relative paths.
+
+    Returns:
+        CampaignSettings: Every top-level key but ``dispersions``.
+
+    Raises:
+        EdithConfigError: If ``dispersions`` is missing, the table has a
+            ``type`` or ``ref``, or a setting is missing, unknown or invalid.
+            The message names the key at fault.
+    """
+    if "dispersions" not in table:
+        raise EdithConfigError(
+            "missing dispersions, a table of each value to disperse, such as "
+            '[dispersions."properties.dry_mass_properties.mass"]'
+        )
+    for key in ("type", "ref"):
+        if key in table:
+            raise EdithConfigError(f"{key}: a campaign file takes no {key}")
+    try:
+        settings: CampaignSettings = build(
+            {key: item for key, item in table.items() if key != "dispersions"},
+            CampaignSettings,
+        )
+    except ConfigError as error:
+        raise EdithConfigError(str(error)) from error
+    return replace(
+        settings,
+        base_sim=settings.base_sim.resolve(),
+        output_dir=settings.output_dir.resolve(),
+    )
 
 
 def _key_path(where: str, key: str) -> str:
@@ -320,12 +297,9 @@ def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
 def _dispersion_class(table: Mapping[str, object], where: str) -> str:
     """Return the dispersion class a dispersion names, or the standard one.
 
-    Only a subclass of ``BaseDispersion`` in ``edith.dispersion`` is a
-    dispersion class, so names such as "Normal" or "__doc__" are not.
-
     Raises:
-        EdithConfigError: If ``dispersion`` is not a string, or not the name
-            of a dispersion class in ``edith.dispersion``.
+        EdithConfigError: If ``dispersion`` is not a string, or not a key of
+            ``DISPERSION_CLASSES``.
     """
     if "dispersion" not in table:
         return STANDARD_DISPERSION
@@ -335,12 +309,7 @@ def _dispersion_class(table: Mapping[str, object], where: str) -> str:
         raise EdithConfigError(
             f"{where}: expected a string, got {name!r}; {_DISPERSION_USAGE}"
         )
-    found = getattr(edith.dispersion, name, None)
-    if not (
-        inspect.isclass(found)
-        and issubclass(found, BaseDispersion)
-        and found is not BaseDispersion
-    ):
+    if name not in DISPERSION_CLASSES:
         raise EdithConfigError(
             f"{where}: EDITH has no dispersion class {name!r}; {_DISPERSION_USAGE}"
         )

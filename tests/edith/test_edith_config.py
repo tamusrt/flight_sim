@@ -16,6 +16,7 @@ from edith.dispersion import (
 )
 from edith.errors import EdithConfigError
 from flight_sim.config import ConfigError
+from flight_sim.units import scalar
 
 _EXAMPLE = Path("examples/sol_invictus")
 _CAMPAIGN = Path("examples/sol_invictus_mc/edith_config.toml")
@@ -75,7 +76,7 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.source.path == config.base_sim
     assert config.output_dir == Path("out/edith_sol_invictus").resolve()
-    assert (config.workers, config.batch_size, config.trial_timeout_s) == (
+    assert (config.workers, config.batch_size, config.trial_timeout) == (
         None,
         None,
         None,
@@ -149,7 +150,7 @@ def test_optional_settings(tmp_path: Path) -> None:
 
     assert config.sampling == "random"
     assert (config.workers, config.batch_size) == (3, 4)
-    assert config.trial_timeout_s == pytest.approx(600.0)
+    assert config.trial_timeout == scalar(600.0, "s")
 
 
 def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:
