@@ -124,7 +124,7 @@ def _prepare(
 
     Raises:
         SystemExit: With the error, if the runs folder exists and ``overwrite``
-            is not set, or a trial does not build.
+            is not set.
     """
     prepared = runner.prepare(config, sample(config), overwrite=overwrite)
     try:
