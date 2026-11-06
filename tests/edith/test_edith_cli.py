@@ -39,7 +39,9 @@ def test_prepare_describes_the_campaign_and_writes_its_run_directories(
         "  StandardDispersion(key='properties.dry_mass_properties.mass', "
         "nominal=17.0, distribution=Normal(mean=17.0, sigma=0.25, "
     )
-    assert lines[-1] == f"Prepared 3 run directories in {runs.as_posix()}"
+    assert lines[-2] == f"Prepared 3 run directories in {runs.as_posix()}"
+    assert lines[-1].startswith("wall time: read ")
+    assert lines[-1].endswith(" s") and ", prepare " in lines[-1]
     assert sorted(path.name for path in runs.iterdir()) == ["0000", "0001", "0002"]
     with pytest.raises(SystemExit, match="already exists; pass --overwrite"):
         main(["prepare", str(campaign)])
@@ -70,7 +72,11 @@ def test_a_campaign_flies_on_the_workers_given(
     lines = capsys.readouterr().out.splitlines()
     out = campaign.parent.parent / "out"
 
-    assert lines[-1] == f"3 trials: 3 OK; see {(out / 'edith.log').as_posix()}"
+    assert lines[-3] == f"3 trials: 3 OK; see {(out / 'edith.log').as_posix()}"
+    assert lines[-2].startswith("wall time: read ")
+    assert ", fly " in lines[-2] and ", total " in lines[-2]
+    assert lines[-1].startswith("trials: ")
+    assert lines[-1].endswith(" trials/s on 1 worker")
     assert len((out / "edith.log").read_text(encoding="utf-8").splitlines()) == 3
     assert all((out / "runs" / f"000{i}" / "run.toml").is_file() for i in range(3))
 
