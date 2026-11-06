@@ -9,7 +9,7 @@
 # reads sim input files, so include and extends work here too.
 
 # Number of trials
-num_sims = 20
+num_sims = 250
 
 # Seeds every draw. Each dispersion draws from its own stream, made from
 # master_seed and the dispersion's key, so adding, removing or reordering
