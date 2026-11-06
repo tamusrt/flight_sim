@@ -43,8 +43,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         f"seed {config.master_seed}"
     )
     for dispersion in config.dispersions:
-        nominal = f"{dispersion.nominal:g} {dispersion.units}".rstrip()
-        print(f"  {dispersion.key}: {nominal}, {dispersion.distribution!r}")
+        print(f"  {dispersion!r}")
     print("Running the campaign is not built yet.")
 
 
