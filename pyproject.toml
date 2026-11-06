@@ -78,8 +78,8 @@ exclude_also = ['if __name__ == "__main__":']
 
 [project.optional-dependencies]
 edith = [
+    "rich>=13,<15",
     "tomlkit>=0.13,<1",
-    "tqdm>=4.66,<5",
     "zarr>=3,<4",
 ]
 

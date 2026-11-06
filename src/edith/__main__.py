@@ -2,15 +2,16 @@
 
 import argparse
 import sys
+import time as clock
 from collections import Counter
 from collections.abc import Sequence
-
-from tqdm import tqdm  # type: ignore[import-untyped]
+from pathlib import Path
+from statistics import mean
 
 from edith import parallel, runner
 from edith.config import EdithConfig
 from edith.errors import EdithConfigError
-from edith.parallel import Status
+from edith.parallel import Result, Status, progress_bars
 from edith.sampler import sample
 from flight_sim.config.toml_files import display_path
 
@@ -29,7 +30,9 @@ _DESCRIPTIONS = {
 def main(argv: Sequence[str] | None = None) -> None:
     """Read a campaign file, prepare its trials and fly them in parallel.
 
-    A first argument of "prepare" stops after the run directories.
+    A first argument of "prepare" stops after the run directories. Each step
+    prints what it did, and the end prints the wall time of each step, as
+    flight_sim prints a run's.
 
     Args:
         argv (Sequence[str] | None, optional): Command-line arguments.
@@ -47,10 +50,39 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(2)
     args = _parser(command).parse_args(argv)
 
+    start = clock.perf_counter()
+    config = _read(args.config)
+    phases = {"read": _since(start)}
+    directories = _prepare(config, args.config, args.overwrite)
+    phases["prepare"] = _since(start) - phases["read"]
+    if command == "prepare":
+        print(_wall_time(**phases, total=_since(start)))
+        return
+
+    workers = min(args.workers, len(directories))
+    results = _fly(config, directories, workers)
+    phases["fly"] = _since(start) - sum(phases.values())
+    print(_wall_time(**phases, total=_since(start)))
+    seconds = [result.seconds for result in results]
+    print(
+        f"trials: {mean(seconds):.1f} s each on average, {min(seconds):.1f} s to "
+        f"{max(seconds):.1f} s; {len(results) / phases['fly']:.2f} trials/s on "
+        f"{workers} worker{'s' if workers != 1 else ''}"
+    )
+    if any(result.status is not Status.OK for result in results):
+        raise SystemExit(1)
+
+
+def _read(path: str) -> EdithConfig:
+    """Read a campaign file and print its settings and dispersions.
+
+    Raises:
+        SystemExit: With the error, if the file does not describe a campaign.
+    """
     try:
-        config = EdithConfig.from_file(args.config)
+        config = EdithConfig.from_file(path)
     except EdithConfigError as error:
-        raise SystemExit(f"Cannot read {args.config}:\n  {error}") from None
+        raise SystemExit(f"Cannot read {path}:\n  {error}") from None
     print(
         f"{display_path(config.path)}: {config.num_sims} trials of "
         f"{display_path(config.base_sim)}, {config.sampling} sampling, "
@@ -58,42 +90,65 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     for dispersion in config.dispersions:
         print(f"  {dispersion!r}")
+    return config
 
-    prepared = runner.prepare(config, sample(config), overwrite=args.overwrite)
+
+def _prepare(config: EdithConfig, path: str, overwrite: bool) -> list[Path]:
+    """Prepare the campaign's run directories behind a progress bar.
+
+    Raises:
+        SystemExit: With the error, if the runs folder exists and ``overwrite``
+            is not set, or a trial does not build.
+    """
+    prepared = runner.prepare(config, sample(config), overwrite=overwrite)
     try:
-        directories = list(
-            tqdm(
-                prepared,
-                total=config.num_sims,
-                desc="prepare",
-                unit="trial",
-                disable=None,
+        with progress_bars() as bars:
+            directories = list(
+                bars.track(prepared, total=config.num_sims, description="prepare")
             )
-        )
     except FileExistsError as error:
         raise SystemExit(f"{error}; pass --overwrite to write into it") from None
     except EdithConfigError as error:
-        raise SystemExit(f"Cannot prepare {args.config}:\n  {error}") from None
+        raise SystemExit(f"Cannot prepare {path}:\n  {error}") from None
     runs = display_path(config.output_dir / runner.RUNS)
     print(f"Prepared {len(directories)} run directories in {runs}")
-    if command == "prepare":
-        return
+    return directories
 
+
+def _fly(
+    config: EdithConfig, directories: Sequence[Path], workers: int
+) -> list[Result]:
+    """Fly the run directories on the workers and print the tally of outcomes."""
+    quotient, remainder = divmod(len(directories), workers)
+    each = f"{quotient} to {quotient + 1}" if remainder else str(quotient)
+    print(
+        f"Flying {len(directories)} trials on {workers} "
+        f"worker{'s' if workers != 1 else ''}, {each} each"
+    )
     timeout = config.trial_timeout
+    log = config.output_dir / parallel.CAMPAIGN_LOG
     results = parallel.run(
         directories,
-        args.workers,
+        workers,
         None if timeout is None else float(timeout.m_as("s")),
-        config.output_dir / parallel.CAMPAIGN_LOG,
+        log,
     )
     counts = Counter(result.status for result in results)
     tally = ", ".join(
         f"{counts[status]} {status}" for status in Status if counts[status]
     )
-    log = display_path(config.output_dir / parallel.CAMPAIGN_LOG)
-    print(f"{len(results)} trials: {tally}; see {log}")
-    if counts[Status.OK] != len(results):
-        raise SystemExit(1)
+    print(f"{len(results)} trials: {tally}; see {display_path(log)}")
+    return results
+
+
+def _since(start: float) -> float:
+    """Return the seconds since a ``perf_counter`` reading."""
+    return clock.perf_counter() - start
+
+
+def _wall_time(**phases: float) -> str:
+    """Return the wall time of each phase, as flight_sim prints a run's."""
+    return "wall time: " + ", ".join(f"{name} {s:.1f} s" for name, s in phases.items())
 
 
 def _parser(command: str | None) -> argparse.ArgumentParser:

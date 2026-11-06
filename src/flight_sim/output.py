@@ -69,7 +69,7 @@ class OutputConfiguration(UnitChecked):
         super().__post_init__()
         if self.directory is not None:
             try:
-                _fill(str(self.directory), "", datetime.now())
+                fill(str(self.directory), "", datetime.now())
             except (AttributeError, IndexError, KeyError, ValueError) as error:
                 raise ValueError(
                     f"Output directory {self.directory} has a bad placeholder"
@@ -105,7 +105,7 @@ class OutputConfiguration(UnitChecked):
         """
         if self.directory is None:
             return None
-        return Path(_fill(str(self.directory), name, time)).resolve()
+        return Path(fill(str(self.directory), name, time)).resolve()
 
 
 class _StartTime:
@@ -118,7 +118,7 @@ class _StartTime:
         return self.time.strftime(spec or DATETIME_FORMAT)
 
 
-def _fill(template: str, name: str, time: datetime) -> str:
+def fill(template: str, name: str, time: datetime) -> str:
     """Replace the "{name}" and "{datetime}" placeholders in a directory."""
     return template.format_map({"name": file_name(name), "datetime": _StartTime(time)})
 

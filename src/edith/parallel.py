@@ -21,7 +21,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import IO
 
-from tqdm import tqdm  # type: ignore[import-untyped]
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from edith.worker import READY
 
@@ -67,13 +75,27 @@ def default_workers() -> int:
     return max(1, (os.cpu_count() or 2) - 1)
 
 
+def progress_bars() -> Progress:
+    """Return a progress display on stderr: live in a terminal, silent elsewhere."""
+    console = Console(stderr=True)
+    return Progress(
+        TextColumn("{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        disable=not console.is_terminal,
+    )
+
+
 def run(
     directories: Sequence[Path], workers: int, timeout_s: float | None, log: Path
 ) -> list[Result]:
     """Fly run directories in parallel, showing a progress bar per worker.
 
     Worker ``w`` flies directories ``w``, ``w + workers``, and so on, so each
-    bar counts the trials that worker has flown over those assigned to it; a
+    bar counts the trials that worker has flown of those assigned to it; a
     last bar counts the campaign's.
 
     Args:
@@ -92,22 +114,19 @@ def run(
     worker_logs = log.parent / WORKER_LOGS
     worker_logs.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()
-    with (
-        log.open("a", encoding="utf-8") as file,
-        tqdm(
-            total=len(directories),
-            position=workers,
-            desc="all",
-            unit="trial",
-            disable=None,
-        ) as total,
-    ):
+    with log.open("a", encoding="utf-8") as file, progress_bars() as bars:
+        tasks = [
+            bars.add_task(f"worker {number}", total=len(assigned))
+            for number, assigned in enumerate(assignments)
+        ]
+        total = bars.add_task("all", total=len(directories))
 
-        def report(result: Result) -> None:
+        def report(result: Result, worker: int) -> None:
             with lock:
                 file.write(_log_line(result) + "\n")
                 file.flush()
-                total.update()
+            bars.update(tasks[worker], advance=1)
+            bars.update(total, advance=1)
 
         with ThreadPoolExecutor(workers) as pool:
             futures = [
@@ -132,25 +151,17 @@ def _fly_all(
     number: int,
     directories: Sequence[Path],
     timeout_s: float | None,
-    report: Callable[[Result], None],
+    report: Callable[[Result, int], None],
     worker_log: Path,
 ) -> list[Result]:
-    """Fly a worker's directories in turn, reporting each, behind its own bar."""
+    """Fly a worker's directories in turn, reporting each as the worker's."""
     results = []
     worker = _Worker(worker_log)
     try:
-        with tqdm(
-            total=len(directories),
-            position=number,
-            desc=f"worker {number}",
-            unit="trial",
-            disable=None,
-        ) as progress:
-            for directory in directories:
-                result = worker.fly(directory, timeout_s)
-                report(result)
-                results.append(result)
-                progress.update()
+        for directory in directories:
+            result = worker.fly(directory, timeout_s)
+            report(result, number)
+            results.append(result)
     finally:
         worker.close()
     return results

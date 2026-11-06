@@ -13,14 +13,16 @@ the default.
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from edith.dispersion import DISPERSION_CLASSES, BaseDispersion, StandardDispersion
-from edith.errors import EdithConfigError, quoted_key_path
+from edith.errors import EdithConfigError, check_keys, quoted_key_path
 from edith.targets import load_base_sim
 from flight_sim.config import ConfigError, InputSource, build, load_toml
 from flight_sim.config.toml_files import display_path, untagged
+from flight_sim.output import OutputConfiguration, fill
 from flight_sim.simulation import Simulation
 from flight_sim.units import Scalar, UnitChecked
 
@@ -35,6 +37,16 @@ _DISPERSION_USAGE = (
 
 # Top-level tables of a campaign file read apart from its settings
 _TABLES = ("dispersions", "output")
+
+# Keys a campaign's output table takes: the base sim's output settings but
+# the directory, which is each trial's run directory
+_OUTPUT_KEYS = tuple(
+    item.name for item in fields(OutputConfiguration) if item.name != "directory"
+)
+_OUTPUT_USAGE = (
+    "output takes the keys of a sim's [output] table but directory: "
+    f"{', '.join(_OUTPUT_KEYS)}"
+)
 
 # Smallest value of each whole-number setting
 _MINIMUMS = {"num_sims": 1, "master_seed": 0, "batch_size": 1}
@@ -53,7 +65,9 @@ class CampaignSettings(UnitChecked):
     num_sims: int  # Trials to run
     master_seed: int
     base_sim: Path  # The sim input file every trial disperses
-    output_dir: Path  # Gets the trials and their results; need not exist yet
+    # Gets the trials and their results; need not exist yet. Takes {name},
+    # the base sim's, and {datetime}, as a sim's output directory does.
+    output_dir: Path
     sampling: Sampling = "lhs"
     batch_size: int | None = None  # Trials per batch
     trial_timeout: Annotated[Scalar | None, "s"] = None
@@ -77,6 +91,13 @@ class CampaignSettings(UnitChecked):
         for name in ("base_sim", "output_dir"):
             if not isinstance(getattr(self, name), Path):
                 raise ValueError(f"{name} must be a path, got {getattr(self, name)!r}")
+        try:
+            fill(str(self.output_dir), "", datetime.now())
+        except (AttributeError, IndexError, KeyError, ValueError) as error:
+            raise ValueError(
+                f"output_dir {self.output_dir} has a bad placeholder ({error}); "
+                "use {name}, {datetime} or {datetime:%Y%m%d}"
+            ) from error
         if self.base_sim.suffix.lower() != ".toml":
             raise ValueError(
                 "base_sim must be a sim input file ending in .toml, got "
@@ -97,7 +118,8 @@ class EdithConfig(CampaignSettings):
     """Monte Carlo campaign of dispersed flights of one base sim.
 
     ``from_file`` reads one from a campaign file: its settings, with their
-    paths made absolute, the values it disperses, ``source``, the base sim's
+    paths made absolute and ``output_dir``'s placeholders filled, the values
+    it disperses, ``source``, the base sim's
     resolved input, which the dispersions' keys index and trials are written
     from, and ``output``, the file's output table, which every trial takes
     over the base sim's.
@@ -133,6 +155,9 @@ class EdithConfig(CampaignSettings):
         try:
             settings = _settings(table)
             source = load_base_sim(settings.base_sim)
+            settings = replace(
+                settings, output_dir=_filled(settings.output_dir, source)
+            )
             dispersions = _dispersions(table["dispersions"], source)
             output = _output(table["output"], source) if "output" in table else {}
         except EdithConfigError as error:
@@ -144,6 +169,12 @@ class EdithConfig(CampaignSettings):
             source=source,
             output=output,
         )
+
+
+def _filled(output_dir: Path, source: InputSource) -> Path:
+    """Return the output directory with its {name} and {datetime} filled."""
+    name = str(source.table.get("name", ""))
+    return Path(fill(str(output_dir), name, datetime.now())).resolve()
 
 
 def output_values(output: Mapping[str, Any]) -> dict[str, Any]:
@@ -257,8 +288,9 @@ def _output(value: object, source: InputSource) -> dict[str, Any]:
     """Return a campaign's output table, checked by building the base sim with it.
 
     Raises:
-        EdithConfigError: If it is not a table, names a directory, type or
-            ref, or the base sim does not build with it.
+        EdithConfigError: If it is not a table, has a key a sim's output table
+            does not take, names a directory, or the base sim does not build
+            with it.
     """
     if not isinstance(value, dict):
         raise EdithConfigError(
@@ -269,9 +301,7 @@ def _output(value: object, source: InputSource) -> dict[str, Any]:
         raise EdithConfigError(
             "output.directory: each trial writes to its own run directory"
         )
-    for key in ("type", "ref"):
-        if key in value:
-            raise EdithConfigError(f"output.{key}: a campaign file takes no {key}")
+    check_keys(value, "output", (), _OUTPUT_KEYS, _OUTPUT_USAGE)
     output: dict[str, Any] = untagged(value)
     try:
         Simulation.from_table(source.table_with(output_values(output)), source.path)
