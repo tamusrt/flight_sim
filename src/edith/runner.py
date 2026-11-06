@@ -1,8 +1,9 @@
 """Prepare a campaign's run directories, one dispersed sim per trial.
 
 Each trial's directory is a flight_sim run directory: ``resolved_input.toml``
-with the trial's drawn values in place of the base sim's, and copies of the
-data files, so ``flight_sim run`` flies it on its own.
+with the trial's drawn values and the campaign's output settings in place of
+the base sim's, and copies of the data files, so ``flight_sim run`` flies it
+on its own.
 """
 
 from collections.abc import Iterator
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from edith.config import EdithConfig
+from edith.config import EdithConfig, output_values
 from edith.dispersion import Trial
 from edith.errors import EdithConfigError
 from edith.sampler import draw_slices
@@ -58,6 +59,7 @@ def prepare(
         trial = Trial(folder)
         for dispersion, columns in zip(config.dispersions, slices, strict=True):
             dispersion.apply(samples[index, columns], trial)
+        trial.values.update(output_values(config.output))
         trial.values["output.directory"] = folder.as_posix()
         try:
             simulation = Simulation.from_table(

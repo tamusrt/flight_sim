@@ -32,5 +32,5 @@ ref = "flight_sim.events.IMPACT"
 directory = "out/{name}/{datetime}"
 formats = ["parquet"]
 units = "metric"  # or "imperial"
-sample_interval = "0.01 s"
+sample_interval = "0.05 s"
 plots = ["trajectory", "attitude", "aero", "propulsion"]
