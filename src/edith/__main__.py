@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from statistics import mean
 
+from rich.progress import Progress, TaskID
+
 from edith import parallel, runner
 from edith.config import EdithConfig
 from edith.errors import EdithConfigError
@@ -62,7 +64,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Started now, the workers import flight_sim while the trials are prepared
     count = min(args.workers, config.num_sims)
     with parallel.Workers(count, config.output_dir / parallel.WORKER_LOGS) as workers:
-        directories = _prepare(config, args.config, args.overwrite)
+        directories = _prepare(config, args.config, args.overwrite, workers)
         phases["prepare"] = _since(start) - phases["read"]
         results = _fly(config, workers, directories)
     phases["fly"] = _since(start) - sum(phases.values())
@@ -105,8 +107,16 @@ def _read(path: str) -> EdithConfig:
     return config
 
 
-def _prepare(config: EdithConfig, path: str, overwrite: bool) -> list[Path]:
+def _prepare(
+    config: EdithConfig,
+    path: str,
+    overwrite: bool,
+    workers: parallel.Workers | None = None,
+) -> list[Path]:
     """Prepare the campaign's run directories behind a progress bar.
+
+    Given workers, a row above the bar counts those ready, with a check once
+    all are, and the bars stay up until they are.
 
     Raises:
         SystemExit: With the error, if the runs folder exists and ``overwrite``
@@ -115,9 +125,22 @@ def _prepare(config: EdithConfig, path: str, overwrite: bool) -> list[Path]:
     prepared = runner.prepare(config, sample(config), overwrite=overwrite)
     try:
         with progress_bars() as bars:
-            directories = list(
-                bars.track(prepared, total=config.num_sims, description="prepare")
-            )
+            readiness = None
+            if workers is not None:
+                readiness = bars.add_task("workers ready", total=workers.count)
+                _show_ready(bars, readiness, workers)
+            task = bars.add_task("prepare", total=config.num_sims)
+            directories = []
+            for directory in prepared:
+                directories.append(directory)
+                bars.update(task, advance=1)
+                if workers is not None and readiness is not None:
+                    _show_ready(bars, readiness, workers)
+            while (
+                workers is not None and readiness is not None and not workers.settled()
+            ):
+                clock.sleep(0.1)
+                _show_ready(bars, readiness, workers)
     except FileExistsError as error:
         raise SystemExit(f"{error}; pass --overwrite to write into it") from None
     except EdithConfigError as error:
@@ -148,6 +171,17 @@ def _fly(
     )
     print(f"{len(results)} trials: {tally}; see {display_path(log)}")
     return results
+
+
+def _show_ready(bars: Progress, task: TaskID, workers: parallel.Workers) -> None:
+    """Show how many workers are ready: a red cross until all are, then a check."""
+    ready = workers.ready()
+    utf = "utf" in bars.console.encoding.lower()
+    if ready == workers.count:
+        mark = "[green]" + ("\u2713" if utf else "+") + "[/]"
+    else:
+        mark = "[red]" + ("\u2717" if utf else "x") + "[/]"
+    bars.update(task, completed=ready, description=f"{mark} workers ready")
 
 
 def _since(start: float) -> float:
