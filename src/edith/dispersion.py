@@ -1,21 +1,25 @@
 """Dispersions of a campaign: what each changes in the base sim, and how.
 
 A campaign names a dispersion class by the name of a ``BaseDispersion``
-subclass in this module, which ``DISPERSION_CLASSES`` lists, and each reads
-its own table of the campaign file. StandardDispersion, the default, disperses
-one number of the base sim with a distribution: a class in ``Distribution``,
-found by its ``DIST_TYPE`` in ``DISTRIBUTIONS``, which lists and checks its
-own parameters, so a new distribution is one new class here, added to
-``Distribution``. A standard dispersion's numbers are all in the units its
-nominal value is written in.
+subclass in this module, which ``DISPERSION_CLASSES`` lists. Each reads its
+own table of the campaign file, draws from the uniform numbers the sampler
+gives it, and records what it changes in a ``Trial``. StandardDispersion, the
+default, draws one number of the base sim from a distribution: a class in
+``Distribution``, found by its ``DIST_TYPE`` in ``DISTRIBUTIONS``, which lists
+and checks its own parameters, so a new distribution is one new class here,
+added to ``Distribution``. A standard dispersion's numbers are all in the
+units its nominal value is written in.
 """
 
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import ClassVar, NamedTuple, Self, TypeAlias, get_args
+from dataclasses import dataclass, field
+from pathlib import Path
+from statistics import NormalDist
+from typing import Any, ClassVar, NamedTuple, Self, TypeAlias, get_args
 
+import numpy as np
 from pint import DimensionalityError, OffsetUnitCalculusError
 
 from edith.errors import EdithConfigError, check_keys, quoted_key_path
@@ -33,8 +37,20 @@ __all__ = [
     "Parameter",
     "ParameterError",
     "StandardDispersion",
+    "Trial",
     "Uniform",
 ]
+
+
+@dataclass
+class Trial:
+    """One trial's changes to the base sim, which the runner writes out."""
+
+    folder: Path  # The trial's run directory, for files a dispersion writes
+
+    # Key path of each value to change, and the value, as
+    # InputSource.table_with takes them
+    values: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseDispersion(ABC):
@@ -42,9 +58,12 @@ class BaseDispersion(ABC):
 
     A campaign's ``dispersion = "<name>"`` names a subclass of this in this
     module, such as StandardDispersion, which reads the rest of its table.
+    Each trial then gives it ``DRAWS`` uniform numbers in (0, 1) from the
+    sampler, and it records what it changes.
     """
 
-    key: str  # Key path of what it changes in the base sim
+    DRAWS: ClassVar[int] = 1  # Uniform numbers it draws from, per trial
+    key: str  # Key path of what it changes in the base sim, which seeds its draws
 
     @classmethod
     @abstractmethod
@@ -68,6 +87,20 @@ class BaseDispersion(ABC):
                 key at fault.
         """
 
+    @abstractmethod
+    def apply(self, u: np.ndarray, trial: Trial) -> None:
+        """Draw from ``u`` and record the change in ``trial``.
+
+        Args:
+            u (np.ndarray): ``DRAWS`` uniform numbers in (0, 1).
+            trial (Trial): The trial, which takes the values to change and
+                the folder for any files written.
+        """
+
+    @abstractmethod
+    def describe(self) -> tuple[str, str]:
+        """Return what the dispersion changes, as the input writes it, and how."""
+
 
 class Parameter(NamedTuple):
     """One of a distribution's parameters, in its nominal value's units."""
@@ -87,10 +120,9 @@ class ParameterError(ValueError):
 
 @dataclass(frozen=True)
 class Normal:
-    """Normal distribution about the dispersion's nominal value.
+    """Normal distribution about ``mean``, the dispersion's nominal value.
 
-    ``low`` and ``high``, where given, truncate it on either side of the
-    nominal value.
+    ``low`` and ``high``, where given, truncate it on either side of the mean.
     """
 
     # How a campaign names it, the parameters it needs and takes, and how
@@ -102,6 +134,7 @@ class Normal:
         "a normal dispersion takes sigma, and optionally low and high"
     )
 
+    mean: float
     sigma: float
     low: float | None = None
     high: float | None = None
@@ -115,7 +148,7 @@ class Normal:
         Args:
             parameters (Mapping[str, Parameter]): sigma, and any of low and
                 high, in the nominal value's units.
-            nominal (Nominal): The value it disperses.
+            nominal (Nominal): The value it disperses, its mean.
 
         Returns:
             Normal: The distribution.
@@ -140,10 +173,29 @@ class Normal:
             )
         _check_order(low, high)
         return cls(
+            nominal.value,
             sigma.value,
             None if low is None else low.value,
             None if high is None else high.value,
         )
+
+    def ppf(self, u: float) -> float:
+        """Return the value at quantile ``u`` in (0, 1), within low and high."""
+        if self.sigma == 0.0:
+            return self.mean
+        normal = NormalDist(self.mean, self.sigma)
+        lowest = 0.0 if self.low is None else normal.cdf(self.low)
+        highest = 1.0 if self.high is None else normal.cdf(self.high)
+        return normal.inv_cdf(lowest + u * (highest - lowest))
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "normal, sigma 0.25 kg"."""
+        parts = [f"normal, sigma {_quantity(self.sigma, units)}"]
+        if self.low is not None:
+            parts.append(f"low {_quantity(self.low, units)}")
+        if self.high is not None:
+            parts.append(f"high {_quantity(self.high, units)}")
+        return ", ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -200,6 +252,14 @@ class Uniform:
         _check_order(low, high)
         return cls(low.value, high.value)
 
+    def ppf(self, u: float) -> float:
+        """Return the value at quantile ``u`` in (0, 1)."""
+        return self.low + u * (self.high - self.low)
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "uniform from 0 to 0.2"."""
+        return f"uniform from {self.low:g} to {_quantity(self.high, units)}"
+
 
 Distribution: TypeAlias = Normal | Uniform
 
@@ -215,7 +275,7 @@ _DIST_TYPES = " or ".join(f'"{name}"' for name in DISTRIBUTIONS)
 
 @dataclass(frozen=True)
 class StandardDispersion(BaseDispersion):
-    """Dispersion of one number of the base sim with a distribution.
+    """Dispersion of one number of the base sim, drawn from a distribution.
 
     The default dispersion class. The nominal value and the distribution's
     numbers are all in ``units``.
@@ -232,11 +292,15 @@ class StandardDispersion(BaseDispersion):
     # for a plain number
     units: str
 
+    # Whether the input writes the number as a string with its units, such
+    # as "17 kg", rather than bare, as in an array's value list
+    quoted: bool
+
     @classmethod
     def from_table(
         cls, key: str, table: Mapping[str, object], source: InputSource, where: str
     ) -> Self:
-        """Read the dispersion of one number of the base sim with a distribution.
+        """Read the dispersion of one number of the base sim from a distribution.
 
         Raises:
             EdithConfigError: If the key names no number of the base sim, or
@@ -261,7 +325,18 @@ class StandardDispersion(BaseDispersion):
         except ParameterError as error:
             place = where if error.key is None else quoted_key_path(where, error.key)
             raise EdithConfigError(f"{place}: {error}") from error
-        return cls(key_path, nominal.value, distribution, nominal.units)
+        return cls(key_path, nominal.value, distribution, nominal.units, nominal.quoted)
+
+    def apply(self, u: np.ndarray, trial: Trial) -> None:
+        """Draw the number from ``u[0]`` and record it in the input's form."""
+        value = self.distribution.ppf(float(u[0]))
+        trial.values[self.key] = f"{value!r} {self.units}" if self.quoted else value
+
+    def describe(self) -> tuple[str, str]:
+        """Return the nominal value, such as "17 kg", and the distribution in words."""
+        return _quantity(self.nominal, self.units), self.distribution.describe(
+            self.units
+        )
 
 
 # The default dispersion class's name, as a campaign file writes it
@@ -341,6 +416,11 @@ def _number(value: object, where: str, nominal: Nominal) -> Parameter:
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error
     return Parameter(_finite(converted, where, value), text)
+
+
+def _quantity(value: float, units: str) -> str:
+    """Return a number with its units, such as "0.25 kg", or bare for none."""
+    return f"{value:g} {units}".rstrip()
 
 
 def _finite(number: float, where: str, value: object) -> float:

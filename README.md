@@ -96,6 +96,12 @@ uv run pytest
 Coverage is enforced per settings in `pyproject.toml`, causing a fail if total coverage
 drops below the set threshold.
 
+EDITH campaigns write every completed trial's full telemetry, summary,
+diagnostics, event labels and captured job output to `results.zarr` in the
+campaign output directory. Each trial is stored under `runs/<trial>` so worker
+processes can write their results concurrently. The existing per-trial run
+directories remain available for reruns and plots.
+
 ### Contributing to the Codebase
 
 1. Create a new branch and make your commits.

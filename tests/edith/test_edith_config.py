@@ -1,7 +1,9 @@
 """EDITH campaign file tests."""
 
 import pickle
+import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -74,30 +76,42 @@ def test_example_campaign_reads_every_dispersion() -> None:
     config = EdithConfig.from_file(_CAMPAIGN)
     wind_speed = config.dispersions[4]
 
-    assert (config.num_sims, config.master_seed, config.sampling) == (500, 9999, "lhs")
+    assert (config.num_sims, config.master_seed, config.sampling) == (250, 9999, "lhs")
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.source.path == config.base_sim
-    assert config.output_dir == Path("out/edith_sol_invictus").resolve()
-    assert (config.workers, config.batch_size, config.trial_timeout) == (
-        None,
-        None,
-        None,
+    assert config.output_dir.parent == Path("out").resolve()
+    assert re.fullmatch(
+        r"edith_sol_invictus_example_\d{4}-\d\d-\d\d_\d{6}", config.output_dir.name
     )
+    assert (config.batch_size, config.trial_timeout) == (None, None)
     assert config.dispersions[:4] == (
         StandardDispersion(
-            "properties.dry_mass_properties.mass", 17.0, Normal(0.25), "kg"
+            "properties.dry_mass_properties.mass",
+            17.0,
+            Normal(17.0, 0.25),
+            "kg",
+            quoted=True,
         ),
         StandardDispersion(
             "properties.dry_mass_properties.cg_location.value[0]",
             -1.0,
-            Normal(0.02),
+            Normal(-1.0, 0.02),
             "m",
+            quoted=False,
         ),
         StandardDispersion(
-            "config.truth.launch_rail.elevation", 85.0, Normal(0.5, high=90.0), "deg"
+            "config.truth.launch_rail.elevation",
+            85.0,
+            Normal(85.0, 0.5, high=90.0),
+            "deg",
+            quoted=True,
         ),
         StandardDispersion(
-            "config.truth.launch_rail.friction_coefficient", 0.0, Uniform(0.0, 0.2), ""
+            "config.truth.launch_rail.friction_coefficient",
+            0.0,
+            Uniform(0.0, 0.2),
+            "",
+            quoted=False,
         ),
     )
     assert isinstance(wind_speed, StandardDispersion)
@@ -109,9 +123,18 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert isinstance(wind_speed.distribution, Uniform)
     assert wind_speed.distribution.low == 0.0
     assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
+    assert config.output == {
+        "plots": [],
+        "formats": ["parquet"],
+        "sample_interval": "0.05 s",
+    }
     assert config.dispersions[5:] == (
         StandardDispersion(
-            "config.truth.wind.from_azimuth", 0.0, Uniform(-30.0, 30.0), "deg"
+            "config.truth.wind.from_azimuth",
+            0.0,
+            Uniform(-30.0, 30.0),
+            "deg",
+            quoted=True,
         ),
     )
 
@@ -130,15 +153,17 @@ def test_errors_are_config_errors() -> None:
 
 
 def test_optional_settings(tmp_path: Path) -> None:
-    """Workers, batch size, timeout and sampling are read when given."""
+    """Workers, batch size, timeout, sampling and input mode are read."""
     header = _HEADER + (
-        'sampling = "random"\nworkers = 3\nbatch_size = 4\ntrial_timeout = "10 min"\n'
+        'sampling = "random"\nbatch_size = 4\ntrial_timeout = "10 min"\n'
+        'input_mode = "lightweight"\n'
     )
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
 
     assert config.sampling == "random"
-    assert (config.workers, config.batch_size) == (3, 4)
+    assert config.batch_size == 4
     assert config.trial_timeout == scalar(600.0, "s")
+    assert config.input_mode == "lightweight"
 
 
 def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:
@@ -201,7 +226,6 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
             _HEADER + 'sampling = "LHS"\n',
             "sampling: expected one of 'lhs', 'random', got 'LHS'",
         ),
-        (_HEADER + "workers = 0\n", "workers must be at least 1, got 0"),
         (_HEADER + "batch_size = 0\n", "batch_size must be at least 1, got 0"),
         (
             _HEADER + 'trial_timeout = "10 m"\n',
@@ -221,6 +245,11 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
         ),
         (_HEADER.replace('"../base/sim.toml"', "5"), "base_sim must be a path, got 5"),
         (_HEADER.replace('"../out"', '"../base/sim.toml"'), "sim.toml is a file"),
+        (
+            _HEADER.replace('"../out"', '"../out/{nope}"'),
+            "has a bad placeholder ('nope'); use {name}, {datetime} or "
+            "{datetime:%Y%m%d}",
+        ),
         (_HEADER + 'type = "os.getcwd"\n', "type: a campaign file takes no type"),
     ],
 )
@@ -244,6 +273,16 @@ def test_a_base_sim_that_does_not_build_is_named(tmp_path: Path) -> None:
 
     assert "base_sim: " in message
     assert "max_time" in message
+
+
+def test_output_dir_takes_the_sims_placeholders(tmp_path: Path) -> None:
+    """{name} is the base sim's name as a file name, and {datetime} the start."""
+    header = _HEADER.replace('"../out"', '"../out/{name}_{datetime:%Y}"')
+
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
+
+    expected = tmp_path / "out" / f"sol_invictus_example_{datetime.now():%Y}"
+    assert config.output_dir == expected.resolve()
 
 
 def test_a_campaign_file_may_sit_beside_the_base_sim(tmp_path: Path) -> None:
@@ -331,6 +370,45 @@ def test_bad_dispersion_classes_are_named(
 def test_distributions_are_found_by_their_dist_type() -> None:
     """Each distribution class is found by the dist_type it declares."""
     assert {"normal": Normal, "uniform": Uniform} == DISTRIBUTIONS
+
+
+def test_output_settings_override_the_base_sims(tmp_path: Path) -> None:
+    """An output table is kept as written, for every trial to take."""
+    output = '\n[output]\nplots = []\nformats = ["csv", "parquet"]\n'
+
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS + output))
+
+    assert config.output == {"plots": [], "formats": ["csv", "parquet"]}
+    assert pickle.loads(pickle.dumps(config)) == config
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ('[output]\ndirectory = "x"\n', "output.directory: each trial writes to"),
+        ('[output]\ntype = "os.getcwd"\n', "output.type: unknown key; output takes"),
+        ('[output]\nplots = ["nope"]\n', "output: Unknown plots ['nope']"),
+        (
+            '[output]\nformat = ["csv"]\n',
+            "output.format: unknown key (did you mean formats?); output takes the "
+            "keys of a sim's [output] table but directory: formats, units, "
+            "channels, sample_interval, plots",
+        ),
+        ('[output]\nsample_interval = "-1 s"\n', "output: Sample interval must be"),
+    ],
+)
+def test_bad_output_settings_are_named(
+    tmp_path: Path, output: str, expected: str
+) -> None:
+    """An output table is checked as flight_sim checks a sim's, under output."""
+    assert expected in _error(tmp_path, _MASS + "\n" + output)
+
+
+def test_output_is_a_table(tmp_path: Path) -> None:
+    """A bare output value is rejected before the settings are built."""
+    message = _error(tmp_path, _MASS, _HEADER + "output = 5\n")
+
+    assert "output: expected a table of flight_sim output settings" in message
 
 
 def test_dispersion_classes_are_found_by_name() -> None:
@@ -461,7 +539,7 @@ def test_a_default_value_can_be_dispersed(tmp_path: Path) -> None:
     )
 
     assert (dispersion.nominal, dispersion.units) == (101325.0, "Pa")
-    assert dispersion.distribution == Normal(1000.0)
+    assert dispersion.distribution == Normal(101325.0, 1000.0)
 
 
 @pytest.mark.parametrize("sigma", ["18 degF", "10 delta_degC", "10 K"])
@@ -483,7 +561,7 @@ def test_offset_nominals_take_their_own_units(tmp_path: Path, sigma: str) -> Non
     )
 
     assert (dispersion.nominal, dispersion.units) == (20.0, "degC")
-    assert dispersion.distribution == Normal(10.0, low=10.0)
+    assert dispersion.distribution == Normal(20.0, 10.0, low=10.0)
     assert f"write '{sigma}' in degC" in _error(
         tmp_path, _table(key, f'dist_type = "normal"\nsigma = "{sigma}"')
     )
@@ -561,7 +639,7 @@ def test_zero_spread_is_allowed(tmp_path: Path) -> None:
     """A sigma of 0 keeps a value at its nominal."""
     dispersion = _dispersion(tmp_path, _MASS.replace('"0.25 kg"', '"0 kg"'))
 
-    assert dispersion.distribution == Normal(0.0)
+    assert dispersion.distribution == Normal(17.0, 0.0)
 
 
 @pytest.mark.parametrize(
@@ -570,7 +648,7 @@ def test_zero_spread_is_allowed(tmp_path: Path) -> None:
         (_HEADER, _MASS.replace("normal", "gaussian")),
         (_HEADER.replace("master_seed", "master_sead"), _MASS),
         (_HEADER.replace("num_sims = 10", "num_sims = 0"), _MASS),
-        (_HEADER + "workers = true\n", _MASS),
+        (_HEADER + "batch_size = true\n", _MASS),
     ],
 )
 def test_errors_name_the_campaign_file(
