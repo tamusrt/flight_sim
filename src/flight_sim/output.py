@@ -250,6 +250,42 @@ def prepare_lightweight(
     return directory
 
 
+def prepare_source(
+    source: InputSource,
+    values: Mapping[str, Any],
+    directory: Path,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Create a run directory from resolved input values without building a sim.
+
+    Args:
+        source (InputSource): Resolved source input and its file paths.
+        values (Mapping[str, Any]): Trial overrides by dotted key path.
+        directory (Path): Run directory receiving the input and copied files.
+        overwrite (bool, optional): Allow an existing directory. Defaults to
+            refusing.
+
+    Returns:
+        Path: The run directory.
+
+    Raises:
+        FileExistsError: If the directory exists and ``overwrite`` is not set.
+    """
+    if directory.exists() and not overwrite:
+        raise FileExistsError(f"{directory} already exists")
+    trial_source = InputSource(
+        path=source.path,
+        table=source.table_with(values),
+        defaults=source.defaults,
+        paths=source.paths,
+        load_time_s=source.load_time_s,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    _write_input(trial_source, directory)
+    return directory
+
+
 def _insert_override(
     overrides: dict[str, Any], where: str, full: Mapping[str, Any], value: Any
 ) -> None:

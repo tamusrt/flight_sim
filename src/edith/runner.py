@@ -14,12 +14,9 @@ import numpy as np
 
 from edith.config import EdithConfig, output_values
 from edith.dispersion import Trial
-from edith.errors import EdithConfigError
 from edith.sampler import draw_slices
 from flight_sim import output
-from flight_sim.config import ConfigError
 from flight_sim.config.toml_files import display_path
-from flight_sim.simulation import Simulation
 
 # Folder of a campaign's output directory holding a run directory per trial
 RUNS = "runs"
@@ -48,7 +45,6 @@ def prepare(
 
     Raises:
         FileExistsError: If the runs folder exists and ``overwrite`` is not set.
-        EdithConfigError: If a trial's dispersed sim does not build.
     """
     runs = config.output_dir / RUNS
     if runs.exists() and not overwrite:
@@ -69,14 +65,6 @@ def prepare(
                 dispersion.apply(samples[index, columns], trial)
             trial.values.update(output_values(config.output))
             trial.values["output.directory"] = folder.as_posix()
-            try:
-                simulation = Simulation.from_table(
-                    source.table_with(trial.values), config.base_sim
-                )
-            except ConfigError as error:
-                raise EdithConfigError(
-                    f"trial {index} does not build: {error}"
-                ) from error
             if config.input_mode == "lightweight":
                 lightweight_values = dict(trial.values)
                 lightweight_values["output.directory"] = "."
@@ -84,4 +72,6 @@ def prepare(
                     config.source, lightweight_values, folder
                 )
             else:
-                yield output.prepare(simulation, overwrite=True)
+                yield output.prepare_source(
+                    source, trial.values, folder, overwrite=True
+                )
