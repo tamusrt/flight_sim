@@ -58,7 +58,7 @@ def prepare(
     with TemporaryDirectory(prefix=".parquet-", dir=runs) as cache:
         source = (
             output.parquet_source(config.source, Path(cache))
-            if config.compress_inputs
+            if config.input_mode == "compressed"
             else config.source
         )
         for index in range(config.num_sims):
@@ -77,4 +77,11 @@ def prepare(
                 raise EdithConfigError(
                     f"trial {index} does not build: {error}"
                 ) from error
-            yield output.prepare(simulation, overwrite=True)
+            if config.input_mode == "lightweight":
+                lightweight_values = dict(trial.values)
+                lightweight_values["output.directory"] = "."
+                yield output.prepare_lightweight(
+                    config.source, lightweight_values, folder
+                )
+            else:
+                yield output.prepare(simulation, overwrite=True)

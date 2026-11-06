@@ -39,9 +39,9 @@ sample_interval = "0.01 s"       # omit for one row per integrator step
 plots = ["trajectory", "attitude", "aero", "propulsion", "step_length"]
 ```
 
-EDITH campaigns set `compress_inputs = true` to convert every CSV input used by
-the sim to Parquet before copying it into each prepared run directory. Set it
-to `false` to preserve the original CSV inputs.
+EDITH campaigns set `input_mode` to `"normal"` (copy inputs as-is),
+`"compressed"` (convert CSV inputs to Parquet), or `"lightweight"` (write only
+the dispersed overrides extending the base sim, with absolute source paths).
 
 `{datetime}` is the time the run starts, as `2026-10-22_140327`, or in a format of
 your own after a colon: `{datetime:%Y%m%d}`. Preparing a directory that already
