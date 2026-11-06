@@ -3,6 +3,9 @@
 import time
 from itertools import islice
 from pathlib import Path
+from typing import Any, cast
+
+import zarr
 
 from edith.config import EdithConfig
 from edith.parallel import CAMPAIGN_LOG, WORKER_LOGS, Status, Workers, run
@@ -27,6 +30,11 @@ def test_fly_directory_flies_a_prepared_run_and_logs_it(campaign: Path) -> None:
     assert (directory / "run.toml").is_file()
     assert (directory / "plots").is_dir()
     assert "Wrote" in (directory / LOG).read_text(encoding="utf-8")
+    store = zarr.open_group(directory.parents[1] / "results.zarr")
+    group = cast(Any, store[f"runs/{directory.name}"])
+    telemetry = cast(Any, group["telemetry"])
+    assert telemetry.shape[0] > 0
+    assert cast(str, group.attrs["job_output"]).startswith("rail exit")
 
 
 def test_fly_directory_reports_a_failure_with_its_log(tmp_path: Path) -> None:
@@ -66,6 +74,11 @@ def test_run_flies_every_directory_and_logs_each(campaign: Path) -> None:
     for directory in directories:
         assert (directory / "run.toml").is_file()
         assert (directory / "plots").is_dir()
+    assert sorted(
+        path.name
+        for path in (config.output_dir / "results.zarr" / "runs").iterdir()
+        if path.is_dir()
+    ) == ["0000", "0001", "0002"]
     lines = log.read_text(encoding="utf-8").splitlines()
     assert sorted(line.split()[0] for line in lines) == [
         "0000",

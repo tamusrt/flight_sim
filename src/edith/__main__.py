@@ -15,6 +15,7 @@ from edith.config import EdithConfig
 from edith.errors import EdithConfigError
 from edith.parallel import Result, Status, progress_bars
 from edith.sampler import sample
+from edith.zarr_output import STORE, initialize
 from flight_sim.config.toml_files import display_path
 
 # Commands that take the campaign only so far
@@ -63,9 +64,12 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     # Started now, the workers import flight_sim while the trials are prepared
     count = min(args.workers, config.num_sims)
-    with parallel.Workers(count, config.output_dir / parallel.WORKER_LOGS) as workers:
+    with parallel.Workers(
+        count, config.output_dir / parallel.WORKER_LOGS, config.batch_size
+    ) as workers:
         directories = _prepare(config, args.config, args.overwrite, workers)
         phases["prepare"] = _since(start) - phases["read"]
+        initialize(config.output_dir / STORE, config.batch_size)
         results = _fly(config, workers, directories)
     phases["fly"] = _since(start) - sum(phases.values())
     print(_wall_time(**phases, total=_since(start)))
@@ -163,7 +167,9 @@ def _fly(
     timeout = config.trial_timeout
     log = config.output_dir / parallel.CAMPAIGN_LOG
     results = workers.run(
-        directories, None if timeout is None else float(timeout.m_as("s")), log
+        directories,
+        None if timeout is None else float(timeout.m_as("s")),
+        log,
     )
     counts = Counter(result.status for result in results)
     tally = ", ".join(
