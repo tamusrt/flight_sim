@@ -2,87 +2,123 @@
 
 A campaign file names the base sim, the number of trials, the master seed and
 the values to disperse, each by its key path in the base sim's resolved input,
-as ``edith.targets`` describes. A dispersion's optional ``dispersion`` key
-names the class that draws its values; for now that is always
-"StandardDispersion", the default, which draws a number from a normal or
+as ``edith.targets`` describes. flight_sim's own loader reads the file and
+builds its settings, as it builds a sim from a sim input file, so both kinds of
+file are read, and their errors worded, the same way. A dispersion's optional
+``dispersion`` key names the class that draws its values; for now that is
+always "StandardDispersion", the default, which draws a number from a normal or
 uniform distribution. A dispersion's numbers are converted to the units its
-nominal value is written in, and ``edith.dispersion`` holds what is read.
+nominal value is written in. ``edith.dispersion`` holds what is read, and the
+dispersion and distribution classes a campaign may name, which this module
+finds there rather than listing them itself.
 """
 
-import contextlib
+import inspect
 import math
-import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, NamedTuple, Self, TypeAlias, cast, get_args
+from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from pint import DimensionalityError, OffsetUnitCalculusError
 
+import edith.dispersion
 from edith.dispersion import (
+    DISTRIBUTIONS,
     STANDARD_DISPERSION,
+    BaseDispersion,
     Dispersion,
-    Distribution,
-    Normal,
-    Uniform,
+    Parameter,
+    ParameterError,
 )
 from edith.errors import EdithConfigError, closest
 from edith.targets import Nominal, find_target, load_base_sim
-from flight_sim.config import InputSource
+from flight_sim.config import ConfigError, InputSource, build, load_toml
 from flight_sim.config.toml_files import display_path, key_path
 from flight_sim.config.writing import toml_key
-from flight_sim.units import UNREADABLE_UNITS, convert, parse_quantity
+from flight_sim.units import (
+    UNREADABLE_UNITS,
+    Scalar,
+    UnitChecked,
+    convert,
+    parse_quantity,
+)
 
-__all__ = ["EdithConfig", "Sampling"]
+__all__ = ["CampaignSettings", "EdithConfig", "Sampling"]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
 
 
-def _listed(keys: Sequence[str]) -> str:
-    """Return keys as a list in prose, such as "a, b and c"."""
-    return " and ".join((", ".join(keys[:-1]), keys[-1])) if len(keys) > 1 else keys[0]
+def _listed(words: Sequence[str], conjunction: str = "and") -> str:
+    """Return words as a list in prose, such as "a, b and c"."""
+    if len(words) < 2:
+        return words[0]
+    return f"{', '.join(words[:-1])} {conjunction} {words[-1]}"
 
 
-# Keys of a campaign file
-_REQUIRED_KEYS = ("N", "master_seed", "base_sim", "output_dir", "dispersions")
-_OPTIONAL_KEYS = ("sampling", "workers", "batch_size", "trial_timeout")
-_CAMPAIGN_USAGE = (
-    f"a campaign file needs {_listed(_REQUIRED_KEYS)}, "
-    f"and takes {_listed(_OPTIONAL_KEYS)}"
-)
-
-
-class _Keys(NamedTuple):
-    """Keys one dist_type needs and takes besides its own, and how errors say so."""
-
-    required: tuple[str, ...]
-    optional: tuple[str, ...]
-    usage: str
-
-
-_DISTRIBUTION_KEYS = {
-    "normal": _Keys(
-        ("sigma",),
-        ("low", "high"),
-        "a normal dispersion takes sigma, and optionally low and high",
-    ),
-    "uniform": _Keys(
-        (),
-        ("half_width", "low", "high"),
-        "a uniform dispersion takes half_width, or low and high",
-    ),
-}
-
-# Keys of a dispersion that hold its numbers
-_SPREAD_KEYS = ("sigma", "half_width", "low", "high")
-
-# The dispersion classes a dispersion may name; for the CDR, only the standard one
-_DISPERSION_CLASSES = (STANDARD_DISPERSION,)
+# The dist_type values a dispersion may take, as messages list them
+_DIST_TYPES = _listed([f'"{name}"' for name in DISTRIBUTIONS], "or")
 
 _DISPERSION_USAGE = (
     "for now every dispersion leaves dispersion out, or writes dispersion = "
     '"StandardDispersion"'
 )
+
+# Smallest value of each whole-number setting
+_MINIMUMS = {"num_sims": 1, "master_seed": 0, "workers": 1, "batch_size": 1}
+
+
+@dataclass(frozen=True)
+class CampaignSettings(UnitChecked):
+    """Settings of a campaign file: every top-level key but ``dispersions``.
+
+    flight_sim's loader builds this from the file as it builds a sim from a sim
+    input file, checking each key's type, units and path and naming the key at
+    fault. Paths are relative to the campaign file. ``__post_init__`` checks
+    what the types alone do not.
+    """
+
+    num_sims: int  # Trials to run
+    master_seed: int
+    base_sim: Path  # The sim input file every trial disperses
+    output_dir: Path  # Gets the trials and their results; need not exist yet
+    sampling: Sampling = "lhs"
+    workers: int | None = None
+    batch_size: int | None = None  # Trials per batch
+    trial_timeout: Annotated[Scalar | None, "s"] = None
+
+    def __post_init__(self) -> None:
+        """Check the settings' ranges, and the base sim and output folder.
+
+        Raises:
+            ValueError: Naming the setting at fault.
+        """
+        super().__post_init__()
+        for name, minimum in _MINIMUMS.items():
+            value = getattr(self, name)
+            if value is not None and value < minimum:
+                raise ValueError(f"{name} must be at least {minimum}, got {value}")
+        timeout = self.trial_timeout
+        if timeout is not None and not 0.0 < timeout.m_as("s") < math.inf:
+            raise ValueError(
+                f'trial_timeout must be above 0, such as "10 min", got {timeout:~}'
+            )
+        for name in ("base_sim", "output_dir"):
+            if not isinstance(getattr(self, name), Path):
+                raise ValueError(f"{name} must be a path, got {getattr(self, name)!r}")
+        if self.base_sim.suffix.lower() != ".toml":
+            raise ValueError(
+                "base_sim must be a sim input file ending in .toml, got "
+                f"{self.base_sim.name!r}"
+            )
+        if not self.base_sim.is_file():
+            raise ValueError(
+                f"base_sim {display_path(self.base_sim.resolve())} does not exist"
+            )
+        if self.output_dir.exists() and not self.output_dir.is_dir():
+            raise ValueError(
+                f"output_dir {display_path(self.output_dir.resolve())} is a file"
+            )
 
 
 @dataclass(frozen=True)
@@ -96,7 +132,7 @@ class EdithConfig:
     """
 
     path: Path  # The campaign file
-    trials: int  # N in the campaign file
+    num_sims: int  # Trials to run
     master_seed: int
     base_sim: Path
     output_dir: Path
@@ -123,77 +159,65 @@ class EdithConfig:
                 the key at fault.
         """
         path = Path(path).resolve()
-        table = _read_table(path)
+        try:
+            table = load_toml(path)
+        except ConfigError as error:  # Its message names the file already
+            raise EdithConfigError(str(error)) from error
+        except UnicodeDecodeError as error:
+            raise EdithConfigError(f"{display_path(path)} is not UTF-8 text") from error
         try:
             return cls.from_table(table, path)
         except EdithConfigError as error:
             raise EdithConfigError(f"{display_path(path)}: {error}") from error
 
     @classmethod
-    def from_table(cls, table: Mapping[str, object], path: str | Path) -> Self:
+    def from_table(cls, table: Mapping[str, Any], path: str | Path) -> Self:
         """Check a campaign file's table and build the campaign it describes.
 
         Args:
-            table (Mapping[str, object]): The file's table, as ``tomllib``
-                reads it.
-            path (str | Path): The campaign file, which relative paths in the
-                table are taken from.
+            table (Mapping[str, Any]): The file's table, as
+                ``flight_sim.config.load_toml`` reads it, which keeps its
+                paths relative to the file.
+            path (str | Path): The campaign file.
 
         Returns:
             EdithConfig: The campaign.
 
         Raises:
-            EdithConfigError: If a key is missing, unknown or invalid, the
+            EdithConfigError: If a setting is missing, unknown or invalid, the
                 base sim does not build, or a dispersion names no value of it.
                 The message names the key at fault.
         """
-        path = Path(path).resolve()
-        _check_keys(table, "", _REQUIRED_KEYS, _OPTIONAL_KEYS, _CAMPAIGN_USAGE)
-        trials = _whole_number(table["N"], "N", 1)
-        master_seed = _whole_number(table["master_seed"], "master_seed", 0)
-        sampling = _sampling(table.get("sampling", "lhs"))
-        workers = _optional_whole_number(table, "workers")
-        batch_size = _optional_whole_number(table, "batch_size")
-        trial_timeout_s = _optional_timeout_s(table)
-        base_sim = _base_sim(table["base_sim"], path.parent)
-        output_dir = _output_dir(table["output_dir"], path.parent)
-        source = load_base_sim(base_sim)
+        if "dispersions" not in table:
+            raise EdithConfigError(
+                "missing dispersions, a table of each value to disperse, such as "
+                '[dispersions."properties.dry_mass_properties.mass"]'
+            )
+        for key in ("type", "ref"):
+            if key in table:
+                raise EdithConfigError(f"{key}: a campaign file takes no {key}")
+        try:
+            settings: CampaignSettings = build(
+                {key: item for key, item in table.items() if key != "dispersions"},
+                CampaignSettings,
+            )
+        except ConfigError as error:
+            raise EdithConfigError(str(error)) from error
+        source = load_base_sim(settings.base_sim)
+        timeout = settings.trial_timeout
         return cls(
-            path=path,
-            trials=trials,
-            master_seed=master_seed,
-            base_sim=base_sim,
-            output_dir=output_dir,
+            path=Path(path).resolve(),
+            num_sims=settings.num_sims,
+            master_seed=settings.master_seed,
+            base_sim=settings.base_sim.resolve(),
+            output_dir=settings.output_dir.resolve(),
             dispersions=_dispersions(table["dispersions"], source),
             source=source,
-            sampling=sampling,
-            workers=workers,
-            batch_size=batch_size,
-            trial_timeout_s=trial_timeout_s,
+            sampling=settings.sampling,
+            workers=settings.workers,
+            batch_size=settings.batch_size,
+            trial_timeout_s=None if timeout is None else float(timeout.m_as("s")),
         )
-
-
-def _read_table(path: Path) -> dict[str, object]:
-    """Read a campaign file's table without checking it.
-
-    Raises:
-        EdithConfigError: If the file cannot be read or is not valid TOML.
-    """
-    # Not load_toml: a campaign file takes no include or extends
-    try:
-        # utf-8-sig also reads files that editors saved with a byte-order mark
-        text = path.read_text(encoding="utf-8-sig")
-    except OSError as error:
-        raise EdithConfigError(
-            f"cannot read {display_path(path)}: {error.strerror or error}"
-        ) from error
-    except UnicodeDecodeError as error:
-        raise EdithConfigError(f"{display_path(path)} is not UTF-8 text") from error
-    try:
-        table: dict[str, object] = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as error:
-        raise EdithConfigError(f"{display_path(path)}: {error}") from error
-    return table
 
 
 def _key_path(where: str, key: str) -> str:
@@ -225,102 +249,6 @@ def _check_keys(
     if missing:
         place = f"{where}: " if where else ""
         raise EdithConfigError(f"{place}missing {' and '.join(missing)}; {usage}")
-
-
-def _whole_number(value: object, where: str, minimum: int) -> int:
-    """Return an integer of at least ``minimum``.
-
-    Raises:
-        EdithConfigError: If the value is not an integer, or is too small.
-    """
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise EdithConfigError(
-            f"{where}: expected a whole number of at least {minimum}, got {value!r}"
-        )
-    return value
-
-
-def _optional_whole_number(table: Mapping[str, object], key: str) -> int | None:
-    """Return a positive integer setting, or None if the table leaves it out."""
-    return _whole_number(table[key], key, 1) if key in table else None
-
-
-def _sampling(value: object) -> Sampling:
-    """Return the sampling method.
-
-    Raises:
-        EdithConfigError: If it is not "lhs" or "random".
-    """
-    if isinstance(value, str) and value in get_args(Sampling):
-        return cast(Sampling, value)
-    raise EdithConfigError(f'sampling: expected "lhs" or "random", got {value!r}')
-
-
-def _optional_timeout_s(table: Mapping[str, object]) -> float | None:
-    """Return the trial timeout in seconds, or None if the table leaves it out.
-
-    Raises:
-        EdithConfigError: If it is not a time above zero.
-    """
-    if "trial_timeout" not in table:
-        return None
-    value = table["trial_timeout"]
-    quantity = parse_quantity(value) if isinstance(value, str) else None
-    seconds = math.nan
-    if quantity is not None:
-        with contextlib.suppress(*UNREADABLE_UNITS):
-            seconds = convert(quantity[0], quantity[1], "s")
-    if not 0.0 < seconds < math.inf:
-        raise EdithConfigError(
-            f'trial_timeout: expected a time above 0, such as "10 min", got {value!r}'
-        )
-    return seconds
-
-
-def _path(value: object, where: str, folder: Path) -> Path:
-    """Return a path given relative to ``folder``, made absolute.
-
-    Raises:
-        EdithConfigError: If the value is not a path.
-    """
-    if not isinstance(value, str) or not value.strip():
-        raise EdithConfigError(f"{where}: expected a path, got {value!r}")
-    return (folder / value).resolve()
-
-
-def _base_sim(value: object, folder: Path) -> Path:
-    """Return the base sim's input file.
-
-    Raises:
-        EdithConfigError: If it is not a TOML file that exists.
-    """
-    path = _path(value, "base_sim", folder)
-    if path.suffix.lower() != ".toml":
-        raise EdithConfigError(
-            f"base_sim: expected a sim input file ending in .toml, got {value!r}"
-        )
-    if not path.is_file():
-        raise EdithConfigError(f"base_sim: {display_path(path)} does not exist")
-    return path
-
-
-def _output_dir(value: object, folder: Path) -> Path:
-    """Return the folder the campaign writes to, which need not exist yet.
-
-    Raises:
-        EdithConfigError: If the path is a file.
-    """
-    path = _path(value, "output_dir", folder)
-    if path.exists() and not path.is_dir():
-        raise EdithConfigError(f"output_dir: {display_path(path)} is a file")
-    return path
-
-
-class _Number(NamedTuple):
-    """One of a dispersion's numbers, in its nominal value's units."""
-
-    value: float
-    text: str  # As the campaign file writes it, such as "2 cm"
 
 
 def _dispersions(value: object, source: InputSource) -> tuple[Dispersion, ...]:
@@ -365,25 +293,25 @@ def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
         )
     dispersion_class = _dispersion_class(value, where)
     key_path_, nominal = find_target(source, key, where)
-    dist_type = _dist_type(value, where)
-    keys = _DISTRIBUTION_KEYS[dist_type]
+    distribution_class = DISTRIBUTIONS[_dist_type(value, where)]
+    names = (*distribution_class.REQUIRED, *distribution_class.OPTIONAL)
     _check_keys(
         value,
         where,
-        ("dist_type", *keys.required),
-        ("dispersion", *keys.optional),
-        keys.usage,
+        ("dist_type", *distribution_class.REQUIRED),
+        ("dispersion", *distribution_class.OPTIONAL),
+        distribution_class.USAGE,
     )
-    numbers = {
+    parameters = {
         name: _number(value[name], _key_path(where, name), nominal)
-        for name in _SPREAD_KEYS
+        for name in names
         if name in value
     }
-    distribution: Distribution = (
-        _normal(numbers, nominal, where)
-        if dist_type == "normal"
-        else _uniform(numbers, nominal, where)
-    )
+    try:
+        distribution = distribution_class.from_parameters(parameters, nominal)
+    except ParameterError as error:
+        place = where if error.key is None else _key_path(where, error.key)
+        raise EdithConfigError(f"{place}: {error}") from error
     return Dispersion(
         key_path_, nominal.value, distribution, nominal.units, dispersion_class
     )
@@ -392,9 +320,12 @@ def _dispersion(key: str, value: object, source: InputSource) -> Dispersion:
 def _dispersion_class(table: Mapping[str, object], where: str) -> str:
     """Return the dispersion class a dispersion names, or the standard one.
 
+    Only a subclass of ``BaseDispersion`` in ``edith.dispersion`` is a
+    dispersion class, so names such as "Normal" or "__doc__" are not.
+
     Raises:
         EdithConfigError: If ``dispersion`` is not a string, or not the name
-            of a class EDITH has.
+            of a dispersion class in ``edith.dispersion``.
     """
     if "dispersion" not in table:
         return STANDARD_DISPERSION
@@ -404,31 +335,36 @@ def _dispersion_class(table: Mapping[str, object], where: str) -> str:
         raise EdithConfigError(
             f"{where}: expected a string, got {name!r}; {_DISPERSION_USAGE}"
         )
-    if name not in _DISPERSION_CLASSES:
+    found = getattr(edith.dispersion, name, None)
+    if not (
+        inspect.isclass(found)
+        and issubclass(found, BaseDispersion)
+        and found is not BaseDispersion
+    ):
         raise EdithConfigError(
             f"{where}: EDITH has no dispersion class {name!r}; {_DISPERSION_USAGE}"
         )
-    return name
+    return str(name)  # A plain string: load_toml's strings do not pickle
 
 
 def _dist_type(table: Mapping[str, object], where: str) -> str:
-    """Return a dispersion's distribution type.
+    """Return a dispersion's distribution type, a key of ``DISTRIBUTIONS``.
 
     Raises:
-        EdithConfigError: If it is missing, or not "normal" or "uniform".
+        EdithConfigError: If it is missing, or names no distribution EDITH has.
     """
     if "dist_type" not in table:
-        raise EdithConfigError(f'{where}: missing dist_type, "normal" or "uniform"')
+        raise EdithConfigError(f"{where}: missing dist_type, {_DIST_TYPES}")
     dist_type = table["dist_type"]
-    if not isinstance(dist_type, str) or dist_type not in _DISTRIBUTION_KEYS:
+    if not isinstance(dist_type, str) or dist_type not in DISTRIBUTIONS:
         raise EdithConfigError(
-            f'{_key_path(where, "dist_type")}: expected "normal" or "uniform", '
+            f"{_key_path(where, 'dist_type')}: expected {_DIST_TYPES}, "
             f"got {dist_type!r}"
         )
     return dist_type
 
 
-def _number(value: object, where: str, nominal: Nominal) -> _Number:
+def _number(value: object, where: str, nominal: Nominal) -> Parameter:
     """Return one of a dispersion's numbers, converted to its nominal value's units.
 
     A nominal value with units, such as "17 kg", takes a number with units of
@@ -446,7 +382,7 @@ def _number(value: object, where: str, nominal: Nominal) -> _Number:
                 f"{where}: needs units, since the nominal value is "
                 f'{nominal.text}; write "{value:g} {nominal.units}"'
             )
-        return _Number(number, f"{value:g}")
+        return Parameter(number, f"{value:g}")
     text = value.strip() if isinstance(value, str) else ""
     quantity = parse_quantity(text)
     if quantity is None:
@@ -476,7 +412,7 @@ def _number(value: object, where: str, nominal: Nominal) -> _Number:
         ) from error
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error
-    return _Number(_finite(converted, where, value), text)
+    return Parameter(_finite(converted, where, value), text)
 
 
 def _finite(number: float, where: str, value: object) -> float:
@@ -488,84 +424,3 @@ def _finite(number: float, where: str, value: object) -> float:
     if not math.isfinite(number):
         raise EdithConfigError(f"{where}: expected a finite number, got {value!r}")
     return number
-
-
-def _above(first: float, second: float) -> bool:
-    """Return whether one number is above another by more than rounding."""
-    return first > second and not math.isclose(first, second, abs_tol=1e-12)
-
-
-def _normal(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Normal:
-    """Return a normal distribution, checking sigma and its bounds.
-
-    Raises:
-        EdithConfigError: If sigma is negative, or low and high do not lie on
-            either side of the nominal value.
-    """
-    sigma, low, high = numbers["sigma"], numbers.get("low"), numbers.get("high")
-    if sigma.value < 0.0:
-        raise EdithConfigError(
-            f"{_key_path(where, 'sigma')}: expected 0 or more, got {sigma.text}"
-        )
-    side = "low and high truncate a normal distribution on either side of it"
-    if low is not None and _above(low.value, nominal.value):
-        raise EdithConfigError(
-            f"{_key_path(where, 'low')}: {low.text} is above the nominal value, "
-            f"{nominal.text}; {side}"
-        )
-    if high is not None and _above(nominal.value, high.value):
-        raise EdithConfigError(
-            f"{_key_path(where, 'high')}: {high.text} is below the nominal "
-            f"value, {nominal.text}; {side}"
-        )
-    _check_order(low, high, where)
-    return Normal(
-        sigma.value,
-        None if low is None else low.value,
-        None if high is None else high.value,
-    )
-
-
-def _uniform(numbers: Mapping[str, _Number], nominal: Nominal, where: str) -> Uniform:
-    """Return a uniform distribution of half_width about the nominal, or low to high.
-
-    Raises:
-        EdithConfigError: If it has both forms or neither, half_width is
-            negative, or low is not below high.
-    """
-    usage = _DISTRIBUTION_KEYS["uniform"].usage
-    half_width = numbers.get("half_width")
-    low, high = numbers.get("low"), numbers.get("high")
-    if half_width is not None:
-        if low is not None or high is not None:
-            raise EdithConfigError(
-                f"{where}: give half_width, or low and high, not both; {usage}"
-            )
-        if half_width.value < 0.0:
-            raise EdithConfigError(
-                f"{_key_path(where, 'half_width')}: expected 0 or more, got "
-                f"{half_width.text}"
-            )
-        return Uniform(
-            nominal.value - half_width.value, nominal.value + half_width.value
-        )
-    if low is None and high is None:
-        raise EdithConfigError(f"{where}: missing half_width, or low and high; {usage}")
-    if low is None or high is None:
-        raise EdithConfigError(
-            f"{where}: missing {'low' if low is None else 'high'}; {usage}"
-        )
-    _check_order(low, high, where)
-    return Uniform(low.value, high.value)
-
-
-def _check_order(low: _Number | None, high: _Number | None, where: str) -> None:
-    """Check low is below high where both are given.
-
-    Raises:
-        EdithConfigError: If it is not.
-    """
-    if low is not None and high is not None and not low.value < high.value:
-        raise EdithConfigError(
-            f"{where}: low ({low.text}) must be below high ({high.text})"
-        )

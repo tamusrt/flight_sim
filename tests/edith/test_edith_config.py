@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from edith.config import EdithConfig
-from edith.dispersion import STANDARD_DISPERSION, Dispersion, Normal, Uniform
+from edith.dispersion import (
+    DISTRIBUTIONS,
+    STANDARD_DISPERSION,
+    Dispersion,
+    Normal,
+    Uniform,
+)
 from edith.errors import EdithConfigError
 from flight_sim.config import ConfigError
 
@@ -15,7 +21,7 @@ _EXAMPLE = Path("examples/sol_invictus")
 _CAMPAIGN = Path("examples/sol_invictus_mc/edith_config.toml")
 
 _HEADER = """
-N = 10
+num_sims = 10
 master_seed = 1
 base_sim = "../base/sim.toml"
 output_dir = "../out"
@@ -65,7 +71,7 @@ def test_example_campaign_reads_every_dispersion() -> None:
     config = EdithConfig.from_file(_CAMPAIGN)
     wind_speed = config.dispersions[4]
 
-    assert (config.trials, config.master_seed, config.sampling) == (500, 9999, "lhs")
+    assert (config.num_sims, config.master_seed, config.sampling) == (500, 9999, "lhs")
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.source.path == config.base_sim
     assert config.output_dir == Path("out/edith_sol_invictus").resolve()
@@ -146,12 +152,27 @@ def test_optional_settings(tmp_path: Path) -> None:
     assert config.trial_timeout_s == pytest.approx(600.0)
 
 
-def test_byte_order_mark_is_read(tmp_path: Path) -> None:
-    """A campaign file saved with a byte-order mark still reads."""
+def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:
+    """A campaign file in another encoding is reported, not a traceback."""
     path = _campaign(tmp_path, _MASS)
-    path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+    path.write_bytes(b"\xff\xfe" + path.read_bytes())
 
-    assert EdithConfig.from_file(path).trials == 10
+    with pytest.raises(EdithConfigError, match=r"edith_config\.toml is not UTF-8 text"):
+        EdithConfig.from_file(path)
+
+
+def test_a_campaign_file_may_extend_another(tmp_path: Path) -> None:
+    """flight_sim reads campaign files as it reads sim files, so extends works."""
+    path = _campaign(tmp_path, _MASS)
+    (path.parent / "common.toml").write_text(_HEADER, encoding="utf-8")
+    path.write_text(
+        'extends = "common.toml"\nnum_sims = 20\n' + _MASS, encoding="utf-8"
+    )
+
+    config = EdithConfig.from_file(path)
+
+    assert (config.num_sims, config.master_seed) == (20, 1)
+    assert config.base_sim == (tmp_path / "base" / "sim.toml").resolve()
 
 
 def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
@@ -165,21 +186,53 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("header", "expected"),
     [
-        (_HEADER.replace("master_seed", "master_sead"), "master_sead: unknown key"),
-        (_HEADER.replace("master_seed", "master_sead"), "did you mean master_seed"),
-        (_HEADER.replace("N =", "n ="), "did you mean N?"),
-        (_HEADER.replace("N = 10", ""), "missing N;"),
-        (_HEADER.replace("N = 10", "N = true"), "N: expected a whole number"),
-        (_HEADER.replace("N = 10", "N = 0"), "of at least 1, got 0"),
-        (_HEADER.replace("N = 10", "N = 2.5"), "got 2.5"),
-        (_HEADER.replace("seed = 1", "seed = -1"), "master_seed: expected"),
-        (_HEADER + 'sampling = "LHS"\n', 'sampling: expected "lhs" or "random"'),
-        (_HEADER + "workers = 0\n", "workers: expected a whole number"),
-        (_HEADER + 'trial_timeout = "10 m"\n', "trial_timeout: expected a time"),
-        (_HEADER + "trial_timeout = 600\n", "trial_timeout: expected a time"),
-        (_HEADER + 'trial_timeout = "-1 s"\n', "trial_timeout: expected a time"),
-        (_HEADER.replace("base/sim.toml", "base/sim.tom"), "base_sim: expected"),
-        (_HEADER.replace("base/sim.toml", "base/nope.toml"), "does not exist"),
+        (
+            _HEADER.replace("master_seed", "master_sead"),
+            "top level: unknown keys ['master_sead']; CampaignSettings needs num_sims",
+        ),
+        (_HEADER.replace("num_sims =", "N ="), "top level: unknown keys ['N']"),
+        (_HEADER.replace("num_sims = 10", ""), "top level: missing num_sims;"),
+        (
+            _HEADER.replace("num_sims = 10", "num_sims = true"),
+            "num_sims: expected an integer, got True",
+        ),
+        (
+            _HEADER.replace("num_sims = 10", "num_sims = 2.5"),
+            "num_sims: expected an integer, got 2.5",
+        ),
+        (
+            _HEADER.replace("num_sims = 10", "num_sims = 0"),
+            "num_sims must be at least 1, got 0",
+        ),
+        (
+            _HEADER.replace("seed = 1", "seed = -1"),
+            "master_seed must be at least 0, got -1",
+        ),
+        (
+            _HEADER + 'sampling = "LHS"\n',
+            "sampling: expected one of 'lhs', 'random', got 'LHS'",
+        ),
+        (_HEADER + "workers = 0\n", "workers must be at least 1, got 0"),
+        (_HEADER + "batch_size = 0\n", "batch_size must be at least 1, got 0"),
+        (
+            _HEADER + 'trial_timeout = "10 m"\n',
+            "(assigned to CampaignSettings.trial_timeout)",
+        ),
+        (_HEADER + "trial_timeout = 600\n", "trial_timeout: 600 needs units"),
+        (_HEADER + 'trial_timeout = "-1 s"\n', "trial_timeout must be above 0"),
+        (_HEADER + 'trial_timeout = "1e400 s"\n', "trial_timeout must be above 0"),
+        (_HEADER + 'trial_timeout = "abc"\n', "trial_timeout: cannot read 'abc'"),
+        (
+            _HEADER.replace("base/sim.toml", "base/sim.tom"),
+            "base_sim must be a sim input file ending in .toml, got 'sim.tom'",
+        ),
+        (
+            _HEADER.replace("base/sim.toml", "base/nope.toml"),
+            "nope.toml does not exist",
+        ),
+        (_HEADER.replace('"../base/sim.toml"', "5"), "base_sim must be a path, got 5"),
+        (_HEADER.replace('"../out"', '"../base/sim.toml"'), "sim.toml is a file"),
+        (_HEADER + 'type = "os.getcwd"\n', "type: a campaign file takes no type"),
     ],
 )
 def test_top_level_errors_name_the_key(
@@ -243,6 +296,7 @@ def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
     found = _dispersion(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
     assert found.dispersion_class == STANDARD_DISPERSION == "StandardDispersion"
+    assert pickle.loads(pickle.dumps(found)) == found
 
 
 @pytest.mark.parametrize(
@@ -266,6 +320,12 @@ def test_the_dispersion_class_is_read(tmp_path: Path, dispersion: str) -> None:
             "dispersion out",
         ),
         ("dispersion = 1", "dispersion: expected a string, got 1; for now every"),
+        ('dispersion = "Normal"', "EDITH has no dispersion class 'Normal';"),
+        ('dispersion = "__doc__"', "EDITH has no dispersion class '__doc__';"),
+        (
+            'dispersion = "BaseDispersion"',
+            "EDITH has no dispersion class 'BaseDispersion';",
+        ),
         (
             'dispersoin = "StandardDispersion"',
             "dispersoin: unknown key (did you mean dispersion?)",
@@ -277,6 +337,11 @@ def test_bad_dispersion_classes_are_named(
 ) -> None:
     """A dispersion that names anything but StandardDispersion is rejected."""
     assert expected in _error(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
+
+
+def test_distributions_are_found_by_their_dist_type() -> None:
+    """Each distribution class is found by the dist_type it declares."""
+    assert {"normal": Normal, "uniform": Uniform} == DISTRIBUTIONS
 
 
 def test_a_dispersion_is_a_table(tmp_path: Path) -> None:
@@ -484,11 +549,18 @@ def test_two_dispersions_of_one_value_are_rejected(tmp_path: Path) -> None:
     )
 
 
-def test_no_dispersions_is_rejected(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("dispersions", "expected"),
+    [
+        ("dispersions = {}\n", "dispersions: expected one or more tables"),
+        ("", "missing dispersions, a table of each value to disperse"),
+    ],
+)
+def test_no_dispersions_is_rejected(
+    tmp_path: Path, dispersions: str, expected: str
+) -> None:
     """A campaign disperses at least one value."""
-    assert "dispersions: expected one or more tables" in _error(
-        tmp_path, "dispersions = {}\n"
-    )
+    assert expected in _error(tmp_path, dispersions)
 
 
 def test_zero_spread_is_allowed(tmp_path: Path) -> None:
@@ -498,8 +570,19 @@ def test_zero_spread_is_allowed(tmp_path: Path) -> None:
     assert dispersion.distribution == Normal(0.0)
 
 
-def test_errors_name_the_campaign_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("header", "dispersions"),
+    [
+        (_HEADER, _MASS.replace("normal", "gaussian")),
+        (_HEADER.replace("master_seed", "master_sead"), _MASS),
+        (_HEADER.replace("num_sims = 10", "num_sims = 0"), _MASS),
+        (_HEADER + "workers = true\n", _MASS),
+    ],
+)
+def test_errors_name_the_campaign_file(
+    tmp_path: Path, header: str, dispersions: str
+) -> None:
     """Every error starts with the campaign file it is about."""
-    message = _error(tmp_path, _MASS.replace("normal", "gaussian"))
+    message = _error(tmp_path, dispersions, header)
 
     assert message.split(": ", maxsplit=1)[0].endswith("mc/edith_config.toml")

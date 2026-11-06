@@ -50,7 +50,7 @@ def test_an_invalid_campaign_file_exits_with_its_error(
 ) -> None:
     """A campaign file that does not read ends the command with the error."""
     path = tmp_path / "edith_config.toml"
-    path.write_text("N = 0\n", encoding="utf-8")
+    path.write_text("num_sims = 0\n", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exit_info:
         main([str(path)])
