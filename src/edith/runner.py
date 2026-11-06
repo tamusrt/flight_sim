@@ -8,6 +8,7 @@ on its own.
 
 from collections.abc import Iterator
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -53,18 +54,27 @@ def prepare(
     if runs.exists() and not overwrite:
         raise FileExistsError(f"{display_path(runs)} already exists")
     slices = draw_slices(config.dispersions)
-    for index in range(config.num_sims):
-        folder = run_directory(config, index)
-        folder.mkdir(parents=True, exist_ok=True)
-        trial = Trial(folder)
-        for dispersion, columns in zip(config.dispersions, slices, strict=True):
-            dispersion.apply(samples[index, columns], trial)
-        trial.values.update(output_values(config.output))
-        trial.values["output.directory"] = folder.as_posix()
-        try:
-            simulation = Simulation.from_table(
-                config.source.table_with(trial.values), config.base_sim
-            )
-        except ConfigError as error:
-            raise EdithConfigError(f"trial {index} does not build: {error}") from error
-        yield output.prepare(simulation, overwrite=True)
+    runs.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".parquet-", dir=runs) as cache:
+        source = (
+            output.parquet_source(config.source, Path(cache))
+            if config.compress_inputs
+            else config.source
+        )
+        for index in range(config.num_sims):
+            folder = run_directory(config, index)
+            folder.mkdir(parents=True, exist_ok=True)
+            trial = Trial(folder)
+            for dispersion, columns in zip(config.dispersions, slices, strict=True):
+                dispersion.apply(samples[index, columns], trial)
+            trial.values.update(output_values(config.output))
+            trial.values["output.directory"] = folder.as_posix()
+            try:
+                simulation = Simulation.from_table(
+                    source.table_with(trial.values), config.base_sim
+                )
+            except ConfigError as error:
+                raise EdithConfigError(
+                    f"trial {index} does not build: {error}"
+                ) from error
+            yield output.prepare(simulation, overwrite=True)
