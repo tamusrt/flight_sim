@@ -1,7 +1,9 @@
 """EDITH campaign file tests."""
 
 import pickle
+import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -74,10 +76,13 @@ def test_example_campaign_reads_every_dispersion() -> None:
     config = EdithConfig.from_file(_CAMPAIGN)
     wind_speed = config.dispersions[4]
 
-    assert (config.num_sims, config.master_seed, config.sampling) == (500, 9999, "lhs")
+    assert (config.num_sims, config.master_seed, config.sampling) == (20, 9999, "lhs")
     assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.source.path == config.base_sim
-    assert config.output_dir == Path("out/edith_sol_invictus").resolve()
+    assert config.output_dir.parent == Path("out").resolve()
+    assert re.fullmatch(
+        r"edith_sol_invictus_example_\d{4}-\d\d-\d\d_\d{6}", config.output_dir.name
+    )
     assert (config.batch_size, config.trial_timeout) == (None, None)
     assert config.dispersions[:4] == (
         StandardDispersion(
@@ -118,7 +123,11 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert isinstance(wind_speed.distribution, Uniform)
     assert wind_speed.distribution.low == 0.0
     assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
-    assert config.output == {"plots": []}
+    assert config.output == {
+        "plots": [],
+        "formats": ["parquet"],
+        "sample_interval": "0.05 s",
+    }
     assert config.dispersions[5:] == (
         StandardDispersion(
             "config.truth.wind.from_azimuth",
@@ -234,6 +243,11 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
         ),
         (_HEADER.replace('"../base/sim.toml"', "5"), "base_sim must be a path, got 5"),
         (_HEADER.replace('"../out"', '"../base/sim.toml"'), "sim.toml is a file"),
+        (
+            _HEADER.replace('"../out"', '"../out/{nope}"'),
+            "has a bad placeholder ('nope'); use {name}, {datetime} or "
+            "{datetime:%Y%m%d}",
+        ),
         (_HEADER + 'type = "os.getcwd"\n', "type: a campaign file takes no type"),
     ],
 )
@@ -257,6 +271,16 @@ def test_a_base_sim_that_does_not_build_is_named(tmp_path: Path) -> None:
 
     assert "base_sim: " in message
     assert "max_time" in message
+
+
+def test_output_dir_takes_the_sims_placeholders(tmp_path: Path) -> None:
+    """{name} is the base sim's name as a file name, and {datetime} the start."""
+    header = _HEADER.replace('"../out"', '"../out/{name}_{datetime:%Y}"')
+
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
+
+    expected = tmp_path / "out" / f"sol_invictus_example_{datetime.now():%Y}"
+    assert config.output_dir == expected.resolve()
 
 
 def test_a_campaign_file_may_sit_beside_the_base_sim(tmp_path: Path) -> None:
@@ -360,9 +384,14 @@ def test_output_settings_override_the_base_sims(tmp_path: Path) -> None:
     ("output", "expected"),
     [
         ('[output]\ndirectory = "x"\n', "output.directory: each trial writes to"),
-        ('[output]\ntype = "os.getcwd"\n', "output.type: a campaign file takes no"),
+        ('[output]\ntype = "os.getcwd"\n', "output.type: unknown key; output takes"),
         ('[output]\nplots = ["nope"]\n', "output: Unknown plots ['nope']"),
-        ('[output]\nformat = ["csv"]\n', "output: unknown keys ['format']"),
+        (
+            '[output]\nformat = ["csv"]\n',
+            "output.format: unknown key (did you mean formats?); output takes the "
+            "keys of a sim's [output] table but directory: formats, units, "
+            "channels, sample_interval, plots",
+        ),
         ('[output]\nsample_interval = "-1 s"\n', "output: Sample interval must be"),
     ],
 )
