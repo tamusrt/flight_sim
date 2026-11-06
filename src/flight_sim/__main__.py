@@ -5,7 +5,7 @@ import cProfile
 import pstats
 import sys
 import time as clock
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -116,13 +116,21 @@ def _load(path: str | Path) -> Simulation:
         raise SystemExit(f"Cannot build {path}:\n  {error}") from None
 
 
-def fly(simulation: Simulation, args: argparse.Namespace) -> None:
+def fly(
+    simulation: Simulation,
+    args: argparse.Namespace,
+    *,
+    additional_writer: Callable[[Flight], None] | None = None,
+) -> None:
     """Fly a sim, print its headline numbers, then write and plot it.
 
     Args:
         simulation (Simulation): The sim to fly.
         args (argparse.Namespace): Parsed arguments, for --no-show and
             --profile.
+        additional_writer (Callable[[Flight], None] | None, optional): Writer
+            called with the completed flight after the normal output is written.
+            Defaults to no additional output.
     """
     if args.no_show:
         # Draw off screen
@@ -140,6 +148,8 @@ def fly(simulation: Simulation, args: argparse.Namespace) -> None:
     plots_s = clock.perf_counter() - start
     start = clock.perf_counter()
     directory = output.write(flight, figures)
+    if additional_writer is not None:
+        additional_writer(flight)
     write_s = clock.perf_counter() - start
     print_diagnostics(flight, plots_s, write_s)
     if directory is not None:
