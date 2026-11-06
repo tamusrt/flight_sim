@@ -97,10 +97,12 @@ class Workers:
     ``with`` block to end them.
     """
 
-    def __init__(self, count: int, logs: Path) -> None:
+    def __init__(self, count: int, logs: Path, batch_size: int | None = None) -> None:
         """Start ``count`` processes, each logging its own output under ``logs``."""
         logs.mkdir(parents=True, exist_ok=True)
-        self._workers = [_Worker(logs / f"{number}.log") for number in range(count)]
+        self._workers = [
+            _Worker(logs / f"{number}.log", batch_size) for number in range(count)
+        ]
         for worker in self._workers:
             worker.start()
 
@@ -186,7 +188,11 @@ class Workers:
 
 
 def run(
-    directories: Sequence[Path], workers: int, timeout_s: float | None, log: Path
+    directories: Sequence[Path],
+    workers: int,
+    timeout_s: float | None,
+    log: Path,
+    batch_size: int | None = None,
 ) -> list[Result]:
     """Fly run directories on ``workers`` processes started for the purpose.
 
@@ -202,7 +208,7 @@ def run(
         list[Result]: One per directory, in the directories' order.
     """
     count = min(workers, len(directories)) or 1
-    with Workers(count, log.parent / WORKER_LOGS) as pool:
+    with Workers(count, log.parent / WORKER_LOGS, batch_size) as pool:
         return pool.run(directories, timeout_s, log)
 
 
@@ -225,9 +231,10 @@ def _fly_all(
 class _Worker:
     """One ``edith.worker`` process, replaced after it dies."""
 
-    def __init__(self, log: Path) -> None:
+    def __init__(self, log: Path, batch_size: int | None) -> None:
         """Take the file for the process's own output."""
         self._log = log
+        self._batch_size = batch_size
         self._process: subprocess.Popen[str] | None = None
         self._replies: queue.Queue[str | None] = queue.Queue()
         self._answered = threading.Event()  # Set once the process answers READY
@@ -312,7 +319,13 @@ class _Worker:
                 text=True,
                 encoding="utf-8",
                 bufsize=1,
-                env={**os.environ, **_WORKER_ENV},
+                env={
+                    **os.environ,
+                    **_WORKER_ENV,
+                    "EDITH_BATCH_SIZE": (
+                        "" if self._batch_size is None else str(self._batch_size)
+                    ),
+                },
             )
         threading.Thread(
             target=_read,
