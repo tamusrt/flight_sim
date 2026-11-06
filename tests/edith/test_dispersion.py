@@ -59,3 +59,29 @@ def test_a_standard_dispersion_records_the_value_in_the_inputs_form(
     cg_x = table["properties"]["dry_mass_properties"]["cg_location"]["value"][0]
     assert cg_x == pytest.approx(-1.0)
     assert table["config"]["truth"]["launch_rail"]["friction_coefficient"] == 0.1
+
+
+def test_distributions_describe_themselves_in_the_nominals_units() -> None:
+    """A distribution's words carry its numbers in the units given, or none."""
+    assert Normal(17.0, 0.25).describe("kg") == "normal, sigma 0.25 kg"
+    assert Normal(85.0, 0.5, high=90.0).describe("deg") == (
+        "normal, sigma 0.5 deg, high 90 deg"
+    )
+    assert Normal(20.0, 10.0, low=10.0).describe("degC") == (
+        "normal, sigma 10 degC, low 10 degC"
+    )
+    assert Uniform(0.0, 0.2).describe("") == "uniform from 0 to 0.2"
+    assert Uniform(0.0, 6.7056).describe("m/s") == "uniform from 0 to 6.7056 m/s"
+
+
+def test_a_standard_dispersion_describes_its_nominal_and_distribution(
+    campaign: Path,
+) -> None:
+    """The description is the nominal as the input writes it, and the draw."""
+    config = EdithConfig.from_file(campaign)
+
+    assert [dispersion.describe() for dispersion in config.dispersions] == [
+        ("17 kg", "normal, sigma 0.25 kg"),
+        ("-1 m", "uniform from -1.02 to -0.98 m"),
+        ("0", "uniform from 0 to 0.2"),
+    ]

@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import IO
+from typing import IO, Self
 
 from rich.console import Console
 from rich.progress import (
@@ -89,95 +89,145 @@ def progress_bars() -> Progress:
     )
 
 
+class Workers:
+    """Worker processes of a campaign, started at once and ended by ``close``.
+
+    Started before the trials are prepared, the processes import flight_sim
+    meanwhile; ``run`` waits for each only at its first trial. Use as a
+    ``with`` block to end them.
+    """
+
+    def __init__(self, count: int, logs: Path) -> None:
+        """Start ``count`` processes, each logging its own output under ``logs``."""
+        logs.mkdir(parents=True, exist_ok=True)
+        self._workers = [_Worker(logs / f"{number}.log") for number in range(count)]
+        for worker in self._workers:
+            worker.start()
+
+    @property
+    def count(self) -> int:
+        """Return how many worker processes there are."""
+        return len(self._workers)
+
+    def __enter__(self) -> Self:
+        """Return the workers, to be ended with the block."""
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """End the processes."""
+        self.close()
+
+    def close(self) -> None:
+        """End every process."""
+        for worker in self._workers:
+            worker.close()
+
+    def run(
+        self, directories: Sequence[Path], timeout_s: float | None, log: Path
+    ) -> list[Result]:
+        """Fly run directories in parallel, showing a progress bar per worker.
+
+        Worker ``w`` flies directories ``w``, ``w + workers``, and so on, so
+        each bar counts the trials that worker has flown of those assigned to
+        it; a last bar counts the campaign's.
+
+        Args:
+            directories (Sequence[Path]): Prepared run directories.
+            timeout_s (float | None): Seconds a trial may run before it is
+                stopped as TIMEOUT, or None for no limit.
+            log (Path): Campaign log, appended with a line per trial as it
+                ends.
+
+        Returns:
+            list[Result]: One per directory, in the directories' order.
+        """
+        workers = min(self.count, len(directories)) or 1
+        assignments = [directories[worker::workers] for worker in range(workers)]
+        lock = threading.Lock()
+        with log.open("a", encoding="utf-8") as file, progress_bars() as bars:
+            tasks = [
+                bars.add_task(f"worker {number}", total=len(assigned))
+                for number, assigned in enumerate(assignments)
+            ]
+            total = bars.add_task("all", total=len(directories))
+
+            def report(result: Result, worker: int) -> None:
+                with lock:
+                    file.write(_log_line(result) + "\n")
+                    file.flush()
+                bars.update(tasks[worker], advance=1)
+                bars.update(total, advance=1)
+
+            with ThreadPoolExecutor(workers) as pool:
+                futures = [
+                    pool.submit(
+                        _fly_all,
+                        self._workers[number],
+                        number,
+                        assigned,
+                        timeout_s,
+                        report,
+                    )
+                    for number, assigned in enumerate(assignments)
+                ]
+                by_worker = [future.result() for future in futures]
+        results: list[Result | None] = [None] * len(directories)
+        for worker, worker_results in enumerate(by_worker):
+            results[worker::workers] = worker_results
+        return [result for result in results if result is not None]
+
+
 def run(
     directories: Sequence[Path], workers: int, timeout_s: float | None, log: Path
 ) -> list[Result]:
-    """Fly run directories in parallel, showing a progress bar per worker.
-
-    Worker ``w`` flies directories ``w``, ``w + workers``, and so on, so each
-    bar counts the trials that worker has flown of those assigned to it; a
-    last bar counts the campaign's.
+    """Fly run directories on ``workers`` processes started for the purpose.
 
     Args:
         directories (Sequence[Path]): Prepared run directories.
-        workers (int): Worker threads, each with one worker process.
+        workers (int): Worker processes, each flying one trial at a time.
         timeout_s (float | None): Seconds a trial may run before it is
             stopped as TIMEOUT, or None for no limit.
         log (Path): Campaign log, appended with a line per trial as it ends.
-            The worker processes' own output goes under WORKER_LOGS beside it.
+            The processes' own output goes under WORKER_LOGS beside it.
 
     Returns:
         list[Result]: One per directory, in the directories' order.
     """
-    workers = min(workers, len(directories)) or 1
-    assignments = [directories[worker::workers] for worker in range(workers)]
-    worker_logs = log.parent / WORKER_LOGS
-    worker_logs.mkdir(parents=True, exist_ok=True)
-    lock = threading.Lock()
-    with log.open("a", encoding="utf-8") as file, progress_bars() as bars:
-        tasks = [
-            bars.add_task(f"worker {number}", total=len(assigned))
-            for number, assigned in enumerate(assignments)
-        ]
-        total = bars.add_task("all", total=len(directories))
-
-        def report(result: Result, worker: int) -> None:
-            with lock:
-                file.write(_log_line(result) + "\n")
-                file.flush()
-            bars.update(tasks[worker], advance=1)
-            bars.update(total, advance=1)
-
-        with ThreadPoolExecutor(workers) as pool:
-            futures = [
-                pool.submit(
-                    _fly_all,
-                    number,
-                    assigned,
-                    timeout_s,
-                    report,
-                    worker_logs / f"{number}.log",
-                )
-                for number, assigned in enumerate(assignments)
-            ]
-            by_worker = [future.result() for future in futures]
-    results: list[Result | None] = [None] * len(directories)
-    for worker, worker_results in enumerate(by_worker):
-        results[worker::workers] = worker_results
-    return [result for result in results if result is not None]
+    count = min(workers, len(directories)) or 1
+    with Workers(count, log.parent / WORKER_LOGS) as pool:
+        return pool.run(directories, timeout_s, log)
 
 
 def _fly_all(
+    worker: "_Worker",
     number: int,
     directories: Sequence[Path],
     timeout_s: float | None,
     report: Callable[[Result, int], None],
-    worker_log: Path,
 ) -> list[Result]:
     """Fly a worker's directories in turn, reporting each as the worker's."""
     results = []
-    worker = _Worker(worker_log)
-    try:
-        for directory in directories:
-            result = worker.fly(directory, timeout_s)
-            report(result, number)
-            results.append(result)
-    finally:
-        worker.close()
+    for directory in directories:
+        result = worker.fly(directory, timeout_s)
+        report(result, number)
+        results.append(result)
     return results
 
 
 class _Worker:
-    """One ``edith.worker`` process, started when needed and replaced after it dies."""
+    """One ``edith.worker`` process, replaced after it dies."""
 
     def __init__(self, log: Path) -> None:
         """Take the file for the process's own output."""
         self._log = log
         self._process: subprocess.Popen[str] | None = None
         self._replies: queue.Queue[str | None] = queue.Queue()
+        self._ready = False  # Whether the process has answered READY
 
     def fly(self, directory: Path, timeout_s: float | None) -> Result:
         """Fly a run directory in the process, starting one if there is none.
+
+        Waits for the process to be ready at its first flight.
 
         Args:
             directory (Path): A prepared run directory.
@@ -187,8 +237,9 @@ class _Worker:
         Returns:
             Result: The trial's status, wall time and reason if it failed.
         """
-        if self._process is None:
-            self._start()
+        self.start()
+        if not self._ready:
+            self._await_ready()
         assert self._process is not None and self._process.stdin is not None
         start = clock.perf_counter()
         try:
@@ -226,13 +277,12 @@ class _Worker:
             self._process.kill()
         self._process = None
 
-    def _start(self) -> None:
-        """Start the process and wait until it has imported flight_sim.
-
-        Raises:
-            RuntimeError: If the process ends before it is ready.
-        """
+    def start(self) -> None:
+        """Start the process, if there is none, without waiting for it."""
+        if self._process is not None:
+            return
         self._replies = queue.Queue()
+        self._ready = False
         with self._log.open("a", encoding="utf-8") as log:
             self._process = subprocess.Popen(  # pylint: disable=consider-using-with
                 [sys.executable, "-m", "edith.worker"],
@@ -247,12 +297,20 @@ class _Worker:
         threading.Thread(
             target=_read, args=(self._process.stdout, self._replies), daemon=True
         ).start()
+
+    def _await_ready(self) -> None:
+        """Wait until the process has imported flight_sim and answered READY.
+
+        Raises:
+            RuntimeError: If the process ends before it is ready.
+        """
         if self._replies.get() != READY:
             code = self._stop()
             raise RuntimeError(
                 f"the worker process exited with code {code} before it was ready; "
                 f"see {self._log}"
             )
+        self._ready = True
 
     def _stop(self) -> int | None:
         """Kill the process, if there is one, and return its exit code."""

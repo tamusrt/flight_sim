@@ -53,21 +53,25 @@ def main(argv: Sequence[str] | None = None) -> None:
     start = clock.perf_counter()
     config = _read(args.config)
     phases = {"read": _since(start)}
-    directories = _prepare(config, args.config, args.overwrite)
-    phases["prepare"] = _since(start) - phases["read"]
     if command == "prepare":
+        _prepare(config, args.config, args.overwrite)
+        phases["prepare"] = _since(start) - phases["read"]
         print(_wall_time(**phases, total=_since(start)))
         return
 
-    workers = min(args.workers, len(directories))
-    results = _fly(config, directories, workers)
+    # Started now, the workers import flight_sim while the trials are prepared
+    count = min(args.workers, config.num_sims)
+    with parallel.Workers(count, config.output_dir / parallel.WORKER_LOGS) as workers:
+        directories = _prepare(config, args.config, args.overwrite)
+        phases["prepare"] = _since(start) - phases["read"]
+        results = _fly(config, workers, directories)
     phases["fly"] = _since(start) - sum(phases.values())
     print(_wall_time(**phases, total=_since(start)))
     seconds = [result.seconds for result in results]
     print(
         f"trials: {mean(seconds):.1f} s each on average, {min(seconds):.1f} s to "
         f"{max(seconds):.1f} s; {len(results) / phases['fly']:.2f} trials/s on "
-        f"{workers} worker{'s' if workers != 1 else ''}"
+        f"{count} worker{'s' if count != 1 else ''}"
     )
     if any(result.status is not Status.OK for result in results):
         raise SystemExit(1)
@@ -88,8 +92,16 @@ def _read(path: str) -> EdithConfig:
         f"{display_path(config.base_sim)}, {config.sampling} sampling, "
         f"seed {config.master_seed}"
     )
-    for dispersion in config.dispersions:
-        print(f"  {dispersion!r}")
+    header = ("key", "nominal", "distribution")
+    rows = [
+        (dispersion.key, *dispersion.describe()) for dispersion in config.dispersions
+    ]
+    widths = [
+        max(len(cell) for cell in column) for column in zip(header, *rows, strict=True)
+    ]
+    for row in (header, *rows):
+        cells = (cell.ljust(width) for cell, width in zip(row, widths, strict=True))
+        print("  " + "  ".join(cells).rstrip())
     return config
 
 
@@ -116,22 +128,19 @@ def _prepare(config: EdithConfig, path: str, overwrite: bool) -> list[Path]:
 
 
 def _fly(
-    config: EdithConfig, directories: Sequence[Path], workers: int
+    config: EdithConfig, workers: parallel.Workers, directories: Sequence[Path]
 ) -> list[Result]:
     """Fly the run directories on the workers and print the tally of outcomes."""
-    quotient, remainder = divmod(len(directories), workers)
+    quotient, remainder = divmod(len(directories), workers.count)
     each = f"{quotient} to {quotient + 1}" if remainder else str(quotient)
     print(
-        f"Flying {len(directories)} trials on {workers} "
-        f"worker{'s' if workers != 1 else ''}, {each} each"
+        f"Flying {len(directories)} trials on {workers.count} "
+        f"worker{'s' if workers.count != 1 else ''}, {each} each"
     )
     timeout = config.trial_timeout
     log = config.output_dir / parallel.CAMPAIGN_LOG
-    results = parallel.run(
-        directories,
-        workers,
-        None if timeout is None else float(timeout.m_as("s")),
-        log,
+    results = workers.run(
+        directories, None if timeout is None else float(timeout.m_as("s")), log
     )
     counts = Counter(result.status for result in results)
     tally = ", ".join(
