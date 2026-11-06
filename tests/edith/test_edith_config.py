@@ -118,6 +118,7 @@ def test_example_campaign_reads_every_dispersion() -> None:
     assert isinstance(wind_speed.distribution, Uniform)
     assert wind_speed.distribution.low == 0.0
     assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
+    assert config.output == {"plots": []}
     assert config.dispersions[5:] == (
         StandardDispersion(
             "config.truth.wind.from_azimuth",
@@ -343,6 +344,40 @@ def test_bad_dispersion_classes_are_named(
 def test_distributions_are_found_by_their_dist_type() -> None:
     """Each distribution class is found by the dist_type it declares."""
     assert {"normal": Normal, "uniform": Uniform} == DISTRIBUTIONS
+
+
+def test_output_settings_override_the_base_sims(tmp_path: Path) -> None:
+    """An output table is kept as written, for every trial to take."""
+    output = '\n[output]\nplots = []\nformats = ["csv", "parquet"]\n'
+
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS + output))
+
+    assert config.output == {"plots": [], "formats": ["csv", "parquet"]}
+    assert pickle.loads(pickle.dumps(config)) == config
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ('[output]\ndirectory = "x"\n', "output.directory: each trial writes to"),
+        ('[output]\ntype = "os.getcwd"\n', "output.type: a campaign file takes no"),
+        ('[output]\nplots = ["nope"]\n', "output: Unknown plots ['nope']"),
+        ('[output]\nformat = ["csv"]\n', "output: unknown keys ['format']"),
+        ('[output]\nsample_interval = "-1 s"\n', "output: Sample interval must be"),
+    ],
+)
+def test_bad_output_settings_are_named(
+    tmp_path: Path, output: str, expected: str
+) -> None:
+    """An output table is checked as flight_sim checks a sim's, under output."""
+    assert expected in _error(tmp_path, _MASS + "\n" + output)
+
+
+def test_output_is_a_table(tmp_path: Path) -> None:
+    """A bare output value is rejected before the settings are built."""
+    message = _error(tmp_path, _MASS, _HEADER + "output = 5\n")
+
+    assert "output: expected a table of flight_sim output settings" in message
 
 
 def test_dispersion_classes_are_found_by_name() -> None:
