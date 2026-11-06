@@ -105,6 +105,10 @@ class BaseDispersion(ABC):
                 the folder for any files written.
         """
 
+    @abstractmethod
+    def describe(self) -> tuple[str, str]:
+        """Return what the dispersion changes, as the input writes it, and how."""
+
 
 class Parameter(NamedTuple):
     """One of a distribution's parameters, in its nominal value's units."""
@@ -192,6 +196,15 @@ class Normal:
         highest = 1.0 if self.high is None else normal.cdf(self.high)
         return normal.inv_cdf(lowest + u * (highest - lowest))
 
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "normal, sigma 0.25 kg"."""
+        parts = [f"normal, sigma {_quantity(self.sigma, units)}"]
+        if self.low is not None:
+            parts.append(f"low {_quantity(self.low, units)}")
+        if self.high is not None:
+            parts.append(f"high {_quantity(self.high, units)}")
+        return ", ".join(parts)
+
 
 @dataclass(frozen=True)
 class Uniform:
@@ -250,6 +263,10 @@ class Uniform:
     def ppf(self, u: float) -> float:
         """Return the value at quantile ``u`` in (0, 1)."""
         return self.low + u * (self.high - self.low)
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "uniform from 0 to 0.2"."""
+        return f"uniform from {self.low:g} to {_quantity(self.high, units)}"
 
 
 Distribution: TypeAlias = Normal | Uniform
@@ -322,6 +339,12 @@ class StandardDispersion(BaseDispersion):
         """Draw the number from ``u[0]`` and record it in the input's form."""
         value = self.distribution.ppf(float(u[0]))
         trial.values[self.key] = f"{value!r} {self.units}" if self.quoted else value
+
+    def describe(self) -> tuple[str, str]:
+        """Return the nominal value, such as "17 kg", and the distribution in words."""
+        return _quantity(self.nominal, self.units), self.distribution.describe(
+            self.units
+        )
 
 
 # The default dispersion class's name, as a campaign file writes it
@@ -401,6 +424,11 @@ def _number(value: object, where: str, nominal: Nominal) -> Parameter:
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error
     return Parameter(_finite(converted, where, value), text)
+
+
+def _quantity(value: float, units: str) -> str:
+    """Return a number with its units, such as "0.25 kg", or bare for none."""
+    return f"{value:g} {units}".rstrip()
 
 
 def _finite(number: float, where: str, value: object) -> float:
