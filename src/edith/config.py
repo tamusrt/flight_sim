@@ -71,6 +71,7 @@ class CampaignSettings(UnitChecked):
     sampling: Sampling = "lhs"
     batch_size: int | None = None  # Trials per batch
     trial_timeout: Annotated[Scalar | None, "s"] = None
+    compress_inputs: bool = True  # Convert CSV inputs to Parquet before copying
 
     def __post_init__(self) -> None:
         """Check the settings' ranges, and the base sim and output folder.
