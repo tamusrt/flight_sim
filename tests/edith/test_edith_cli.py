@@ -74,7 +74,8 @@ def test_a_campaign_flies_on_the_workers_given(
     out = campaign.parent.parent / "out"
 
     assert f"3 trials: 3 OK; see {(out / 'edith.log').as_posix()}" in lines
-    assert any(line.startswith("batch 0: 3 trials, apogee ") for line in lines)
+    assert "batch 0: prepared 3 trials" in lines
+    assert any(line.startswith("batch 0: 3 trials flown, apogee ") for line in lines)
     assert lines[-4].startswith("apogee ")
     assert lines[-4].endswith(
         "(3 trials in 1 batch). Requires additional batches for standard error"

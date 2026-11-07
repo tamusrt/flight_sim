@@ -4,15 +4,17 @@ Each trial's directory is a flight_sim run directory: ``resolved_input.toml``
 with the trial's drawn values and the campaign's output settings in place of
 the base sim's, and copies of the data files, so ``flight_sim run`` flies it
 on its own. The trials come in batches, each an independently seeded
-replicate drawn by ``edith.statistics``, and fly batch by batch until the
-stopping rule is met or every trial has flown. Each batch's apogees feed the
-estimate, and every trial's drawn values, status and apogee go to
-``trials.csv``.
+replicate drawn by ``edith.statistics``. A batch is prepared just before it
+flies, and the campaign goes on until the stopping rule is met or every trial
+has flown, so an early stop leaves only the trials that flew. Each batch's
+apogees feed the estimate, and every trial's drawn values, status and apogee
+go to ``trials.csv``.
 """
 
 import math
+import time as clock
 import tomllib
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -45,6 +47,7 @@ __all__ = [
     "draw_batch",
     "fly_campaign",
     "prepare",
+    "prepare_batches",
     "run_directory",
 ]
 
@@ -80,8 +83,13 @@ def batches(config: EdithConfig) -> list[slice]:
     return [slice(start, start + size) for start in range(0, config.num_sims, size)]
 
 
-def prepare(config: EdithConfig, *, overwrite: bool = False) -> Iterator[Trial]:
-    """Create a run directory per trial, holding its dispersed input.
+def prepare_batches(
+    config: EdithConfig, *, overwrite: bool = False
+) -> Generator[list[Trial], None, None]:
+    """Create the run directories of one batch at a time, holding dispersed inputs.
+
+    Close the iterator when stopping early, to remove the data files it caches
+    under the runs folder.
 
     Args:
         config (EdithConfig): The campaign.
@@ -89,7 +97,8 @@ def prepare(config: EdithConfig, *, overwrite: bool = False) -> Iterator[Trial]:
             exists. Defaults to refusing.
 
     Yields:
-        Trial: Each trial, in order, as its directory is written.
+        list[Trial]: Each batch's trials, in order, once their directories are
+            written.
 
     Raises:
         FileExistsError: If the runs folder exists and ``overwrite`` is not set.
@@ -106,28 +115,50 @@ def prepare(config: EdithConfig, *, overwrite: bool = False) -> Iterator[Trial]:
         )
         for batch, span in enumerate(batches(config)):
             drawn = draw_batch(config, batch, span.stop - span.start)
+            trials = []
             for offset, index in enumerate(range(span.start, span.stop)):
-                folder = run_directory(config, index)
-                folder.mkdir(parents=True, exist_ok=True)
                 trial = Trial(
-                    folder,
+                    run_directory(config, index),
                     {key: float(values[offset]) for key, values in drawn.items()},
                 )
-                values: dict[str, Any] = {
-                    d.key: _as_input(d, trial.drawn[d.key], config.source.table)
-                    for d in _dispersions(config)
-                }
-                values.update(output_values(config.output))
-                values["output.directory"] = folder.as_posix()
-                if config.input_mode == "lightweight":
-                    lightweight_values = dict(values)
-                    lightweight_values["output.directory"] = "."
-                    output.prepare_lightweight(
-                        config.source, lightweight_values, folder
-                    )
-                else:
-                    output.prepare_source(source, values, folder, overwrite=True)
-                yield trial
+                _write(config, source, trial)
+                trials.append(trial)
+            yield trials
+
+
+def prepare(config: EdithConfig, *, overwrite: bool = False) -> Iterator[Trial]:
+    """Create a run directory per trial, yielding each trial as it is written.
+
+    Args:
+        config (EdithConfig): The campaign.
+        overwrite (bool, optional): Write into a runs folder that already
+            exists. Defaults to refusing.
+
+    Yields:
+        Trial: Each trial, in order.
+
+    Raises:
+        FileExistsError: If the runs folder exists and ``overwrite`` is not set.
+    """
+    for trials in prepare_batches(config, overwrite=overwrite):
+        yield from trials
+
+
+def _write(config: EdithConfig, source: Any, trial: Trial) -> None:
+    """Write a trial's run directory from the base sim's resolved input."""
+    trial.folder.mkdir(parents=True, exist_ok=True)
+    values: dict[str, Any] = {
+        d.key: _as_input(d, trial.drawn[d.key], config.source.table)
+        for d in _dispersions(config)
+    }
+    values.update(output_values(config.output))
+    values["output.directory"] = trial.folder.as_posix()
+    if config.input_mode == "lightweight":
+        lightweight_values = dict(values)
+        lightweight_values["output.directory"] = "."
+        output.prepare_lightweight(config.source, lightweight_values, trial.folder)
+    else:
+        output.prepare_source(source, values, trial.folder, overwrite=True)
 
 
 @dataclass
@@ -139,6 +170,7 @@ class CampaignResult:
     confidence: float
     trials_path: Path
     results: list[Result]  # Each flown trial's outcome, in trial order
+    prepare_s: float  # Wall time preparing the batches that flew
 
     def summary(self) -> str:
         """Return the estimate as a line, saying what it still needs if it has no CI."""
@@ -159,16 +191,22 @@ class CampaignResult:
 def fly_campaign(
     config: EdithConfig,
     workers: Workers,
-    trials: Sequence[Trial],
+    prepared: Iterable[Sequence[Trial]],
+    on_prepared: Callable[[int, Sequence[Trial]], None] | None = None,
     on_batch: Callable[[int, BatchStats], None] | None = None,
 ) -> CampaignResult:
-    """Fly prepared trials batch by batch until the stopping rule is met.
+    """Fly the campaign batch by batch until the stopping rule is met.
 
     Args:
-        config (EdithConfig): The campaign, for its batches, timeout, stopping
-            rule and output directory.
+        config (EdithConfig): The campaign, for its timeout, stopping rule and
+            output directory.
         workers (Workers): The worker processes that fly each batch.
-        trials (Sequence[Trial]): The prepared trials, in order.
+        prepared (Iterable[Sequence[Trial]]): The batches, as
+            ``prepare_batches`` yields them; the next is prepared only once
+            the last has flown.
+        on_prepared (Callable[[int, Sequence[Trial]], None] | None,
+            optional): Called with each batch's number and trials once they
+            are prepared, before they fly. Defaults to nothing.
         on_batch (Callable[[int, BatchStats], None] | None, optional): Called
             with each batch's number and the statistics so far, once it has
             flown. Defaults to nothing.
@@ -188,17 +226,23 @@ def fly_campaign(
     rows: list[dict[str, Any]] = []
     results: list[Result] = []
     stopped_by = "all_batches"
+    prepare_s = 0.0
     trials_path = config.output_dir / TRIALS
     log = config.output_dir / CAMPAIGN_LOG
     timeout = config.trial_timeout
-    timeout_s = None if timeout is None else float(timeout.m_as("s"))
     try:
-        for batch, span in enumerate(batches(config)):
+        start = clock.perf_counter()
+        for batch, trials in enumerate(prepared):
+            prepare_s += clock.perf_counter() - start
+            if on_prepared is not None:
+                on_prepared(batch, trials)
             flown = workers.run(
-                [trial.folder for trial in trials[span]], timeout_s, log
+                [trial.folder for trial in trials],
+                None if timeout is None else float(timeout.m_as("s")),
+                log,
             )
             results.extend(flown)
-            batch_rows = _rows(batch, span.start, trials[span], flown)
+            batch_rows = _rows(batch, len(rows), trials, flown)
             rows.extend(batch_rows)
             apogees = [
                 row["apogee"] for row in batch_rows if math.isfinite(row["apogee"])
@@ -215,10 +259,11 @@ def fly_campaign(
             if rule.done(stats):
                 stopped_by = "rule"
                 break
+            start = clock.perf_counter()
     finally:
         pd.DataFrame(rows).to_csv(trials_path, index=False)
     return CampaignResult(
-        stats, stopped_by, config.stopping.confidence, trials_path, results
+        stats, stopped_by, config.stopping.confidence, trials_path, results, prepare_s
     )
 
 

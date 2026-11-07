@@ -5,9 +5,8 @@ import sys
 import time as clock
 from collections import Counter
 from collections.abc import Sequence
+from contextlib import closing
 from statistics import mean
-
-from rich.progress import Progress, TaskID
 
 from edith import parallel, runner
 from edith.config import EdithConfig
@@ -25,20 +24,21 @@ from flight_sim.config.toml_files import display_path
 COMMANDS = ("prepare",)
 
 _DESCRIPTIONS = {
-    None: "Run a Monte Carlo campaign of a sim: prepare a run directory per "
-    "trial, then fly them in parallel, batch by batch, until the stopping rule "
-    'is met. "edith prepare FILE" stops after the directories.',
+    None: "Run a Monte Carlo campaign of a sim: fly its trials in parallel, "
+    "batch by batch, until the stopping rule is met. Each batch's run "
+    'directories are prepared just before it flies; "edith prepare FILE" '
+    "prepares every trial's and stops.",
     "prepare": "Prepare a campaign's run directories, one dispersed sim per "
     "trial, without flying them.",
 }
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Read a campaign file, prepare its trials and fly them in parallel.
+    """Read a campaign file and fly its trials in parallel, batch by batch.
 
-    A first argument of "prepare" stops after the run directories. Each step
-    prints what it did; the end prints the apogee estimate and the wall time
-    of each step, as flight_sim prints a run's.
+    A first argument of "prepare" writes every trial's run directory instead.
+    Each step prints what it did; the end prints the apogee estimate and the
+    wall time of each step, as flight_sim prints a run's.
 
     Args:
         argv (Sequence[str] | None, optional): Command-line arguments.
@@ -58,23 +58,21 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     start = clock.perf_counter()
     config = _read(args.config)
-    phases = {"read": _since(start)}
+    read_s = _since(start)
     if command == "prepare":
         _prepare(config, args.config, args.overwrite)
-        phases["prepare"] = _since(start) - phases["read"]
-        print(_wall_time(**phases, total=_since(start)))
+        print(_wall_time(read=read_s, prepare=_since(start) - read_s))
         return
 
-    # Started now, the workers import flight_sim while the trials are prepared
+    # Started now, the workers import flight_sim while the first batch is
+    # prepared
     count = min(args.workers, config.num_sims)
+    initialize(config.output_dir / STORE, config.zarr_chunk_rows)
     with parallel.Workers(
         count, config.output_dir / parallel.WORKER_LOGS, config.zarr_chunk_rows
     ) as workers:
-        trials = _prepare(config, args.config, args.overwrite, workers)
-        phases["prepare"] = _since(start) - phases["read"]
-        initialize(config.output_dir / STORE, config.zarr_chunk_rows)
-        result = _fly(config, workers, trials)
-    phases["fly"] = _since(start) - sum(phases.values())
+        result = _fly(config, workers, args.overwrite)
+    fly_s = _since(start) - read_s - result.prepare_s
     if (
         result.stopped_by == "all_batches"
         and config.stopping.rule != FixedTrials.__name__
@@ -82,11 +80,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(f"Warning: flew every batch before the {config.stopping.rule} target")
     print(result.summary())
     print(f"Trials: {display_path(result.trials_path)}")
-    print(_wall_time(**phases, total=_since(start)))
+    print(_wall_time(read=read_s, prepare=result.prepare_s, fly=fly_s))
     seconds = [flown.seconds for flown in result.results]
     print(
         f"trials: {mean(seconds):.1f} s each on average, {min(seconds):.1f} s to "
-        f"{max(seconds):.1f} s; {len(seconds) / phases['fly']:.2f} trials/s on "
+        f"{max(seconds):.1f} s; {len(seconds) / fly_s:.2f} trials/s on "
         f"{count} worker{'s' if count != 1 else ''}"
     )
     if any(flown.status is not Status.OK for flown in result.results):
@@ -131,40 +129,19 @@ def _row(dispersion: BaseDispersion) -> tuple[str, str, str]:
     )
 
 
-def _prepare(
-    config: EdithConfig,
-    path: str,
-    overwrite: bool,
-    workers: parallel.Workers | None = None,
-) -> list[Trial]:
-    """Prepare the campaign's run directories behind a progress bar.
-
-    Given workers, a row above the bar counts those ready, with a check once
-    all are, and the bars stay up until they are.
+def _prepare(config: EdithConfig, path: str, overwrite: bool) -> list[Trial]:
+    """Prepare every trial's run directory behind a progress bar.
 
     Raises:
         SystemExit: With the error, if the runs folder exists and ``overwrite``
             is not set.
     """
-    prepared = runner.prepare(config, overwrite=overwrite)
     try:
         with progress_bars() as bars:
-            readiness = None
-            if workers is not None:
-                readiness = bars.add_task("workers ready", total=workers.count)
-                _show_ready(bars, readiness, workers)
-            task = bars.add_task("prepare", total=config.num_sims)
-            trials = []
-            for trial in prepared:
-                trials.append(trial)
-                bars.update(task, advance=1)
-                if workers is not None and readiness is not None:
-                    _show_ready(bars, readiness, workers)
-            while (
-                workers is not None and readiness is not None and not workers.settled()
-            ):
-                clock.sleep(0.1)
-                _show_ready(bars, readiness, workers)
+            prepared = runner.prepare(config, overwrite=overwrite)
+            trials = list(
+                bars.track(prepared, total=config.num_sims, description="prepare")
+            )
     except FileExistsError as error:
         raise SystemExit(f"{error}; pass --overwrite to write into it") from None
     except EdithConfigError as error:
@@ -175,28 +152,40 @@ def _prepare(
 
 
 def _fly(
-    config: EdithConfig, workers: parallel.Workers, trials: Sequence[Trial]
+    config: EdithConfig, workers: parallel.Workers, overwrite: bool
 ) -> CampaignResult:
-    """Fly the trials batch by batch on the workers, printing each batch's estimate.
+    """Fly the campaign batch by batch on the workers, printing each batch's estimate.
 
     Raises:
-        SystemExit: With the error, if too many of a batch's trials fail.
+        SystemExit: With the error, if the runs folder exists and ``overwrite``
+            is not set, or too many of a batch's trials fail.
     """
     spans = runner.batches(config)
     print(
-        f"Flying {len(trials)} trials on {workers.count} "
+        f"Flying up to {config.num_sims} trials on {workers.count} "
         f"worker{'s' if workers.count != 1 else ''} in {len(spans)} "
         f"batch{'es' if len(spans) != 1 else ''} of up to "
         f"{spans[0].stop - spans[0].start}"
     )
 
-    def report(batch: int, stats: BatchStats) -> None:
+    def prepared(batch: int, trials: Sequence[Trial]) -> None:
+        print(f"batch {batch}: prepared {len(trials)} trials")
+        if batch == 0:
+            _wait_ready(workers)
+
+    def flown(batch: int, stats: BatchStats) -> None:
         half_width = stats.confidence_interval_half_width(config.stopping.confidence)
         spread = f"+/- {half_width:.3g} m" if half_width is not None else "m"
-        print(f"batch {batch}: {stats.trials} trials, apogee {stats.mean:.6g} {spread}")
+        print(
+            f"batch {batch}: {stats.trials} trials flown, apogee {stats.mean:.6g} "
+            f"{spread}"
+        )
 
     try:
-        result = runner.fly_campaign(config, workers, trials, report)
+        with closing(runner.prepare_batches(config, overwrite=overwrite)) as batches:
+            result = runner.fly_campaign(config, workers, batches, prepared, flown)
+    except FileExistsError as error:
+        raise SystemExit(f"{error}; pass --overwrite to write into it") from None
     except RuntimeError as error:
         raise SystemExit(str(error)) from None
     counts = Counter(flown.status for flown in result.results)
@@ -208,15 +197,21 @@ def _fly(
     return result
 
 
-def _show_ready(bars: Progress, task: TaskID, workers: parallel.Workers) -> None:
-    """Show how many workers are ready: a red cross until all are, then a check."""
-    ready = workers.ready()
-    utf = "utf" in bars.console.encoding.lower()
-    if ready == workers.count:
-        mark = "[green]" + ("✓" if utf else "+") + "[/]"
-    else:
-        mark = "[red]" + ("✗" if utf else "x") + "[/]"
-    bars.update(task, completed=ready, description=f"{mark} workers ready")
+def _wait_ready(workers: parallel.Workers) -> None:
+    """Show the workers coming ready, a red cross until all are, then a check."""
+    with progress_bars() as bars:
+        task = bars.add_task("workers ready", total=workers.count)
+        utf = "utf" in bars.console.encoding.lower()
+        while True:
+            ready = workers.ready()
+            if ready == workers.count:
+                mark = "[green]" + ("✓" if utf else "+") + "[/]"
+            else:
+                mark = "[red]" + ("✗" if utf else "x") + "[/]"
+            bars.update(task, completed=ready, description=f"{mark} workers ready")
+            if workers.settled():
+                return
+            clock.sleep(0.1)
 
 
 def _since(start: float) -> float:
@@ -225,7 +220,8 @@ def _since(start: float) -> float:
 
 
 def _wall_time(**phases: float) -> str:
-    """Return the wall time of each phase, as flight_sim prints a run's."""
+    """Return the wall time of each phase and their total, as flight_sim prints."""
+    phases["total"] = sum(phases.values())
     return "wall time: " + ", ".join(f"{name} {s:.1f} s" for name, s in phases.items())
 
 

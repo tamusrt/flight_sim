@@ -2,6 +2,7 @@
 
 import math
 import shutil
+from contextlib import closing
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,7 @@ from edith.config import EdithConfig
 from edith.dispersion import _distribution_name
 from edith.errors import EdithConfigError
 from edith.parallel import Workers
-from edith.runner import CampaignResult, fly_campaign, prepare
+from edith.runner import CampaignResult, fly_campaign, prepare_batches
 from edith.statistics.distributions import (
     DISTRIBUTIONS,
     Distribution,
@@ -223,7 +224,9 @@ def test_a_rule_waits_while_there_is_no_standard_error() -> None:
 
 def _result(stats: BatchStats, tmp_path: Path) -> CampaignResult:
     """Return a campaign's result holding only its statistics."""
-    return CampaignResult(stats, "all_batches", 0.95, tmp_path / "trials.csv", [])
+    return CampaignResult(
+        stats, "all_batches", 0.95, tmp_path / "trials.csv", [], prepare_s=0.0
+    )
 
 
 def test_the_summary_says_what_a_missing_standard_error_needs(tmp_path: Path) -> None:
@@ -298,9 +301,11 @@ half_width = "0.25 kg"
 
 def _fly(config: EdithConfig) -> tuple[pd.DataFrame, CampaignResult]:
     """Prepare and fly a campaign on two workers, returning its trials and result."""
-    trials = list(prepare(config))
-    with Workers(2, config.output_dir / "workers") as workers:
-        result = fly_campaign(config, workers, trials)
+    with (
+        Workers(2, config.output_dir / "workers") as workers,
+        closing(prepare_batches(config)) as batches,
+    ):
+        result = fly_campaign(config, workers, batches)
     return pd.read_csv(result.trials_path), result
 
 
@@ -335,6 +340,13 @@ def test_a_campaign_stops_early_when_its_target_is_met(tmp_path: Path) -> None:
     assert result.stats.batches == 2
     assert len(frame) == 4
     assert len(result.results) == 4
+    runs = config.output_dir / "runs"
+    assert sorted(path.name for path in runs.iterdir()) == [
+        "0000",
+        "0001",
+        "0002",
+        "0003",
+    ]
 
 
 def test_distributions_are_subclasses_of_the_base() -> None:
