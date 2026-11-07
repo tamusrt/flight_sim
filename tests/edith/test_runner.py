@@ -6,8 +6,7 @@ from pathlib import Path
 import pytest
 
 from edith.config import EdithConfig
-from edith.runner import prepare, run_directory
-from edith.sampler import sample
+from edith.runner import draw_batch, prepare, run_directory
 from flight_sim.simulation import Simulation
 
 
@@ -22,7 +21,7 @@ def test_prepare_writes_a_dispersed_run_directory_per_trial(campaign: Path) -> N
     )
     config = EdithConfig.from_file(campaign)
 
-    directories = list(prepare(config, sample(config)))
+    directories = [trial.folder for trial in prepare(config)]
 
     assert directories == [run_directory(config, index) for index in range(3)]
     assert directories[0] == config.output_dir / "runs" / "0000"
@@ -49,13 +48,13 @@ def test_prepare_refuses_an_existing_runs_folder_unless_overwritten(
 ) -> None:
     """A second prepare needs overwrite, and then writes into the same folders."""
     config = EdithConfig.from_file(campaign)
-    samples = sample(config)
-    directories = list(prepare(config, samples))
+    directories = [trial.folder for trial in prepare(config)]
 
     with pytest.raises(FileExistsError, match="runs already exists"):
-        list(prepare(config, samples))
+        list(prepare(config))
 
-    assert list(prepare(config, samples, overwrite=True)) == directories
+    again = [trial.folder for trial in prepare(config, overwrite=True)]
+    assert again == directories
 
 
 def test_prepare_writes_the_campaigns_output_settings(campaign: Path) -> None:
@@ -64,7 +63,7 @@ def test_prepare_writes_the_campaigns_output_settings(campaign: Path) -> None:
     campaign.write_text(text + "\n[output]\nplots = []\n", encoding="utf-8")
     config = EdithConfig.from_file(campaign)
 
-    directory = next(prepare(config, sample(config)))
+    directory = next(prepare(config)).folder
 
     text = (directory / "resolved_input.toml").read_text(encoding="utf-8")
     output = tomllib.loads(text)["output"]
@@ -83,7 +82,7 @@ def test_prepare_compresses_csv_inputs(campaign: Path) -> None:
     )
     config = EdithConfig.from_file(campaign)
 
-    directory = next(prepare(config, sample(config)))
+    directory = next(prepare(config)).folder
 
     assert (directory / "inputs" / "aero.parquet").is_file()
     assert not (directory / "inputs" / "aero.csv").exists()
@@ -99,7 +98,7 @@ def test_prepare_lightweight_writes_only_trial_overrides(campaign: Path) -> None
     )
     config = EdithConfig.from_file(campaign)
 
-    directory = next(prepare(config, sample(config)))
+    directory = next(prepare(config)).folder
     text = (directory / "resolved_input.toml").read_text(encoding="utf-8")
     table = tomllib.loads(text)
 
@@ -119,3 +118,22 @@ def test_prepare_lightweight_writes_only_trial_overrides(campaign: Path) -> None
     assert simulation.config.truth.launch_rail.friction_coefficient == pytest.approx(
         table["config"]["truth"]["launch_rail"]["friction_coefficient"]
     )
+
+
+def test_prepare_draws_each_trial_from_senais_batch_streams(campaign: Path) -> None:
+    """A trial's numbers are the campaign's draw_batch values for its batch."""
+    text = campaign.read_text(encoding="utf-8")
+    campaign.write_text(
+        text.replace("num_sims = 3", "num_sims = 4\nbatch_size = 2"), encoding="utf-8"
+    )
+    config = EdithConfig.from_file(campaign)
+
+    trials = list(prepare(config))
+
+    assert len(trials) == 4
+    for batch in (0, 1):
+        drawn = draw_batch(config, batch, 2)
+        for index in (0, 1):
+            trial = trials[2 * batch + index]
+            expected = {key: float(values[index]) for key, values in drawn.items()}
+            assert trial.drawn == pytest.approx(expected)

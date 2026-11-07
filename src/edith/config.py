@@ -19,6 +19,7 @@ from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from edith.dispersion import DISPERSION_CLASSES, BaseDispersion, StandardDispersion
 from edith.errors import EdithConfigError, check_keys, quoted_key_path
+from edith.statistics.stopping import STOPPING_RULES
 from edith.targets import load_base_sim
 from flight_sim.config import ConfigError, InputSource, build, load_toml
 from flight_sim.config.toml_files import display_path, untagged
@@ -26,7 +27,14 @@ from flight_sim.output import OutputConfiguration, fill
 from flight_sim.simulation import Simulation
 from flight_sim.units import Scalar, UnitChecked
 
-__all__ = ["CampaignSettings", "EdithConfig", "InputMode", "Sampling", "output_values"]
+__all__ = [
+    "CampaignSettings",
+    "EdithConfig",
+    "InputMode",
+    "Sampling",
+    "StoppingSettings",
+    "output_values",
+]
 
 Sampling: TypeAlias = Literal["lhs", "random"]
 InputMode: TypeAlias = Literal["normal", "compressed", "lightweight"]
@@ -106,6 +114,7 @@ class CampaignSettings(UnitChecked):
     batch_size: int | None = None  # Trials per batch
     trial_timeout: Annotated[Scalar | None, "s"] = None
     input_mode: InputMode = "normal"
+    stopping: StoppingSettings = field(default_factory=StoppingSettings)
 
     def __post_init__(self) -> None:
         """Check the settings' ranges, and the base sim and output folder.

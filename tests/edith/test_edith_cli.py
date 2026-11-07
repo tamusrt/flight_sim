@@ -72,11 +72,16 @@ def test_a_campaign_flies_on_the_workers_given(
     lines = capsys.readouterr().out.splitlines()
     out = campaign.parent.parent / "out"
 
-    assert lines[-3] == f"3 trials: 3 OK; see {(out / 'edith.log').as_posix()}"
+    assert f"3 trials: 3 OK; see {(out / 'edith.log').as_posix()}" in lines
+    assert any(line.startswith("batch 0: 3 trials, apogee ") for line in lines)
+    assert lines[-4].startswith("apogee ")
+    assert lines[-4].endswith("3 trials in 1 batches)")
+    assert lines[-3] == f"Trials: {(out / 'trials.csv').as_posix()}"
     assert lines[-2].startswith("wall time: read ")
     assert ", fly " in lines[-2] and ", total " in lines[-2]
     assert lines[-1].startswith("trials: ")
     assert lines[-1].endswith(" trials/s on 1 worker")
+    assert (out / "trials.csv").read_text(encoding="utf-8").count("OK") == 3
     assert len((out / "edith.log").read_text(encoding="utf-8").splitlines()) == 3
     assert all((out / "runs" / f"000{i}" / "run.toml").is_file() for i in range(3))
 

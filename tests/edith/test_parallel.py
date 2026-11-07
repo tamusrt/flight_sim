@@ -5,20 +5,20 @@ from itertools import islice
 from pathlib import Path
 from typing import Any, cast
 
-import zarr
 import xarray as xr
+import zarr
 
 from edith.config import EdithConfig
 from edith.parallel import CAMPAIGN_LOG, WORKER_LOGS, Status, Workers, run
 from edith.runner import prepare
-from edith.sampler import sample
 from edith.worker import LOG, fly_directory
 
 
 def _prepared(campaign: Path, count: int) -> tuple[EdithConfig, list[Path]]:
     """Prepare and return the campaign's first ``count`` run directories."""
     config = EdithConfig.from_file(campaign)
-    return config, list(islice(prepare(config, sample(config)), count))
+    trials = islice(prepare(config), count)
+    return config, [trial.folder for trial in trials]
 
 
 def test_fly_directory_flies_a_prepared_run_and_logs_it(campaign: Path) -> None:

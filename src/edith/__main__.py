@@ -1,20 +1,21 @@
-"""EDITH runner: sample, prepare and fly the campaign given on the command line."""
+"""EDITH runner: prepare and fly the campaign given on the command line."""
 
 import argparse
 import sys
 import time as clock
 from collections import Counter
 from collections.abc import Sequence
-from pathlib import Path
 from statistics import mean
 
 from rich.progress import Progress, TaskID
 
 from edith import parallel, runner
 from edith.config import EdithConfig
+from edith.dispersion import BaseDispersion, Distribution, Normal, StandardDispersion
 from edith.errors import EdithConfigError
-from edith.parallel import Result, Status, progress_bars
-from edith.sampler import sample
+from edith.parallel import Status, progress_bars
+from edith.runner import CampaignResult, Trial
+from edith.statistics.estimators import BatchStats
 from edith.zarr_output import STORE, initialize
 from flight_sim.config.toml_files import display_path
 
@@ -23,8 +24,8 @@ COMMANDS = ("prepare",)
 
 _DESCRIPTIONS = {
     None: "Run a Monte Carlo campaign of a sim: prepare a run directory per "
-    'trial, then fly them in parallel. "edith prepare FILE" stops after the '
-    "directories.",
+    "trial, then fly them in parallel, batch by batch, until the stopping rule "
+    'is met. "edith prepare FILE" stops after the directories.',
     "prepare": "Prepare a campaign's run directories, one dispersed sim per "
     "trial, without flying them.",
 }
@@ -34,8 +35,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Read a campaign file, prepare its trials and fly them in parallel.
 
     A first argument of "prepare" stops after the run directories. Each step
-    prints what it did, and the end prints the wall time of each step, as
-    flight_sim prints a run's.
+    prints what it did; the end prints the apogee estimate and the wall time
+    of each step, as flight_sim prints a run's.
 
     Args:
         argv (Sequence[str] | None, optional): Command-line arguments.
@@ -43,8 +44,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     Raises:
         SystemExit: With the usage and code 2 if no file is given, with the
-            error if the campaign cannot be read or prepared, or with code 1
-            if a trial failed or timed out.
+            error if the campaign cannot be read, prepared or flown, or with
+            code 1 if a trial failed or timed out.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
     command = argv.pop(0) if argv and argv[0] in COMMANDS else None
@@ -67,19 +68,23 @@ def main(argv: Sequence[str] | None = None) -> None:
     with parallel.Workers(
         count, config.output_dir / parallel.WORKER_LOGS, config.batch_size
     ) as workers:
-        directories = _prepare(config, args.config, args.overwrite, workers)
+        trials = _prepare(config, args.config, args.overwrite, workers)
         phases["prepare"] = _since(start) - phases["read"]
         initialize(config.output_dir / STORE, config.batch_size)
-        results = _fly(config, workers, directories)
+        result = _fly(config, workers, trials)
     phases["fly"] = _since(start) - sum(phases.values())
+    if result.stopped_by == "num_sims" and config.stopping.rule != "fixed":
+        print(f"Warning: stopped at num_sims before the {config.stopping.rule} target")
+    print(result.summary())
+    print(f"Trials: {display_path(result.trials_path)}")
     print(_wall_time(**phases, total=_since(start)))
-    seconds = [result.seconds for result in results]
+    seconds = [flown.seconds for flown in result.results]
     print(
         f"trials: {mean(seconds):.1f} s each on average, {min(seconds):.1f} s to "
-        f"{max(seconds):.1f} s; {len(results) / phases['fly']:.2f} trials/s on "
+        f"{max(seconds):.1f} s; {len(seconds) / phases['fly']:.2f} trials/s on "
         f"{count} worker{'s' if count != 1 else ''}"
     )
-    if any(result.status is not Status.OK for result in results):
+    if any(flown.status is not Status.OK for flown in result.results):
         raise SystemExit(1)
 
 
@@ -99,9 +104,7 @@ def _read(path: str) -> EdithConfig:
         f"seed {config.master_seed}"
     )
     header = ("key", "nominal", "distribution")
-    rows = [
-        (dispersion.key, *dispersion.describe()) for dispersion in config.dispersions
-    ]
+    rows = [_row(dispersion) for dispersion in config.dispersions]
     widths = [
         max(len(cell) for cell in column) for column in zip(header, *rows, strict=True)
     ]
@@ -111,12 +114,41 @@ def _read(path: str) -> EdithConfig:
     return config
 
 
+def _row(dispersion: BaseDispersion) -> tuple[str, str, str]:
+    """Return a dispersion's row of the table: key, nominal and distribution."""
+    if not isinstance(dispersion, StandardDispersion):
+        return dispersion.key, "", type(dispersion).__name__
+    units = dispersion.units
+    return (
+        dispersion.key,
+        _quantity(dispersion.nominal, units),
+        _describe(dispersion.distribution, units),
+    )
+
+
+def _describe(distribution: Distribution, units: str) -> str:
+    """Return a distribution in words, such as "normal, sigma 0.25 kg"."""
+    if isinstance(distribution, Normal):
+        parts = [f"normal, sigma {_quantity(distribution.sigma, units)}"]
+        if distribution.low is not None:
+            parts.append(f"low {_quantity(distribution.low, units)}")
+        if distribution.high is not None:
+            parts.append(f"high {_quantity(distribution.high, units)}")
+        return ", ".join(parts)
+    return f"uniform from {distribution.low:g} to {_quantity(distribution.high, units)}"
+
+
+def _quantity(value: float, units: str) -> str:
+    """Return a number with its units, such as "0.25 kg", or bare for none."""
+    return f"{value:g} {units}".rstrip()
+
+
 def _prepare(
     config: EdithConfig,
     path: str,
     overwrite: bool,
     workers: parallel.Workers | None = None,
-) -> list[Path]:
+) -> list[Trial]:
     """Prepare the campaign's run directories behind a progress bar.
 
     Given workers, a row above the bar counts those ready, with a check once
@@ -126,7 +158,7 @@ def _prepare(
         SystemExit: With the error, if the runs folder exists and ``overwrite``
             is not set.
     """
-    prepared = runner.prepare(config, sample(config), overwrite=overwrite)
+    prepared = runner.prepare(config, overwrite=overwrite)
     try:
         with progress_bars() as bars:
             readiness = None
@@ -134,9 +166,9 @@ def _prepare(
                 readiness = bars.add_task("workers ready", total=workers.count)
                 _show_ready(bars, readiness, workers)
             task = bars.add_task("prepare", total=config.num_sims)
-            directories = []
-            for directory in prepared:
-                directories.append(directory)
+            trials = []
+            for trial in prepared:
+                trials.append(trial)
                 bars.update(task, advance=1)
                 if workers is not None and readiness is not None:
                     _show_ready(bars, readiness, workers)
@@ -150,33 +182,44 @@ def _prepare(
     except EdithConfigError as error:
         raise SystemExit(f"Cannot prepare {path}:\n  {error}") from None
     runs = display_path(config.output_dir / runner.RUNS)
-    print(f"Prepared {len(directories)} run directories in {runs}")
-    return directories
+    print(f"Prepared {len(trials)} run directories in {runs}")
+    return trials
 
 
 def _fly(
-    config: EdithConfig, workers: parallel.Workers, directories: Sequence[Path]
-) -> list[Result]:
-    """Fly the run directories on the workers and print the tally of outcomes."""
-    quotient, remainder = divmod(len(directories), workers.count)
-    each = f"{quotient} to {quotient + 1}" if remainder else str(quotient)
+    config: EdithConfig, workers: parallel.Workers, trials: Sequence[Trial]
+) -> CampaignResult:
+    """Fly the trials batch by batch on the workers, printing each batch's estimate.
+
+    Raises:
+        SystemExit: With the error, if most of a batch's trials fail.
+    """
+    spans = runner.batches(config)
     print(
-        f"Flying {len(directories)} trials on {workers.count} "
-        f"worker{'s' if workers.count != 1 else ''}, {each} each"
+        f"Flying {len(trials)} trials on {workers.count} "
+        f"worker{'s' if workers.count != 1 else ''} in {len(spans)} "
+        f"batch{'es' if len(spans) != 1 else ''} of up to "
+        f"{spans[0].stop - spans[0].start}"
     )
-    timeout = config.trial_timeout
-    log = config.output_dir / parallel.CAMPAIGN_LOG
-    results = workers.run(
-        directories,
-        None if timeout is None else float(timeout.m_as("s")),
-        log,
-    )
-    counts = Counter(result.status for result in results)
+
+    def report(batch: int, stats: BatchStats) -> None:
+        half_width = stats.ci_half_width(config.stopping.confidence)
+        print(
+            f"batch {batch}: {stats.trials} trials, apogee {stats.mean:.6g} "
+            f"+/- {half_width:.3g} m"
+        )
+
+    try:
+        result = runner.fly_campaign(config, workers, trials, report)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from None
+    counts = Counter(flown.status for flown in result.results)
     tally = ", ".join(
         f"{counts[status]} {status}" for status in Status if counts[status]
     )
-    print(f"{len(results)} trials: {tally}; see {display_path(log)}")
-    return results
+    log = display_path(config.output_dir / parallel.CAMPAIGN_LOG)
+    print(f"{len(result.results)} trials: {tally}; see {log}")
+    return result
 
 
 def _show_ready(bars: Progress, task: TaskID, workers: parallel.Workers) -> None:
@@ -184,9 +227,9 @@ def _show_ready(bars: Progress, task: TaskID, workers: parallel.Workers) -> None
     ready = workers.ready()
     utf = "utf" in bars.console.encoding.lower()
     if ready == workers.count:
-        mark = "[green]" + ("\u2713" if utf else "+") + "[/]"
+        mark = "[green]" + ("✓" if utf else "+") + "[/]"
     else:
-        mark = "[red]" + ("\u2717" if utf else "x") + "[/]"
+        mark = "[red]" + ("✗" if utf else "x") + "[/]"
     bars.update(task, completed=ready, description=f"{mark} workers ready")
 
 
