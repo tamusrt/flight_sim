@@ -35,6 +35,17 @@ input_mode = "lightweight"
 # batch_size = 13           # Trials per batch and per Zarr chunk
 # trial_timeout = "10 min"  # Longer trials stop as TIMEOUT; in s, min or h
 
+# Stopping. Each batch is an independent replicate, and the apogee's standard
+# error comes from the spread of the batch means. num_sims always caps the run.
+#   rule = "fixed"           run all num_sims trials
+#   rule = "standard_error"  stop once the apogee's standard error <= target
+#   rule = "ci_half_width"   stop once its confidence interval's half-width
+#                            <= target, at the given confidence
+[stopping]
+rule = "fixed"
+# target = "5 m"
+# confidence = 0.95
+
 # Output settings of every trial, over the base sim's [output]; each trial's
 # directory is its own run directory. Left out, trials write what the base
 # sim writes. Writing is most of a trial's time: plots above all, and

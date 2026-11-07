@@ -36,6 +36,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16.5",
+    "xarray>=2024",
 ]
 
 [tool.ruff]

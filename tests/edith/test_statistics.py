@@ -9,7 +9,8 @@ import pandas as pd  # type: ignore[import-untyped]
 import pytest
 
 from edith.config import EdithConfig
-from edith.runner import run_campaign
+from edith.parallel import Workers
+from edith.runner import CampaignResult, fly_campaign, prepare
 from edith.statistics.distributions import Normal, Uniform, clip_percentiles
 from edith.statistics.estimators import BatchStats
 from edith.statistics.generators import GENERATORS, stream
@@ -125,6 +126,9 @@ base_sim = "base/sim.toml"
 output_dir = "out"
 batch_size = 2
 {stopping}
+[output]
+plots = []
+
 [dispersions."config.truth.launch_rail.elevation"]
 dist_type = "normal"
 sigma = "0.5 deg"
@@ -139,29 +143,40 @@ half_width = "0.25 kg"
     return path
 
 
+def _fly(config: EdithConfig) -> tuple[pd.DataFrame, CampaignResult]:
+    """Prepare and fly a campaign on two workers, returning its trials and result."""
+    trials = list(prepare(config))
+    with Workers(2, config.output_dir / "workers") as workers:
+        result = fly_campaign(config, workers, trials)
+    return pd.read_csv(result.trials_path), result
+
+
 def test_a_small_campaign_flies_and_records_every_trial(tmp_path: Path) -> None:
     """Four trials in two batches give four finite apogees and their folders."""
     config = EdithConfig.from_file(_campaign(tmp_path))
 
-    result = run_campaign(config)
-    frame = pd.read_csv(result.trials_path)
+    frame, result = _fly(config)
 
     assert len(frame) == 4
     assert frame["status"].eq("OK").all()
     assert np.isfinite(frame["apogee"]).all()
     assert (frame["apogee"] > 100).all()
+    assert list(frame["batch"]) == [0, 0, 1, 1]
+    assert "properties.dry_mass_properties.mass" in frame.columns
     assert (result.stats.batches, result.stats.trials) == (2, 4)
     assert result.stopped_by == "num_sims"
-    assert (config.output_dir / "runs" / "trial_00003").is_dir()
+    assert (config.output_dir / "runs" / "0003" / "run.toml").is_file()
     assert "apogee" in result.summary()
 
 
 def test_a_campaign_stops_early_when_its_target_is_met(tmp_path: Path) -> None:
     """A loose standard-error target ends the campaign after two batches."""
     stopping = '[stopping]\nrule = "standard_error"\ntarget = "100000 m"\n'
-    path = _campaign(tmp_path, num_sims=20, stopping=stopping)
+    config = EdithConfig.from_file(_campaign(tmp_path, num_sims=20, stopping=stopping))
 
-    result = run_campaign(EdithConfig.from_file(path))
+    frame, result = _fly(config)
 
     assert result.stopped_by == "rule"
     assert result.stats.batches == 2
+    assert len(frame) == 4
+    assert len(result.results) == 4
