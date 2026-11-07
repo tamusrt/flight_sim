@@ -1,7 +1,6 @@
 """EDITH campaign file tests."""
 
 import pickle
-import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -86,76 +85,53 @@ def test_the_trials_in_all_are_the_batches_times_their_size(tmp_path: Path) -> N
     assert (config.num_batches, config.flight_per_batch, config.num_sims) == (2, 5, 10)
 
 
-def test_example_campaign_reads_every_dispersion() -> None:
-    """The example builds its settings and six dispersions in base-sim units."""
+def test_the_example_campaign_loads() -> None:
+    """The shipped example reads, with every dispersion the standard class."""
     config = EdithConfig.from_file(_CAMPAIGN)
-    wind_speed = config.dispersions[4]
 
-    assert (config.num_sims, config.master_seed, config.generator) == (
-        250,
-        9999,
-        "LatinHypercubeGenerator",
-    )
-    assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
-    assert config.source.path == config.base_sim
+    assert config.source.path == config.base_sim == (_EXAMPLE / "sim.toml").resolve()
     assert config.output_dir.parent == Path("out").resolve()
-    assert re.fullmatch(
-        r"edith_sol_invictus_example_\d{4}-\d\d-\d\d_\d{6}", config.output_dir.name
-    )
-    assert (config.flight_per_batch, config.trial_timeout) == (50, None)
-    assert config.dispersions[:4] == (
-        StandardDispersion(
-            "properties.dry_mass_properties.mass",
-            17.0,
-            Normal(0.25),
-            "kg",
-        ),
-        StandardDispersion(
-            "properties.dry_mass_properties.cg_location.value[0]",
-            -1.0,
-            Normal(0.02),
-            "m",
-        ),
-        StandardDispersion(
-            "config.truth.launch_rail.elevation",
-            85.0,
-            Normal(0.5, high=90.0),
-            "deg",
-        ),
-        StandardDispersion(
-            "config.truth.launch_rail.friction_coefficient",
-            0.0,
-            Uniform(0.0, 0.2),
-            "",
-        ),
-    )
-    assert isinstance(wind_speed, StandardDispersion)
-    assert (wind_speed.key, wind_speed.nominal, wind_speed.units) == (
-        "config.truth.wind.speed",
-        0.0,
-        "m/s",
-    )
-    assert isinstance(wind_speed.distribution, Uniform)
-    assert wind_speed.distribution.low == 0.0
-    assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
-    assert config.output == {
-        "plots": [],
-        "formats": ["parquet"],
-        "sample_interval": "0.05 s",
-    }
-    assert config.dispersions[5:] == (
-        StandardDispersion(
+    assert config.dispersions
+    assert all(isinstance(d, StandardDispersion) for d in config.dispersions)
+
+
+def test_dispersions_read_in_file_order_in_the_base_sims_units(tmp_path: Path) -> None:
+    """Dispersions keep their order, and their numbers arrive in the nominal's units."""
+    tables = (
+        _MASS
+        + _table(
+            "config.truth.wind.speed",
+            'distribution = "Uniform"\nlow = "0 mph"\nhigh = "15 mph"',
+        )
+        + _table(
             "config.truth.wind.from_azimuth",
-            0.0,
-            Uniform(-30.0, 30.0),
-            "deg",
-        ),
+            'distribution = "Uniform"\nhalf_width = "30 deg"',
+        )
+        + _table(
+            "config.truth.launch_rail.friction_coefficient",
+            'distribution = "Uniform"\nlow = 0.0\nhigh = 0.2',
+        )
+    )
+
+    config = EdithConfig.from_file(_campaign(tmp_path, tables))
+
+    mass, speed, azimuth, friction = config.dispersions
+    assert mass == StandardDispersion(_MASS_KEY, 17.0, Normal(0.25), "kg")
+    assert isinstance(speed, StandardDispersion)
+    assert isinstance(speed.distribution, Uniform)
+    assert (speed.nominal, speed.units, speed.distribution.low) == (0.0, "m/s", 0.0)
+    assert speed.distribution.high == pytest.approx(15 * 0.44704)
+    assert azimuth == StandardDispersion(
+        "config.truth.wind.from_azimuth", 0.0, Uniform(-30.0, 30.0), "deg"
+    )
+    assert friction == StandardDispersion(
+        "config.truth.launch_rail.friction_coefficient", 0.0, Uniform(0.0, 0.2), ""
     )
 
 
-def test_config_survives_pickling() -> None:
+def test_config_survives_pickling(tmp_path: Path) -> None:
     """A campaign reaches worker processes intact."""
-    config = EdithConfig.from_file(_CAMPAIGN)
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS))
 
     assert pickle.loads(pickle.dumps(config)) == config
 

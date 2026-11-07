@@ -228,7 +228,6 @@ def fly_campaign(
     stopped_by = "all_batches"
     prepare_s = 0.0
     trials_path = config.output_dir / TRIALS
-    log = config.output_dir / CAMPAIGN_LOG
     timeout = config.trial_timeout
     try:
         start = clock.perf_counter()
@@ -239,7 +238,7 @@ def fly_campaign(
             flown = workers.run(
                 [trial.folder for trial in trials],
                 None if timeout is None else float(timeout.m_as("s")),
-                log,
+                config.output_dir / CAMPAIGN_LOG,
             )
             results.extend(flown)
             batch_rows = _rows(batch, len(rows), trials, flown)
