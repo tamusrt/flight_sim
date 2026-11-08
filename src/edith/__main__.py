@@ -11,11 +11,13 @@ from rich.progress import Progress, TaskID
 
 from edith import parallel, runner
 from edith.config import EdithConfig
-from edith.dispersion import BaseDispersion, Distribution, Normal, StandardDispersion
+from edith.dispersion import BaseDispersion, StandardDispersion
 from edith.errors import EdithConfigError
 from edith.parallel import Status, progress_bars
 from edith.runner import CampaignResult, Trial
+from edith.statistics.distributions import quantity_text
 from edith.statistics.estimators import BatchStats
+from edith.statistics.stopping import FixedTrials
 from edith.zarr_output import STORE, initialize
 from flight_sim.config.toml_files import display_path
 
@@ -66,15 +68,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Started now, the workers import flight_sim while the trials are prepared
     count = min(args.workers, config.num_sims)
     with parallel.Workers(
-        count, config.output_dir / parallel.WORKER_LOGS, config.batch_size
+        count, config.output_dir / parallel.WORKER_LOGS, config.zarr_chunk_rows
     ) as workers:
         trials = _prepare(config, args.config, args.overwrite, workers)
         phases["prepare"] = _since(start) - phases["read"]
-        initialize(config.output_dir / STORE, config.batch_size)
+        initialize(config.output_dir / STORE, config.zarr_chunk_rows)
         result = _fly(config, workers, trials)
     phases["fly"] = _since(start) - sum(phases.values())
-    if result.stopped_by == "num_sims" and config.stopping.rule != "fixed":
-        print(f"Warning: stopped at num_sims before the {config.stopping.rule} target")
+    if (
+        result.stopped_by == "all_batches"
+        and config.stopping.rule != FixedTrials.__name__
+    ):
+        print(f"Warning: flew every batch before the {config.stopping.rule} target")
     print(result.summary())
     print(f"Trials: {display_path(result.trials_path)}")
     print(_wall_time(**phases, total=_since(start)))
@@ -100,7 +105,7 @@ def _read(path: str) -> EdithConfig:
         raise SystemExit(f"Cannot read {path}:\n  {error}") from None
     print(
         f"{display_path(config.path)}: {config.num_sims} trials of "
-        f"{display_path(config.base_sim)}, {config.sampling} sampling, "
+        f"{display_path(config.base_sim)}, generator {config.generator}, "
         f"seed {config.master_seed}"
     )
     header = ("key", "nominal", "distribution")
@@ -121,26 +126,9 @@ def _row(dispersion: BaseDispersion) -> tuple[str, str, str]:
     units = dispersion.units
     return (
         dispersion.key,
-        _quantity(dispersion.nominal, units),
-        _describe(dispersion.distribution, units),
+        quantity_text(dispersion.nominal, units),
+        dispersion.distribution.describe(units),
     )
-
-
-def _describe(distribution: Distribution, units: str) -> str:
-    """Return a distribution in words, such as "normal, sigma 0.25 kg"."""
-    if isinstance(distribution, Normal):
-        parts = [f"normal, sigma {_quantity(distribution.sigma, units)}"]
-        if distribution.low is not None:
-            parts.append(f"low {_quantity(distribution.low, units)}")
-        if distribution.high is not None:
-            parts.append(f"high {_quantity(distribution.high, units)}")
-        return ", ".join(parts)
-    return f"uniform from {distribution.low:g} to {_quantity(distribution.high, units)}"
-
-
-def _quantity(value: float, units: str) -> str:
-    """Return a number with its units, such as "0.25 kg", or bare for none."""
-    return f"{value:g} {units}".rstrip()
 
 
 def _prepare(
@@ -192,7 +180,7 @@ def _fly(
     """Fly the trials batch by batch on the workers, printing each batch's estimate.
 
     Raises:
-        SystemExit: With the error, if most of a batch's trials fail.
+        SystemExit: With the error, if too many of a batch's trials fail.
     """
     spans = runner.batches(config)
     print(
@@ -203,11 +191,9 @@ def _fly(
     )
 
     def report(batch: int, stats: BatchStats) -> None:
-        half_width = stats.ci_half_width(config.stopping.confidence)
-        print(
-            f"batch {batch}: {stats.trials} trials, apogee {stats.mean:.6g} "
-            f"+/- {half_width:.3g} m"
-        )
+        half_width = stats.confidence_interval_half_width(config.stopping.confidence)
+        spread = f"+/- {half_width:.3g} m" if half_width is not None else "m"
+        print(f"batch {batch}: {stats.trials} trials, apogee {stats.mean:.6g} {spread}")
 
     try:
         result = runner.fly_campaign(config, workers, trials, report)

@@ -19,7 +19,15 @@ from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from edith.dispersion import DISPERSION_CLASSES, BaseDispersion, StandardDispersion
 from edith.errors import EdithConfigError, check_keys, quoted_key_path
-from edith.statistics.stopping import STOPPING_RULES
+from edith.statistics.generators import GENERATORS
+from edith.statistics.settings import (
+    DEFAULT_CONFIDENCE,
+    DEFAULT_GENERATOR,
+    DEFAULT_MAX_FAILED_FRACTION,
+    DEFAULT_MIN_TRIALS,
+    DEFAULT_ZARR_CHUNK_ROWS,
+)
+from edith.statistics.stopping import STOPPING_RULES, FixedTrials
 from edith.targets import load_base_sim
 from flight_sim.config import ConfigError, InputSource, build, load_toml
 from flight_sim.config.toml_files import display_path, untagged
@@ -31,12 +39,10 @@ __all__ = [
     "CampaignSettings",
     "EdithConfig",
     "InputMode",
-    "Sampling",
     "StoppingSettings",
     "output_values",
 ]
 
-Sampling: TypeAlias = Literal["lhs", "random"]
 InputMode: TypeAlias = Literal["normal", "compressed", "lightweight"]
 
 _DISPERSION_USAGE = (
@@ -58,20 +64,26 @@ _OUTPUT_USAGE = (
 )
 
 # Smallest value of each whole-number setting
-_MINIMUMS = {"num_sims": 1, "master_seed": 0, "batch_size": 1}
+_MINIMUMS = {
+    "num_batches": 1,
+    "master_seed": 0,
+    "flight_per_batch": 1,
+    "min_trials": 2,
+    "zarr_chunk_rows": 1,
+}
 
 
 @dataclass(frozen=True)
 class StoppingSettings(UnitChecked):
     """The ``[stopping]`` table: when the apogee estimate is good enough.
 
-    ``num_sims`` caps every rule. ``target`` is the apogee's standard error or
+    The last batch caps every rule. ``target`` is the apogee's standard error or
     confidence interval half-width the campaign stops at.
     """
 
-    rule: str = "fixed"
+    rule: str = FixedTrials.__name__
     target: Annotated[Scalar | None, "m"] = None
-    confidence: float = 0.95
+    confidence: float = DEFAULT_CONFIDENCE
 
     def __post_init__(self) -> None:
         """Check the rule, target and confidence.
@@ -83,7 +95,7 @@ class StoppingSettings(UnitChecked):
         if self.rule not in STOPPING_RULES:
             names = " or ".join(f'"{name}"' for name in STOPPING_RULES)
             raise ValueError(f"rule must be {names}, got {self.rule!r}")
-        if self.rule != "fixed":
+        if self.rule != FixedTrials.__name__:
             if self.target is None:
                 raise ValueError(f'rule "{self.rule}" needs a target, such as "5 m"')
             if not 0.0 < float(self.target.m_as("m")) < math.inf:
@@ -104,17 +116,28 @@ class CampaignSettings(UnitChecked):
     what the types alone do not.
     """
 
-    num_sims: int  # Trials to run
+    num_batches: int  # Batches to fly
     master_seed: int
     base_sim: Path  # The sim input file every trial disperses
     # Gets the trials and their results; need not exist yet. Takes {name},
     # the base sim's, and {datetime}, as a sim's output directory does.
     output_dir: Path
-    sampling: Sampling = "lhs"
-    batch_size: int | None = None  # Trials per batch
+    flight_per_batch: int  # Flights (trials) in each batch
+    generator: str = DEFAULT_GENERATOR
     trial_timeout: Annotated[Scalar | None, "s"] = None
     input_mode: InputMode = "normal"
+    # Rows per chunk of each trial's Zarr telemetry; None is one chunk per trial
+    zarr_chunk_rows: int | None = DEFAULT_ZARR_CHUNK_ROWS
+    # Fewest trials before a standard error, interval or stopping rule is given
+    min_trials: int = DEFAULT_MIN_TRIALS
+    # A batch with more than this fraction of its trials failed ends the campaign
+    max_failed_fraction: float = DEFAULT_MAX_FAILED_FRACTION
     stopping: StoppingSettings = field(default_factory=StoppingSettings)
+
+    @property
+    def num_sims(self) -> int:
+        """Flights in all: ``num_batches`` batches of ``flight_per_batch``."""
+        return self.num_batches * self.flight_per_batch
 
     def __post_init__(self) -> None:
         """Check the settings' ranges, and the base sim and output folder.
@@ -127,6 +150,14 @@ class CampaignSettings(UnitChecked):
             value = getattr(self, name)
             if value is not None and value < minimum:
                 raise ValueError(f"{name} must be at least {minimum}, got {value}")
+        if not 0.0 <= self.max_failed_fraction <= 1.0:
+            raise ValueError(
+                "max_failed_fraction must be between 0 and 1, got "
+                f"{self.max_failed_fraction}"
+            )
+        if self.generator not in GENERATORS:
+            names = " or ".join(f'"{name}"' for name in GENERATORS)
+            raise ValueError(f"generator must be {names}, got {self.generator!r}")
         timeout = self.trial_timeout
         if timeout is not None and not 0.0 < timeout.m_as("s") < math.inf:
             raise ValueError(
@@ -300,7 +331,7 @@ def _dispersion(key: str, value: object, source: InputSource) -> BaseDispersion:
     where = quoted_key_path("dispersions", key)
     if not isinstance(value, dict):
         raise EdithConfigError(
-            f"{where}: expected a table of dispersion, dist_type and its spread, "
+            f"{where}: expected a table of dispersion, distribution and its spread, "
             f"got {value!r}"
         )
     return _dispersion_class(value, where).from_table(key, value, source, where)

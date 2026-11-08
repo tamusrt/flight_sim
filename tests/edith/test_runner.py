@@ -76,7 +76,7 @@ def test_prepare_compresses_csv_inputs(campaign: Path) -> None:
     """Compressed mode converts CSV inputs before copying them."""
     campaign.write_text(
         campaign.read_text(encoding="utf-8").replace(
-            "num_sims = 3", 'num_sims = 3\ninput_mode = "compressed"'
+            "num_batches = 1", 'num_batches = 1\ninput_mode = "compressed"'
         ),
         encoding="utf-8",
     )
@@ -92,7 +92,7 @@ def test_prepare_lightweight_writes_only_trial_overrides(campaign: Path) -> None
     """Lightweight mode extends the base sim without copying its inputs."""
     campaign.write_text(
         campaign.read_text(encoding="utf-8").replace(
-            "num_sims = 3", 'num_sims = 3\ninput_mode = "lightweight"'
+            "num_batches = 1", 'num_batches = 1\ninput_mode = "lightweight"'
         ),
         encoding="utf-8",
     )
@@ -124,7 +124,11 @@ def test_prepare_draws_each_trial_from_senais_batch_streams(campaign: Path) -> N
     """A trial's numbers are the campaign's draw_batch values for its batch."""
     text = campaign.read_text(encoding="utf-8")
     campaign.write_text(
-        text.replace("num_sims = 3", "num_sims = 4\nbatch_size = 2"), encoding="utf-8"
+        text.replace(
+            "num_batches = 1\nflight_per_batch = 3",
+            "num_batches = 2\nflight_per_batch = 2",
+        ),
+        encoding="utf-8",
     )
     config = EdithConfig.from_file(campaign)
 

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import zarr
 
 from edith.__main__ import main
 
@@ -33,7 +34,7 @@ def test_prepare_describes_the_campaign_and_writes_its_run_directories(
     assert lines[0].endswith(
         "3 trials of "
         + (campaign.parent.parent / "base" / "sim.toml").as_posix()
-        + ", lhs sampling, seed 7"
+        + ", generator LatinHypercubeGenerator, seed 7"
     )
     assert lines[1].split() == ["key", "nominal", "distribution"]
     assert lines[2].split()[0] == "properties.dry_mass_properties.mass"
@@ -52,7 +53,7 @@ def test_an_invalid_campaign_file_exits_with_its_error(
 ) -> None:
     """A campaign file that does not read ends the command with the error."""
     path = tmp_path / "edith_config.toml"
-    path.write_text("num_sims = 0\n", encoding="utf-8")
+    path.write_text("num_batches = 0\n", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exit_info:
         main([str(path)])
@@ -75,8 +76,14 @@ def test_a_campaign_flies_on_the_workers_given(
     assert f"3 trials: 3 OK; see {(out / 'edith.log').as_posix()}" in lines
     assert any(line.startswith("batch 0: 3 trials, apogee ") for line in lines)
     assert lines[-4].startswith("apogee ")
-    assert lines[-4].endswith("3 trials in 1 batches)")
+    assert lines[-4].endswith(
+        "(3 trials in 1 batch). Requires additional batches for standard error"
+    )
     assert lines[-3] == f"Trials: {(out / 'trials.csv').as_posix()}"
+    # The Zarr chunk size is its own setting: a whole trial, not the batch's flights
+    telemetry = zarr.open_group(out / "results.zarr", mode="r")["runs/0000/telemetry"]
+    assert isinstance(telemetry, zarr.Array)
+    assert telemetry.chunks[0] == telemetry.shape[0] > 3
     assert lines[-2].startswith("wall time: read ")
     assert ", fly " in lines[-2] and ", total " in lines[-2]
     assert lines[-1].startswith("trials: ")

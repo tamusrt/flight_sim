@@ -27,8 +27,8 @@ from edith.parallel import CAMPAIGN_LOG, Result, Status, Workers
 from edith.statistics.estimators import BatchStats
 from edith.statistics.generators import GENERATORS, stream
 from edith.statistics.stopping import (
-    ConfidenceTarget,
-    FixedN,
+    ConfidenceIntervalTarget,
+    FixedTrials,
     StandardErrorTarget,
     StoppingRule,
 )
@@ -37,7 +37,6 @@ from flight_sim import output
 from flight_sim.config.toml_files import display_path
 
 __all__ = [
-    "DEFAULT_BATCH_SIZE",
     "RUNS",
     "TRIALS",
     "CampaignResult",
@@ -49,16 +48,11 @@ __all__ = [
     "run_directory",
 ]
 
-DEFAULT_BATCH_SIZE = 50
-
 # Folder of a campaign's output directory holding a run directory per trial
 RUNS = "runs"
 
 # Every trial's drawn values, status and apogee, in the output directory
 TRIALS = "trials.csv"
-
-# A batch with more than this fraction of failed trials ends the campaign
-MAX_FAILED_FRACTION = 0.5
 
 Values = dict[str, np.ndarray[Any, np.dtype[np.float64]]]
 
@@ -78,12 +72,12 @@ def run_directory(config: EdithConfig, index: int) -> Path:
 
 
 def batches(config: EdithConfig) -> list[slice]:
-    """Return the trial indices of each batch, in order."""
-    size = min(config.batch_size or DEFAULT_BATCH_SIZE, config.num_sims)
-    return [
-        slice(start, min(start + size, config.num_sims))
-        for start in range(0, config.num_sims, size)
-    ]
+    """Return the trial indices of each batch, in order.
+
+    There are ``num_batches`` of them, each of ``flight_per_batch`` trials.
+    """
+    size = config.flight_per_batch
+    return [slice(start, start + size) for start in range(0, config.num_sims, size)]
 
 
 def prepare(config: EdithConfig, *, overwrite: bool = False) -> Iterator[Trial]:
@@ -141,18 +135,24 @@ class CampaignResult:
     """What a campaign found: the apogee estimate, in metres, and each flight."""
 
     stats: BatchStats
-    stopped_by: str  # "rule" or "num_sims"
+    stopped_by: str  # "rule" or "all_batches"
     confidence: float
     trials_path: Path
     results: list[Result]  # Each flown trial's outcome, in trial order
 
     def summary(self) -> str:
-        """Return the estimate as a line."""
+        """Return the estimate as a line, saying what it still needs if it has no CI."""
+        batches = self.stats.batches
+        counts = f"{self.stats.trials} trials in {batches} batch"
+        counts += "es" if batches != 1 else ""
+        half_width = self.stats.confidence_interval_half_width(self.confidence)
+        if half_width is None:
+            return (
+                f"apogee {self.stats.mean:.6g} m ({counts}). {self.stats.requirement}"
+            )
         return (
-            f"apogee {self.stats.mean:.6g} +/- "
-            f"{self.stats.ci_half_width(self.confidence):.3g} m "
-            f"({self.confidence:.0%} CI, {self.stats.trials} trials in "
-            f"{self.stats.batches} batches)"
+            f"apogee {self.stats.mean:.6g} +/- {half_width:.3g} m "
+            f"({self.confidence:.0%} CI, {counts})"
         )
 
 
@@ -178,13 +178,16 @@ def fly_campaign(
             trial's outcome.
 
     Raises:
-        RuntimeError: If more than half of a batch's trials fail.
+        RuntimeError: If more than ``max_failed_fraction`` of a batch's trials fail.
     """
     rule = _make_rule(config)
-    stats = BatchStats()
+    stats = BatchStats(
+        independent_trials=GENERATORS[config.generator]().trials_are_independent,
+        min_trials=config.min_trials,
+    )
     rows: list[dict[str, Any]] = []
     results: list[Result] = []
-    stopped_by = "num_sims"
+    stopped_by = "all_batches"
     trials_path = config.output_dir / TRIALS
     log = config.output_dir / CAMPAIGN_LOG
     timeout = config.trial_timeout
@@ -200,10 +203,11 @@ def fly_campaign(
             apogees = [
                 row["apogee"] for row in batch_rows if math.isfinite(row["apogee"])
             ]
-            if len(batch_rows) - len(apogees) > MAX_FAILED_FRACTION * len(batch_rows):
+            failed_limit = config.max_failed_fraction * len(batch_rows)
+            if len(batch_rows) - len(apogees) > failed_limit:
                 raise RuntimeError(
-                    f"Most trials of batch {batch} failed; see "
-                    f"{display_path(trials_path)}"
+                    f"More than {config.max_failed_fraction:.0%} of the trials of "
+                    f"batch {batch} failed; see {display_path(trials_path)}"
                 )
             stats.add_batch(apogees)
             if on_batch is not None:
@@ -230,11 +234,11 @@ def _make_rule(config: EdithConfig) -> StoppingRule:
     """Return the stopping rule a campaign's ``[stopping]`` table describes."""
     spec = config.stopping
     if spec.target is None:
-        return FixedN()
+        return FixedTrials()
     target = float(spec.target.m_as("m"))
-    if spec.rule == StandardErrorTarget.NAME:
+    if spec.rule == StandardErrorTarget.__name__:
         return StandardErrorTarget(target)
-    return ConfidenceTarget(target, spec.confidence)
+    return ConfidenceIntervalTarget(target, spec.confidence)
 
 
 def draw_batch(config: EdithConfig, batch: int, size: int) -> Values:
@@ -243,7 +247,7 @@ def draw_batch(config: EdithConfig, batch: int, size: int) -> Values:
     Each dispersion draws from its own stream, so the others' values do not
     change when one is added or removed.
     """
-    generator = GENERATORS[config.sampling]()
+    generator = GENERATORS[config.generator]()
     return {
         d.key: d.distribution.ppf(
             generator.percentiles(size, stream(config.master_seed, batch, d.key)),

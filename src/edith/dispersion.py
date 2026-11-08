@@ -3,8 +3,8 @@
 A campaign names a dispersion class by the name of a ``BaseDispersion``
 subclass in this module, which ``DISPERSION_CLASSES`` lists, and each reads
 its own table of the campaign file. StandardDispersion, the default, disperses
-one number of the base sim with a distribution: a class in ``Distribution``,
-found by its ``DIST_TYPE`` in ``DISTRIBUTIONS``. Those live in
+one number of the base sim with a distribution: a subclass of ``Distribution``,
+found by its class name in ``DISTRIBUTIONS``. Those live in
 ``edith.statistics.distributions``, which this module re-exports. A standard
 dispersion's numbers are all in the units its nominal value is written in.
 """
@@ -76,8 +76,12 @@ class BaseDispersion(ABC):
         """
 
 
-# The dist_type values a dispersion may take, as messages list them
-_DIST_TYPES = " or ".join(f'"{name}"' for name in DISTRIBUTIONS)
+def _distribution_names() -> str:
+    """Return the distribution values a dispersion may take, as messages list them.
+
+    Built when needed, since a distribution may be defined after this module loads.
+    """
+    return " or ".join(f'"{name}"' for name in DISTRIBUTIONS)
 
 
 @dataclass(frozen=True)
@@ -110,11 +114,11 @@ class StandardDispersion(BaseDispersion):
                 the table does not describe a distribution of it.
         """
         key_path, nominal = find_target(source, key, where)
-        distribution_class = DISTRIBUTIONS[_dist_type(table, where)]
+        distribution_class = DISTRIBUTIONS[_distribution_name(table, where)]
         check_keys(
             table,
             where,
-            ("dist_type", *distribution_class.REQUIRED),
+            ("distribution", *distribution_class.REQUIRED),
             ("dispersion", *distribution_class.OPTIONAL),
             distribution_class.USAGE,
         )
@@ -142,21 +146,23 @@ DISPERSION_CLASSES: dict[str, type[BaseDispersion]] = {
 }
 
 
-def _dist_type(table: Mapping[str, object], where: str) -> str:
-    """Return a dispersion's distribution type, a key of ``DISTRIBUTIONS``.
+def _distribution_name(table: Mapping[str, object], where: str) -> str:
+    """Return a dispersion's distribution, a key of ``DISTRIBUTIONS``.
 
     Raises:
         EdithConfigError: If it is missing, or names no distribution EDITH has.
     """
-    if "dist_type" not in table:
-        raise EdithConfigError(f"{where}: missing dist_type, {_DIST_TYPES}")
-    dist_type = table["dist_type"]
-    if not isinstance(dist_type, str) or dist_type not in DISTRIBUTIONS:
+    if "distribution" not in table:
         raise EdithConfigError(
-            f"{quoted_key_path(where, 'dist_type')}: expected {_DIST_TYPES}, "
-            f"got {dist_type!r}"
+            f"{where}: missing distribution, {_distribution_names()}"
         )
-    return dist_type
+    name = table["distribution"]
+    if not isinstance(name, str) or name not in DISTRIBUTIONS:
+        raise EdithConfigError(
+            f"{quoted_key_path(where, 'distribution')}: expected "
+            f"{_distribution_names()}, got {name!r}"
+        )
+    return name
 
 
 def _number(value: object, where: str, nominal: Nominal) -> Parameter:

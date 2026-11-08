@@ -20,21 +20,22 @@ matplotlib.use("Agg")
 _EXAMPLE = Path("examples/sol_invictus")
 
 _CAMPAIGN = """
-num_sims = 3
+num_batches = 1
+flight_per_batch = 3
 master_seed = 7
 base_sim = "../base/sim.toml"
 output_dir = "../out"
 
 [dispersions."properties.dry_mass_properties.mass"]
-dist_type = "normal"
+distribution = "Normal"
 sigma = "0.25 kg"
 
 [dispersions."properties.dry_mass_properties.cg_location.value[0]"]
-dist_type = "uniform"
+distribution = "Uniform"
 half_width = "2 cm"
 
 [dispersions."config.truth.launch_rail.friction_coefficient"]
-dist_type = "uniform"
+distribution = "Uniform"
 low = 0.0
 high = 0.2
 """
