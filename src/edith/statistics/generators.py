@@ -14,6 +14,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.stats import qmc  # type: ignore[import-untyped]
 
+from edith.statistics.abstract import check_abstract_members
+
 __all__ = [
     "GENERATORS",
     "LatinHypercubeGenerator",
@@ -36,13 +38,7 @@ class PointGenerator(ABC):
             TypeError: Naming what the subclass must define.
         """
         super().__init_subclass__(**kwargs)
-        abstract = sorted(
-            name
-            for name in dir(cls)
-            if getattr(getattr(cls, name, None), "__isabstractmethod__", False)
-        )
-        if abstract:
-            raise TypeError(f"{cls.__name__} must define {', '.join(abstract)}")
+        check_abstract_members(cls)
 
     @property
     @abstractmethod

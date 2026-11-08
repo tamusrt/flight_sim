@@ -346,15 +346,13 @@ def test_distributions_are_subclasses_of_the_base() -> None:
 def test_the_distribution_base_cannot_be_used() -> None:
     """The base has abstract methods, so it cannot be instantiated."""
     with pytest.raises(TypeError):
-        Distribution()  # type: ignore[abstract]
+        Distribution()  # type: ignore[abstract]  # pylint: disable=abstract-class-instantiated
 
 
 def test_a_distribution_must_define_its_class_variables() -> None:
     """Defining a subclass without REQUIRED, OPTIONAL or USAGE fails, unregistered."""
     with pytest.raises(TypeError, match="Lacking must define REQUIRED"):
-
-        class Lacking(Distribution):
-            """A subclass that defines nothing."""
+        type("Lacking", (Distribution,), {})
 
     assert "Lacking" not in DISTRIBUTIONS
 

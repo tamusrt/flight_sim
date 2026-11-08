@@ -16,6 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import stats  # type: ignore[import-untyped]
 
+from edith.statistics.abstract import check_abstract_members
 from edith.statistics.settings import BOUND_TOLERANCE, PERCENTILE_CUTOFF
 from edith.targets import Nominal
 
@@ -105,15 +106,7 @@ class Distribution(ABC):
             raise TypeError(
                 f"{cls.__name__} lists {sorted(both)} as both required and optional"
             )
-        # Python checks abstract methods only when a class is instantiated, which
-        # a classmethod such as from_parameters never is
-        abstract = sorted(
-            name
-            for name in dir(cls)
-            if getattr(getattr(cls, name, None), "__isabstractmethod__", False)
-        )
-        if abstract:
-            raise TypeError(f"{cls.__name__} must define {', '.join(abstract)}")
+        check_abstract_members(cls)
         if cls.__name__ in DISTRIBUTIONS:
             other = DISTRIBUTIONS[cls.__name__]
             raise TypeError(

@@ -142,9 +142,9 @@ class CampaignResult:
 
     def summary(self) -> str:
         """Return the estimate as a line, saying what it still needs if it has no CI."""
-        batches = self.stats.batches
-        counts = f"{self.stats.trials} trials in {batches} batch"
-        counts += "es" if batches != 1 else ""
+        batch_count = self.stats.batches
+        counts = f"{self.stats.trials} trials in {batch_count} batch"
+        counts += "es" if batch_count != 1 else ""
         half_width = self.stats.confidence_interval_half_width(self.confidence)
         if half_width is None:
             return (
