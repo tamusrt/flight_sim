@@ -22,7 +22,6 @@ from edith.statistics.settings import (
     DEFAULT_GENERATOR,
     DEFAULT_MAX_FAILED_FRACTION,
     DEFAULT_MIN_TRIALS,
-    DEFAULT_ZARR_CHUNK_ROWS,
 )
 from flight_sim.config import ConfigError
 from flight_sim.units import scalar
@@ -150,7 +149,6 @@ def test_left_out_statistics_settings_take_the_settings_module_defaults(
 
     assert config.generator == DEFAULT_GENERATOR
     assert config.min_trials == DEFAULT_MIN_TRIALS
-    assert config.zarr_chunk_rows == DEFAULT_ZARR_CHUNK_ROWS
     assert config.max_failed_fraction == DEFAULT_MAX_FAILED_FRACTION
     assert config.stopping.confidence == DEFAULT_CONFIDENCE
 
@@ -160,14 +158,12 @@ def test_optional_settings(tmp_path: Path) -> None:
     header = _HEADER.replace("flight_per_batch = 5", "flight_per_batch = 2") + (
         'generator = "RandomGenerator"\ntrial_timeout = "10 min"\n'
         'input_mode = "lightweight"\nmax_failed_fraction = 0.25\n'
-        "zarr_chunk_rows = 100\n"
     )
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
 
     assert config.generator == "RandomGenerator"
     assert config.flight_per_batch == 2
     assert config.max_failed_fraction == 0.25
-    assert config.zarr_chunk_rows == 100
     assert config.trial_timeout == scalar(600.0, "s")
     assert config.input_mode == "lightweight"
 
@@ -243,10 +239,6 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
             "top level: missing flight_per_batch;",
         ),
         (_HEADER + "num_sims = 10\n", "top level: unknown keys ['num_sims']"),
-        (
-            _HEADER + "zarr_chunk_rows = 0\n",
-            "zarr_chunk_rows must be at least 1, got 0",
-        ),
         (
             _HEADER + "min_trials = 1\n",
             "min_trials must be at least 2, got 1",

@@ -67,10 +67,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Started now, the workers import flight_sim while the first batch is
     # prepared
     count = min(args.workers, config.num_sims)
-    initialize(config.output_dir / STORE, config.zarr_chunk_rows)
-    with parallel.Workers(
-        count, config.output_dir / parallel.WORKER_LOGS, config.zarr_chunk_rows
-    ) as workers:
+    initialize(config.output_dir / STORE)
+    with parallel.Workers(count, config.output_dir / parallel.WORKER_LOGS) as workers:
         result = _fly(config, workers, args.overwrite)
     fly_s = _since(start) - read_s - result.prepare_s
     if (

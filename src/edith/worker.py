@@ -13,7 +13,6 @@ import traceback
 from argparse import Namespace
 from contextlib import redirect_stderr, redirect_stdout
 from functools import partial
-from os import environ
 from pathlib import Path
 
 from edith import zarr_output
@@ -31,22 +30,18 @@ READY = "READY"
 
 def main() -> None:
     """Fly each run directory named on stdin, answering a status line for each."""
-    configured_batch_size = environ.get("EDITH_BATCH_SIZE", "")
-    batch_size = int(configured_batch_size) if configured_batch_size else None
     print(READY, flush=True)
     for line in sys.stdin:
         directory = line.strip()
         if directory:
-            print(fly_directory(Path(directory), batch_size), flush=True)
+            print(fly_directory(Path(directory)), flush=True)
 
 
-def fly_directory(directory: Path, batch_size: int | None = None) -> str:
+def fly_directory(directory: Path) -> str:
     """Fly a run directory, writing the flight's output to its LOG.
 
     Args:
         directory (Path): A prepared run directory.
-        batch_size (int | None, optional): Maximum telemetry rows per Zarr chunk.
-            Defaults to no explicit chunk size.
 
     Returns:
         str: "OK <seconds>", or "FAILED <reason>" with the error's first line;
@@ -68,7 +63,6 @@ def fly_directory(directory: Path, batch_size: int | None = None) -> str:
                         zarr_output.write,
                         path=directory.parents[1] / STORE,
                         trial=directory.name,
-                        batch_size=batch_size,
                     ),
                 )
             except Exception:

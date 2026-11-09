@@ -13,13 +13,12 @@ if TYPE_CHECKING:
 STORE = "results.zarr"
 
 
-def initialize(path: Path, batch_size: int | None) -> None:
+def initialize(path: Path) -> None:
     """Create the campaign's shared Zarr store before workers start writing."""
     root = zarr.open_group(path, mode="w")
     root.attrs.update(
         {
             "format": "edith",
-            "batch_size": batch_size,
             "description": "One runs/<trial> group per EDITH simulation.",
         }
     )
@@ -30,9 +29,8 @@ def write(
     flight: "Flight",
     path: Path,
     trial: str,
-    batch_size: int | None,
 ) -> None:
-    """Write one complete flight result into its independent Zarr group."""
+    """Write one complete flight result into its own group, telemetry one chunk."""
     root = zarr.open_group(path, mode="a")
     group_path = f"runs/{trial}"
     if group_path in root:
@@ -41,11 +39,10 @@ def write(
 
     frame = flight.to_dataframe()
     values = frame.drop(columns="event").to_numpy(dtype=np.float64)
-    row_chunk = min(batch_size or len(values), len(values))
     group.create_array(
         "telemetry",
         data=values,
-        chunks=(row_chunk, values.shape[1]),
+        chunks=values.shape,
         dimension_names=("time", "channel"),
     )
     group.attrs.update(

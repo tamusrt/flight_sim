@@ -81,7 +81,7 @@ def test_a_campaign_flies_on_the_workers_given(
         "(3 trials in 1 batch). Requires additional batches for standard error"
     )
     assert lines[-3] == f"Trials: {(out / 'trials.csv').as_posix()}"
-    # The Zarr chunk size is its own setting: a whole trial, not the batch's flights
+    # Each trial's telemetry is one Zarr chunk
     telemetry = zarr.open_group(out / "results.zarr", mode="r")["runs/0000/telemetry"]
     assert isinstance(telemetry, zarr.Array)
     assert telemetry.chunks[0] == telemetry.shape[0] > 3

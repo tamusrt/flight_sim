@@ -41,8 +41,6 @@ input_mode = "lightweight"
 # max_failed_fraction = 0.5 # A batch with more of its trials failed ends the run
 # min_trials = 30           # Fewest trials before a standard error, interval or
 #                           # stopping rule is given
-# zarr_chunk_rows = 1000    # Rows per chunk of each trial's Zarr telemetry; left
-#                           # out, a whole trial is one chunk
 
 # Stopping. With "RandomGenerator" the apogee's standard error is the spread of
 # all the trials. With "LatinHypercubeGenerator", whose trials in a batch are

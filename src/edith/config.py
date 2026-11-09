@@ -25,7 +25,6 @@ from edith.statistics.settings import (
     DEFAULT_GENERATOR,
     DEFAULT_MAX_FAILED_FRACTION,
     DEFAULT_MIN_TRIALS,
-    DEFAULT_ZARR_CHUNK_ROWS,
 )
 from edith.statistics.stopping import STOPPING_RULES, FixedTrials
 from edith.targets import load_base_sim
@@ -69,7 +68,6 @@ _MINIMUMS = {
     "master_seed": 0,
     "flight_per_batch": 1,
     "min_trials": 2,
-    "zarr_chunk_rows": 1,
 }
 
 
@@ -126,8 +124,6 @@ class CampaignSettings(UnitChecked):
     generator: str = DEFAULT_GENERATOR
     trial_timeout: Annotated[Scalar | None, "s"] = None
     input_mode: InputMode = "normal"
-    # Rows per chunk of each trial's Zarr telemetry; None is one chunk per trial
-    zarr_chunk_rows: int | None = DEFAULT_ZARR_CHUNK_ROWS
     # Fewest trials before a standard error, interval or stopping rule is given
     min_trials: int = DEFAULT_MIN_TRIALS
     # A batch with more than this fraction of its trials failed ends the campaign
