@@ -1,14 +1,15 @@
 # EDITH campaign: dispersed flights of the Sol Invictus example. Read with:
 #
-#   uv sync --extra edith
-#   uv run edith examples/sol_invictus_mc/edith_config.toml
+#   uv sync
+#   uv run edith examples/sol_invictus_mc/edith_config.toml -n 7
 #
-# Paths are relative to this file. The campaign file and output_dir may lie
+# -n is the worker processes, each flying one trial at a time; left out,
+# it is the CPUs less one. Paths are relative to this file. The campaign file and output_dir may lie
 # anywhere, the base sim's folder included. flight_sim reads this file as it
 # reads sim input files, so include and extends work here too.
 
 # Number of trials
-num_sims = 500
+num_sims = 250
 
 # Seeds every draw. Each dispersion draws from its own stream, made from
 # master_seed and the dispersion's key, so adding, removing or reordering
@@ -19,17 +20,29 @@ master_seed = 9999
 # includes and defaults filled in and its paths made absolute.
 base_sim = "../sol_invictus/sim.toml"
 
-# Gets runs/, a folder per trial, and the Zarr store of the results
-output_dir = "../../out/edith_sol_invictus"
+# Gets runs/, a folder per trial, and the Zarr store of the results. {name}
+# is the base sim's name and {datetime} the start, as in a sim's [output]
+# directory.
+output_dir = "../../out/edith_{name}_{datetime}"
 
 # "lhs", Latin hypercube sampling, or "random". With "lhs", changing
 # num_sims changes every trial's sample.
 sampling = "lhs"
+# Input files in each prepared run: "normal", "compressed", or "lightweight".
+input_mode = "lightweight"
 
 # Left out, EDITH picks these:
-# workers = 7               # Worker processes; default: CPUs less one
 # batch_size = 13           # Trials per batch and per Zarr chunk
 # trial_timeout = "10 min"  # Longer trials stop as TIMEOUT; in s, min or h
+
+# Output settings of every trial, over the base sim's [output]; each trial's
+# directory is its own run directory. Left out, trials write what the base
+# sim writes. Writing is most of a trial's time: plots above all, and
+# "flight_sim run <run directory>" redraws any trial's on demand.
+[output]
+plots = []
+formats = ["parquet"]
+sample_interval = "0.05 s"
 
 # ---------------------------------------------------------------------------
 # Dispersions

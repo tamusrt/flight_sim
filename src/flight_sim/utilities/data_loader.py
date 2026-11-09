@@ -197,12 +197,12 @@ def aero_table_from_csv(
     frame: AeroFrame,
     extrapolation: Extrapolation,
 ) -> AeroTable:
-    """Read a flight sim CSV and build one lookup covering every coefficient.
+    """Read a flight sim table and build one lookup covering every coefficient.
 
     Args:
-        filepath (str | Path): CSV with "Mach", "Alpha", "Phi", "Cx", "Cy",
-            "Cz", "CMx" and "xCP" columns, with components along the axes of
-            ``frame``, and optionally "CxPowerOn".
+        filepath (str | Path): CSV or Parquet with "Mach", "Alpha", "Phi",
+            "Cx", "Cy", "Cz", "CMx" and "xCP" columns, with components along
+            the axes of ``frame``, and optionally "CxPowerOn".
         reference_area (Scalar): Area the coefficients are normalized by.
         reference_length (Scalar): Length the rolling moment is also
             normalized by and xCP is measured in.
@@ -214,7 +214,7 @@ def aero_table_from_csv(
     Returns:
         AeroTable: Lookup over the CSV's grid.
     """
-    data_frame = pd.read_csv(filepath)
+    data_frame = read_data_frame(filepath)
 
     mach_axis = np.sort(data_frame["Mach"].unique())
     alpha_axis = np.sort(data_frame["Alpha"].unique())
@@ -245,3 +245,18 @@ def aero_table_from_csv(
         frame=frame,
         extrapolation=extrapolation,
     )
+
+
+def read_data_frame(filepath: str | Path) -> pd.DataFrame:
+    """Read a tabular input from CSV or Parquet.
+
+    Args:
+        filepath (str | Path): CSV or Parquet file to read.
+
+    Returns:
+        pd.DataFrame: The file's rows and columns.
+    """
+    path = Path(filepath)
+    if path.suffix.lower() == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)

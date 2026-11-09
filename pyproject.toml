@@ -14,8 +14,10 @@ dependencies = [
     "pint>=0.25.3",
     "pyarrow>=26.0.0",
     "r3f>=2.2.1",
+    "rich>=13,<15",
     "scipy>=1.17.1",
     "tomli-w>=1.0",
+    "zarr>=3.0",
 ]
 
 [project.scripts]
@@ -75,12 +77,6 @@ source = ["flight_sim", "edith"]
 
 [tool.coverage.report]
 exclude_also = ['if __name__ == "__main__":']
-
-[project.optional-dependencies]
-edith = [
-    "tomlkit>=0.13,<1",
-    "zarr>=3,<4",
-]
 
 [tool.uv.build-backend]
 module-name = ["flight_sim", "edith"]
