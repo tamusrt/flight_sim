@@ -20,13 +20,11 @@ from typing import Annotated, Any, Literal, Self, TypeAlias
 from edith.dispersion import DISPERSION_CLASSES, BaseDispersion, StandardDispersion
 from edith.errors import EdithConfigError, check_keys, quoted_key_path
 from edith.statistics.generators import GENERATORS
-from edith.statistics.settings import (
-    DEFAULT_CONFIDENCE,
-    DEFAULT_GENERATOR,
-    DEFAULT_MAX_FAILED_FRACTION,
-    DEFAULT_MIN_TRIALS,
+from edith.statistics.stopping import (
+    STOPPING_RULES,
+    ConfidenceIntervalTarget,
+    FixedTrials,
 )
-from edith.statistics.stopping import STOPPING_RULES, FixedTrials
 from edith.targets import load_base_sim
 from flight_sim.config import ConfigError, InputSource, build, load_toml
 from flight_sim.config.toml_files import display_path, untagged
@@ -62,12 +60,14 @@ _OUTPUT_USAGE = (
     f"{', '.join(_OUTPUT_KEYS)}"
 )
 
+# A batch with more than this fraction of its trials failed ends the campaign
+DEFAULT_MAX_FAILED_FRACTION = 0.5
+
 # Smallest value of each whole-number setting
 _MINIMUMS = {
     "num_batches": 1,
     "master_seed": 0,
     "flight_per_batch": 1,
-    "min_trials": 2,
 }
 
 
@@ -81,7 +81,7 @@ class StoppingSettings(UnitChecked):
 
     rule: str = FixedTrials.__name__
     target: Annotated[Scalar | None, "m"] = None
-    confidence: float = DEFAULT_CONFIDENCE
+    confidence: float | None = None
 
     def __post_init__(self) -> None:
         """Check the rule, target and confidence.
@@ -98,7 +98,9 @@ class StoppingSettings(UnitChecked):
                 raise ValueError(f'rule "{self.rule}" needs a target, such as "5 m"')
             if not 0.0 < float(self.target.m_as("m")) < math.inf:
                 raise ValueError(f"target must be above 0, got {self.target:~}")
-        if not 0.0 < self.confidence < 1.0:
+        if self.rule == ConfidenceIntervalTarget.__name__ and self.confidence is None:
+            raise ValueError(f'rule "{self.rule}" needs a confidence, such as 0.95')
+        if self.confidence is not None and not 0.0 < self.confidence < 1.0:
             raise ValueError(
                 f"confidence must be between 0 and 1, got {self.confidence}"
             )
@@ -121,11 +123,9 @@ class CampaignSettings(UnitChecked):
     # the base sim's, and {datetime}, as a sim's output directory does.
     output_dir: Path
     flight_per_batch: int  # Flights (trials) in each batch
-    generator: str = DEFAULT_GENERATOR
+    generator: str
     trial_timeout: Annotated[Scalar | None, "s"] = None
     input_mode: InputMode = "normal"
-    # Fewest trials before a standard error, interval or stopping rule is given
-    min_trials: int = DEFAULT_MIN_TRIALS
     # A batch with more than this fraction of its trials failed ends the campaign
     max_failed_fraction: float = DEFAULT_MAX_FAILED_FRACTION
     stopping: StoppingSettings = field(default_factory=StoppingSettings)

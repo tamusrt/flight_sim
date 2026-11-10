@@ -17,7 +17,6 @@ from numpy.typing import NDArray
 from scipy import stats  # type: ignore[import-untyped]
 
 from edith.statistics.abstract import check_abstract_members
-from edith.statistics.settings import BOUND_TOLERANCE, PERCENTILE_CUTOFF
 from edith.targets import Nominal
 
 __all__ = [
@@ -30,6 +29,13 @@ __all__ = [
     "clip_percentiles",
     "quantity_text",
 ]
+
+# Percentiles stay this far from 0 and 1, so no value is infinite
+PERCENTILE_CUTOFF = 1e-6
+
+# How far a bound may lie beyond the nominal value, in the nominal value's units,
+# before it counts as not bracketing it, so a bound equal to it passes
+BOUND_TOLERANCE = 1e-12
 
 
 def clip_percentiles(percentiles: NDArray[np.float64]) -> NDArray[np.float64]:

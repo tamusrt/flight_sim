@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from edith.config import EdithConfig
+from edith.config import DEFAULT_MAX_FAILED_FRACTION, EdithConfig
 from edith.dispersion import (
     DISPERSION_CLASSES,
     DISTRIBUTIONS,
@@ -17,12 +17,6 @@ from edith.dispersion import (
     Uniform,
 )
 from edith.errors import EdithConfigError
-from edith.statistics.settings import (
-    DEFAULT_CONFIDENCE,
-    DEFAULT_GENERATOR,
-    DEFAULT_MAX_FAILED_FRACTION,
-    DEFAULT_MIN_TRIALS,
-)
 from flight_sim.config import ConfigError
 from flight_sim.units import scalar
 
@@ -35,6 +29,7 @@ flight_per_batch = 5
 master_seed = 1
 base_sim = "../base/sim.toml"
 output_dir = "../out"
+generator = "LatinHypercubeGenerator"
 """
 
 _STANDARD = 'dispersion = "StandardDispersion"'
@@ -141,24 +136,39 @@ def test_errors_are_config_errors() -> None:
     assert issubclass(EdithConfigError, ValueError)
 
 
-def test_left_out_statistics_settings_take_the_settings_module_defaults(
-    tmp_path: Path,
-) -> None:
-    """A campaign that leaves them out gets edith.statistics.settings' values."""
+def test_left_out_settings_take_their_defaults(tmp_path: Path) -> None:
+    """Left out, the failed fraction is the default and there is no confidence."""
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, _HEADER))
 
-    assert config.generator == DEFAULT_GENERATOR
-    assert config.min_trials == DEFAULT_MIN_TRIALS
     assert config.max_failed_fraction == DEFAULT_MAX_FAILED_FRACTION
-    assert config.stopping.confidence == DEFAULT_CONFIDENCE
+    assert config.stopping.confidence is None
+
+
+def test_generator_is_required(tmp_path: Path) -> None:
+    """The generator has no default, so a campaign file must give it."""
+    header = "\n".join(
+        line for line in _HEADER.splitlines() if not line.startswith("generator")
+    )
+
+    assert "missing generator" in _error(tmp_path, _MASS, header + "\n")
+
+
+def test_the_confidence_interval_rule_needs_a_confidence(tmp_path: Path) -> None:
+    """Only the confidence-interval rule needs a confidence."""
+    stopping = '\n[stopping]\nrule = "ConfidenceIntervalTarget"\ntarget = "5 m"\n'
+
+    message = _error(tmp_path, _MASS, _HEADER + stopping)
+
+    assert 'rule "ConfidenceIntervalTarget" needs a confidence' in message
 
 
 def test_optional_settings(tmp_path: Path) -> None:
     """Flights per batch, timeout, generator, input mode and the rest are read."""
-    header = _HEADER.replace("flight_per_batch = 5", "flight_per_batch = 2") + (
-        'generator = "RandomGenerator"\ntrial_timeout = "10 min"\n'
-        'input_mode = "lightweight"\nmax_failed_fraction = 0.25\n'
+    header = _HEADER.replace("flight_per_batch = 5", "flight_per_batch = 2").replace(
+        "LatinHypercubeGenerator", "RandomGenerator"
     )
+    header += 'trial_timeout = "10 min"\ninput_mode = "lightweight"\n'
+    header += "max_failed_fraction = 0.25\n"
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
 
     assert config.generator == "RandomGenerator"
@@ -196,7 +206,7 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
     message = _error(tmp_path, '\n[dispersions."properties.x"\n')
 
     assert "edith_config.toml" in message
-    assert "line 8" in message
+    assert "line 9" in message
 
 
 @pytest.mark.parametrize(
@@ -226,7 +236,7 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
             "master_seed must be at least 0, got -1",
         ),
         (
-            _HEADER + 'generator = "LHS"\n',
+            _HEADER.replace('"LatinHypercubeGenerator"', '"LHS"'),
             'generator must be "RandomGenerator" or "LatinHypercubeGenerator", '
             "got 'LHS'",
         ),
@@ -239,10 +249,6 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
             "top level: missing flight_per_batch;",
         ),
         (_HEADER + "num_sims = 10\n", "top level: unknown keys ['num_sims']"),
-        (
-            _HEADER + "min_trials = 1\n",
-            "min_trials must be at least 2, got 1",
-        ),
         (
             _HEADER + "max_failed_fraction = 1.5\n",
             "max_failed_fraction must be between 0 and 1, got 1.5",

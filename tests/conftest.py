@@ -1,5 +1,8 @@
 """Fixtures shared across the test modules."""
 
+# The campaign file below repeats test_edith_config's header on purpose
+# pylint: disable=duplicate-code
+
 import shutil
 from pathlib import Path
 
@@ -25,6 +28,10 @@ flight_per_batch = 3
 master_seed = 7
 base_sim = "../base/sim.toml"
 output_dir = "../out"
+generator = "LatinHypercubeGenerator"
+
+[stopping]
+confidence = 0.95
 
 [dispersions."properties.dry_mass_properties.mass"]
 distribution = "Normal"

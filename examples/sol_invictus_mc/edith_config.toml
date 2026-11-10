@@ -39,14 +39,12 @@ input_mode = "lightweight"
 # Left out, EDITH picks these:
 # trial_timeout = "10 min"  # Longer trials stop as TIMEOUT; in s, min or h
 # max_failed_fraction = 0.5 # A batch with more of its trials failed ends the run
-# min_trials = 30           # Fewest trials before a standard error, interval or
-#                           # stopping rule is given
 
 # Stopping. With "RandomGenerator" the apogee's standard error is the spread of
 # all the trials. With "LatinHypercubeGenerator", whose trials in a batch are
 # stratified, it comes from the spread of the batch means, so it needs two
-# batches. Neither is given before min_trials trials, and a rule waits for it.
-# The last batch always ends the campaign.
+# batches. A rule waits for it. With fewer than 30 trials EDITH warns that the
+# output might not be reliable. The last batch always ends the campaign.
 # rule is the name of a class in edith/statistics/stopping.py:
 #   rule = "FixedTrials"                fly every batch
 #   rule = "StandardErrorTarget"        stop once the apogee's standard error

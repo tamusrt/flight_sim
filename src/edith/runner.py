@@ -167,7 +167,7 @@ class CampaignResult:
 
     stats: BatchStats
     stopped_by: str  # "rule" or "all_batches"
-    confidence: float
+    confidence: float | None
     trials_path: Path
     results: list[Result]  # Each flown trial's outcome, in trial order
     prepare_s: float  # Wall time preparing the batches that flew
@@ -177,6 +177,8 @@ class CampaignResult:
         batch_count = self.stats.batches
         counts = f"{self.stats.trials} trials in {batch_count} batch"
         counts += "es" if batch_count != 1 else ""
+        if self.confidence is None:
+            return f"apogee {self.stats.mean:.6g} m ({counts})"
         half_width = self.stats.confidence_interval_half_width(self.confidence)
         if half_width is None:
             return (
@@ -220,8 +222,7 @@ def fly_campaign(
     """
     rule = _make_rule(config)
     stats = BatchStats(
-        independent_trials=GENERATORS[config.generator]().trials_are_independent,
-        min_trials=config.min_trials,
+        independent_trials=GENERATORS[config.generator]().trials_are_independent
     )
     rows: list[dict[str, Any]] = []
     results: list[Result] = []
@@ -282,6 +283,8 @@ def _make_rule(config: EdithConfig) -> StoppingRule:
     target = float(spec.target.m_as("m"))
     if spec.rule == StandardErrorTarget.__name__:
         return StandardErrorTarget(target)
+    if spec.confidence is None:  # StoppingSettings has checked this
+        raise ValueError(f'rule "{spec.rule}" needs a confidence')
     return ConfidenceIntervalTarget(target, spec.confidence)
 
 

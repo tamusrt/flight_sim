@@ -5,8 +5,8 @@ trials (random sampling) every trial is an independent draw, so it comes from th
 spread of the trials, and one batch is enough. Otherwise (Latin hypercube
 sampling) the trials of a batch are stratified, not independent, so it comes from
 the spread of the batch means, each batch being an independent replicate, and it
-takes two batches. Neither is given before ``min_trials`` trials have flown.
-The mean is always that of all the trials. When failed trials leave batches of
+takes two batches. With fewer than ``RELIABLE_TRIALS`` trials the estimate may
+not be reliable. The mean is always that of all the trials. When failed trials leave batches of
 unequal sizes, the batch-based standard error is approximate.
 """
 
@@ -17,7 +17,10 @@ import numpy as np
 from numpy.typing import ArrayLike
 from scipy import stats  # type: ignore[import-untyped]
 
-__all__ = ["BatchStats"]
+__all__ = ["RELIABLE_TRIALS", "BatchStats"]
+
+# Fewest trials for a reliable interval of a mean, a common rule of thumb
+RELIABLE_TRIALS = 30
 
 
 @dataclass(kw_only=True)
@@ -26,7 +29,6 @@ class BatchStats:
 
     # Whether every trial is an independent draw, as the point generator says
     independent_trials: bool
-    min_trials: int  # Fewest trials before there is a standard error
     batch_means: list[float] = field(default_factory=list)
     values: list[float] = field(default_factory=list)  # Every trial's value
 
@@ -57,7 +59,7 @@ class BatchStats:
     def standard_error(self) -> float | None:
         """Standard error of the mean, or None until ``requirement`` is met."""
         samples = self._samples
-        if len(samples) < 2 or self.trials < self.min_trials:
+        if len(samples) < 2:
             return None
         return float(np.std(samples, ddof=1) / math.sqrt(len(samples)))
 
@@ -77,11 +79,19 @@ class BatchStats:
         """What a standard error still needs, or None once there is one."""
         if self.standard_error is not None:
             return None
-        if len(self._samples) < 2:
-            if self.independent_trials:
-                return "Requires at least two trials for standard error"
-            return "Requires additional batches for standard error"
-        return f"Requires at least {self.min_trials} trials for standard error"
+        if self.independent_trials:
+            return "Requires at least two trials for standard error"
+        return "Requires additional batches for standard error"
+
+    @property
+    def warning(self) -> str | None:
+        """A warning that the estimate may be unreliable, or None if it is not."""
+        if self.trials >= RELIABLE_TRIALS:
+            return None
+        return (
+            f"only {self.trials} trials flown, fewer than {RELIABLE_TRIALS}; "
+            "the output might not be reliable"
+        )
 
     @property
     def _samples(self) -> list[float]:

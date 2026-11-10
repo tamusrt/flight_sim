@@ -172,7 +172,12 @@ def _fly(
             _wait_ready(workers)
 
     def flown(batch: int, stats: BatchStats) -> None:
-        half_width = stats.confidence_interval_half_width(config.stopping.confidence)
+        confidence = config.stopping.confidence
+        half_width = (
+            None
+            if confidence is None
+            else stats.confidence_interval_half_width(confidence)
+        )
         spread = f"+/- {half_width:.3g} m" if half_width is not None else "m"
         print(
             f"batch {batch}: {stats.trials} trials flown, apogee {stats.mean:.6g} "
@@ -192,6 +197,8 @@ def _fly(
     )
     log = display_path(config.output_dir / parallel.CAMPAIGN_LOG)
     print(f"{len(result.results)} trials: {tally}; see {log}")
+    if (warning := result.stats.warning) is not None:
+        print(f"Warning: {warning}")
     return result
 
 

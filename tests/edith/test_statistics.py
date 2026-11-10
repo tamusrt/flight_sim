@@ -22,7 +22,7 @@ from edith.statistics.distributions import (
     Uniform,
     clip_percentiles,
 )
-from edith.statistics.estimators import BatchStats
+from edith.statistics.estimators import RELIABLE_TRIALS, BatchStats
 from edith.statistics.generators import GENERATORS, PointGenerator, stream
 from edith.statistics.stopping import (
     STOPPING_RULES,
@@ -102,7 +102,7 @@ def test_streams_are_independent_of_other_keys() -> None:
 
 def test_batch_statistics() -> None:
     """The standard error and interval come from the spread of batch means."""
-    stats = BatchStats(independent_trials=False, min_trials=2)
+    stats = BatchStats(independent_trials=False)
     assert stats.standard_error is None
     stats.add_batch([1.0, 3.0])  # mean 2
     assert stats.standard_error is None  # One batch is not enough
@@ -119,7 +119,7 @@ def test_batch_statistics() -> None:
 
 def test_stratified_trials_need_a_second_batch_for_a_standard_error() -> None:
     """With one batch of stratified trials there is no standard error, only a note."""
-    stats = BatchStats(independent_trials=False, min_trials=2)
+    stats = BatchStats(independent_trials=False)
     stats.add_batch([1.0, 2.0, 3.0, 4.0])
 
     assert stats.mean == 2.5
@@ -133,7 +133,7 @@ def test_stratified_trials_need_a_second_batch_for_a_standard_error() -> None:
 
 def test_independent_trials_give_a_standard_error_from_one_batch() -> None:
     """Independent trials are pooled, so their spread is enough, and batches add up."""
-    stats = BatchStats(independent_trials=True, min_trials=2)
+    stats = BatchStats(independent_trials=True)
     stats.add_batch([1.0])
     assert stats.standard_error is None
     assert stats.requirement == "Requires at least two trials for standard error"
@@ -143,7 +143,7 @@ def test_independent_trials_give_a_standard_error_from_one_batch() -> None:
     assert stats.standard_error == pytest.approx(1.0)  # s = sqrt(2), n = 2
     assert stats.confidence_interval_half_width(0.95) == pytest.approx(12.706205)
 
-    one_batch = BatchStats(independent_trials=True, min_trials=2)
+    one_batch = BatchStats(independent_trials=True)
     one_batch.add_batch([1.0, 3.0, 5.0, 7.0])
     assert one_batch.standard_error == pytest.approx(math.sqrt(20 / 3) / 2.0)
 
@@ -154,32 +154,42 @@ def test_generators_say_whether_their_trials_are_independent() -> None:
     assert not GENERATORS["LatinHypercubeGenerator"]().trials_are_independent
 
 
-def test_nothing_is_given_before_the_minimum_number_of_trials() -> None:
-    """Below min_trials there is no standard error, interval or finished rule."""
-    stats = BatchStats(independent_trials=True, min_trials=5)
-    stats.add_batch([1.0, 2.0, 3.0, 4.0])
+def test_a_single_trial_gives_no_standard_error() -> None:
+    """With independent trials the standard error needs two of them."""
+    stats = BatchStats(independent_trials=True)
+    stats.add_batch([1.0])
 
-    assert stats.mean == 2.5  # The mean itself is always given
+    assert stats.mean == 1.0  # The mean itself is always given
     assert stats.standard_error is None
     assert stats.confidence_interval_half_width(0.95) is None
-    assert stats.requirement == "Requires at least 5 trials for standard error"
+    assert stats.requirement == "Requires at least two trials for standard error"
     assert not StandardErrorTarget(1e9).done(stats)
-    stats.add_batch([5.0])
+    stats.add_batch([2.0])
     assert stats.standard_error is not None
+    assert stats.requirement is None
 
 
-def test_stratified_trials_need_both_batches_and_the_minimum() -> None:
-    """Two batches are not enough if they hold fewer than min_trials trials."""
-    stats = BatchStats(independent_trials=False, min_trials=6)
+def test_stratified_trials_need_two_batches() -> None:
+    """The standard error is the spread of the batch means, so it needs two."""
+    stats = BatchStats(independent_trials=False)
     stats.add_batch([1.0, 2.0])
     first = stats.requirement
     stats.add_batch([2.0, 3.0])
-    second = stats.requirement
-    stats.add_batch([3.0, 4.0])
 
     assert first == "Requires additional batches for standard error"
-    assert second == "Requires at least 6 trials for standard error"
     assert stats.requirement is None
+
+
+def test_fewer_than_the_reliable_number_of_trials_warns() -> None:
+    """Under RELIABLE_TRIALS the output might not be reliable; at it, no warning."""
+    stats = BatchStats(independent_trials=True)
+    stats.add_batch([float(i) for i in range(RELIABLE_TRIALS - 1)])
+    few = stats.warning
+    stats.add_batch([0.0])
+
+    assert few is not None
+    assert "might not be reliable" in few
+    assert stats.warning is None
 
 
 def test_a_generator_must_define_its_abstract_members() -> None:
@@ -206,7 +216,7 @@ def test_a_generators_independence_claim_matches_its_draws(name: str) -> None:
 
 def test_the_mean_is_that_of_all_the_trials_even_if_batches_differ() -> None:
     """A batch that lost trials counts for the trials it has, not as a whole batch."""
-    stats = BatchStats(independent_trials=False, min_trials=2)
+    stats = BatchStats(independent_trials=False)
     stats.add_batch([1.0, 2.0, 3.0])
     stats.add_batch([10.0])
 
@@ -215,7 +225,7 @@ def test_the_mean_is_that_of_all_the_trials_even_if_batches_differ() -> None:
 
 def test_a_rule_waits_while_there_is_no_standard_error() -> None:
     """With too little data neither target rule is met, however loose it is."""
-    stats = BatchStats(independent_trials=False, min_trials=2)
+    stats = BatchStats(independent_trials=False)
     stats.add_batch([10.0, 11.0])
 
     assert not StandardErrorTarget(1e9).done(stats)
@@ -231,7 +241,7 @@ def _result(stats: BatchStats, tmp_path: Path) -> CampaignResult:
 
 def test_the_summary_says_what_a_missing_standard_error_needs(tmp_path: Path) -> None:
     """One Latin hypercube batch gives a note instead of an interval."""
-    stats = BatchStats(independent_trials=False, min_trials=2)
+    stats = BatchStats(independent_trials=False)
     stats.add_batch([3000.0, 3010.0])
 
     assert _result(stats, tmp_path).summary() == (
@@ -242,7 +252,7 @@ def test_the_summary_says_what_a_missing_standard_error_needs(tmp_path: Path) ->
 
 def test_the_summary_gives_an_interval_from_one_random_batch(tmp_path: Path) -> None:
     """One batch of independent trials already has a standard error."""
-    stats = BatchStats(independent_trials=True, min_trials=2)
+    stats = BatchStats(independent_trials=True)
     stats.add_batch([3000.0, 3010.0, 3020.0])
 
     summary = _result(stats, tmp_path).summary()
@@ -253,7 +263,7 @@ def test_the_summary_gives_an_interval_from_one_random_batch(tmp_path: Path) -> 
 
 def test_stopping_rules() -> None:
     """Fixed never stops early; the others stop once their target is met."""
-    stats = BatchStats(independent_trials=False, min_trials=2)
+    stats = BatchStats(independent_trials=False)
     for mean in (10.0, 11.0, 9.0, 10.0):
         stats.add_batch([mean])
 
@@ -280,7 +290,7 @@ master_seed = 7
 base_sim = "base/sim.toml"
 output_dir = "out"
 flight_per_batch = 2
-min_trials = 2
+generator = "LatinHypercubeGenerator"
 {stopping}
 [output]
 plots = []
