@@ -22,6 +22,7 @@ from flight_sim.integration import (
     SimConfiguration,
     adaptive_step,
     derivative_computation,
+    flight_point_si,
     locate_event,
     step,
 )
@@ -30,6 +31,8 @@ from flight_sim.utilities.dcm import body_to_world
 from flight_sim.utilities.quaternion import Quaternion
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
+
+_STILL = IntegrationConfiguration(truth=truth(gravity=ConstantGravity(0.0)))
 
 _CONFIG = IntegrationConfiguration(truth=truth())
 
@@ -833,3 +836,107 @@ def test_configuration_rejects_wrong_units() -> None:
     """A tolerance that is not a length is rejected on construction."""
     with pytest.raises(DimensionalityError, match="position_tolerance"):
         SimConfiguration(position_tolerance=scalar(1.0, "s"))
+
+
+def _damped(properties: RocketProperties) -> RocketProperties:
+    """Return the rocket with FS1.0's pitch damping on."""
+    return replace(properties, enable_pitch_damping=True)
+
+
+def _fs1_damping() -> float:
+    """Return FS1.0's damping coefficient for the unpowered rocket at the pad.
+
+    FS1.0 measures stations aft from the nose tip: the CG at 2.5 m, the fins'
+    centroid at 3.6 m and the end of the 4 m body.
+    """
+    rho = _STILL.truth.atmosphere.conditions(0.0).air_density
+    radius = np.sqrt(0.0182414692 / np.pi)
+    x_cg, length, pos_fin = 2.5, 4.0, 3.6
+    damp_bod = 0.275 * rho * radius * (x_cg**4 + (length - x_cg) ** 4)
+    damp_fin = 0.3 * rho * 4 * 0.04 * (pos_fin - x_cg) ** 3
+    return float(damp_bod + damp_fin)
+
+
+@pytest.mark.parametrize("rates", [(0.0, 2.0, -3.0), (0.0, -1.5, 0.5)])
+def test_pitch_damping_opposes_each_rate_as_fs1(
+    unpowered_rocket_properties: RocketProperties, rates: tuple[float, float, float]
+) -> None:
+    """A rocket turning at rest is damped against its pitch and yaw rates."""
+    properties = _damped(unpowered_rocket_properties)
+    state = RocketState(angular_velocity=vector(rates, "rad/s"))
+
+    point = flight_point_si(0.0, state, properties, _STILL)
+    derivative = derivative_computation(0.0, state, properties, _STILL)
+
+    rate = np.array(rates)
+    torque = -_fs1_damping() * rate * np.abs(rate)
+    angular_acceleration = derivative.angular_acceleration.m_as("rad/s**2")
+    assert point.aero.torque == pytest.approx(torque)
+    assert angular_acceleration == pytest.approx(torque / np.array([0.1, 2.5, 2.5]))
+    assert np.all(angular_acceleration[1:] * rate[1:] < 0.0)
+
+
+def test_pitch_damping_slows_a_turn_as_fs1_predicts(
+    unpowered_rocket_properties: RocketProperties,
+) -> None:
+    """In still air the damping slows a pitch rate q0 to q0 / (1 + k * q0 * t).
+
+    The torque -c * q**2 on the inertia I gives dq/dt = -k * q**2, k = c / I.
+    """
+    state = RocketState(angular_velocity=vector((0.0, 2.0, 0.0), "rad/s"))
+
+    next_state = step(
+        0.0, state, _damped(unpowered_rocket_properties), _STILL, scalar(3.0, "s")
+    )
+
+    k = _fs1_damping() / 2.5
+    assert next_state.angular_velocity.m_as("rad/s") == pytest.approx(
+        [0.0, 2.0 / (1.0 + k * 2.0 * 3.0), 0.0], rel=1e-5, abs=1e-12
+    )
+
+
+def test_pitch_damping_is_off_unless_enabled(
+    unpowered_rocket_properties: RocketProperties,
+) -> None:
+    """Without enable_pitch_damping a rocket turning at rest feels no torque."""
+    state = RocketState(angular_velocity=vector((0.0, 2.0, -3.0), "rad/s"))
+
+    derivative = derivative_computation(0.0, state, unpowered_rocket_properties, _STILL)
+
+    assert not unpowered_rocket_properties.enable_pitch_damping
+    assert derivative.angular_acceleration.m_as("rad/s**2") == pytest.approx(
+        np.zeros(3)
+    )
+
+
+def test_pitch_damping_leaves_roll_alone(
+    unpowered_rocket_properties: RocketProperties,
+) -> None:
+    """A rocket rolling at rest feels no damping."""
+    state = RocketState(angular_velocity=vector((5.0, 0.0, 0.0), "rad/s"))
+
+    derivative = derivative_computation(
+        0.0, state, _damped(unpowered_rocket_properties), _STILL
+    )
+
+    assert derivative.angular_acceleration.m_as("rad/s**2") == pytest.approx(
+        np.zeros(3)
+    )
+
+
+def test_fins_damp_from_either_side_of_the_cg(
+    unpowered_rocket_properties: RocketProperties,
+) -> None:
+    """Fins 1.1 m ahead of the CG damp the turn as fins 1.1 m behind it do."""
+    state = RocketState(angular_velocity=vector((0.0, 2.0, 0.0), "rad/s"))
+
+    def pitch_acceleration(fin_station: float) -> float:
+        """Return the pitch acceleration with the fins' centroid this far aft, m."""
+        properties = replace(
+            _damped(unpowered_rocket_properties), fin_pos=scalar(-fin_station, "m")
+        )
+        derivative = derivative_computation(0.0, state, properties, _STILL)
+        return float(derivative.angular_acceleration.m_as("rad/s**2")[1])
+
+    assert pitch_acceleration(1.4) == pytest.approx(pitch_acceleration(3.6))
+    assert pitch_acceleration(3.6) == pytest.approx(-_fs1_damping() * 2.0**2 / 2.5)

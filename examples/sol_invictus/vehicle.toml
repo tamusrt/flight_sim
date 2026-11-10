@@ -1,5 +1,11 @@
 # RocketProperties for Sol Invictus. The dry mass properties are placeholders.
 
+enable_pitch_damping = true
+length = "206.19 in"
+num_fins = 4
+fin_area = "67.5 in**2"
+fin_pos = "-196.41 in"
+
 [aero_table]
 type = "flight_sim.utilities.data_loader.aero_table_from_csv"
 filepath = "aero.csv"

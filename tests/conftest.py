@@ -1,5 +1,7 @@
 """Fixtures shared across the test modules."""
 
+from dataclasses import replace
+
 import matplotlib
 import numpy as np
 import pytest
@@ -55,6 +57,11 @@ def _baseline_rocket_properties() -> RocketProperties:
             cg_location=vector((-1.0, 0.0, 0.0), "m"),
             inertia=matrix(np.diag((2.4, 135.0, 135.0)), "kg*m**2"),
         ),
+        enable_pitch_damping=False,
+        length=scalar(4.0, "m"),
+        num_fins=4,
+        fin_area=scalar(0.04, "m**2"),
+        fin_pos=scalar(-3.6, "m"),
     )
 
 
@@ -76,8 +83,8 @@ def _unpowered_rocket_properties(
 
     Its CG is 2.5 m aft of the nose tip and its inertia is diag(0.1, 2.5, 2.5).
     """
-    return RocketProperties(
-        aero_table=baseline_rocket_properties.aero_table,
+    return replace(
+        baseline_rocket_properties,
         engine=_InertEngine(),
         dry_mass_properties=MassProperties(
             scalar(20.0, "kg"),

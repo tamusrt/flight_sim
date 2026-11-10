@@ -62,6 +62,9 @@ _RKF_STAGE_WEIGHTS = (
 _RKF_5TH_ORDER = np.array([16 / 135, 0.0, 6656 / 12825, 28561 / 56430, -9 / 50, 2 / 55])
 _RKF_4TH_ORDER = np.array([25 / 216, 0.0, 1408 / 2565, 2197 / 4104, -1 / 5, 0.0])
 
+_BODY_DAMPING = 0.275
+_FIN_DAMPING = 0.3
+
 
 @dataclass
 class TruthConfiguration(UnitChecked):
@@ -248,13 +251,41 @@ def _unpack(values: np.ndarray, template: RocketState) -> RocketState:
     )
 
 
-def _aero_loads(
+def _pitch_damping(
+    angular_velocity: np.ndarray,
+    air_density: float,
+    cg_location: np.ndarray,
+    properties: RocketProperties,
+) -> np.ndarray:
+    cg_x = float(cg_location[0])
+    radius = math.sqrt(properties.aero_table.reference_area_m2 / math.pi)
+    nose_to_cg = -cg_x
+    cg_to_tail = properties.length_m + cg_x
+    cg_to_fins = abs(cg_x - properties.fin_pos_m)
+    fin_area = properties.num_fins * properties.fin_area_m2
+    coefficient = air_density * (
+        _BODY_DAMPING * radius * (nose_to_cg**4 + cg_to_tail**4)
+        + _FIN_DAMPING * fin_area * cg_to_fins**3
+    )
+    pitch_rate = float(angular_velocity[1])
+    yaw_rate = float(angular_velocity[2])
+    return np.array(
+        [
+            0.0,
+            -coefficient * pitch_rate * abs(pitch_rate),
+            -coefficient * yaw_rate * abs(yaw_rate),
+        ]
+    )
+
+
+def _aero_loads(  # pylint: disable=too-many-locals
     air_velocity: np.ndarray,
     conditions: AtmosphereConditions,
     to_body: np.ndarray,
     cg_location: np.ndarray,
     inputs: _StepInputs,
     *,
+    angular_velocity: np.ndarray,
     powered: bool,
 ) -> AeroPointSI:
     """Compute the flow angles and the aerodynamic loads, in body axes.
@@ -296,6 +327,10 @@ def _aero_loads(
     torque_body = (force_scale * table.reference_length_m) * coefficients[3:] + cross(
         lever_arm, force_body
     )
+    if inputs.properties.enable_pitch_damping:
+        torque_body += _pitch_damping(
+            angular_velocity, conditions.air_density, cg_location, inputs.properties
+        )
     return AeroPointSI(
         air_velocity=airspeed_body,
         airspeed=speed,
@@ -394,6 +429,7 @@ def _loads(time: float, values: np.ndarray, inputs: _StepInputs) -> _Loads:
         to_world.T,
         mass_properties.cg_location,
         inputs,
+        angular_velocity=angular_velocity,
         powered=thrust > 0.0,
     )
     force_body = aero.force.copy()
