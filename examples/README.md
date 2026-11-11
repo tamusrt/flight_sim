@@ -35,7 +35,6 @@ A sim's `[output]` table builds a `flight_sim.output.OutputConfiguration`. Witho
 directory = "out/{name}/{datetime}"   # sim name as a file name, and start time
 formats = ["csv"]                # and/or "parquet"
 units = "metric"                 # or "imperial": ft, lbf, psi, lb, degF; angles and times stay
-channels = ["*"]                 # globs over channel names, e.g. "aero.*", "state.position"
 sample_interval = "0.01 s"       # omit for one row per integrator step
 plots = ["trajectory", "attitude", "aero", "propulsion", "step_length"]
 ```
@@ -59,17 +58,17 @@ times. `--profile` also times every function during the run, prints the slowest
 and saves `profile.prof` (open it with `uvx snakeviz profile.prof`).
 
 From a script, `Simulation.from_file(path).run()` returns a `Flight`:
-`flight["aero.force"]` is a quantity array, `flight.at("apogee")` a typed
-`FlightPoint`, `flight.to_dataframe(["aero.*"])` a table, and
+`flight["aero.force"]` is a quantity array, `flight.at("apogee")` maps every
+channel to its quantity there, `flight.to_dataframe()` is a table, and
 `flight_sim.output.write(flight)` writes it as its `[output]` table says.
 `flight_sim.output.prepare(simulation)` makes a run directory to load and fly
 instead.
 Channels, tables, plots and the summary are in `flight.units`, which the run takes
 from `[output] units`; `dataclasses.replace(flight, units="imperial")` switches it.
 
-A channel is named by its attribute path in `FlightPoint`, so `flight["aero.force"]`
-and `flight.at("apogee").aero.force` are the same quantity. Values that are no field
-of it, such as speed and nose angles, are under `derived.*`.
+Every channel is written. The physics names each one where it computes it, with
+`flight_sim.telemetry.record("aero.force", force, "N")`; adding a channel is one
+such call.
 
 Each example is a folder holding everything its sim reads:
 

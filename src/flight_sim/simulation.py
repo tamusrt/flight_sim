@@ -1,5 +1,6 @@
 """One flight from launch to its stop event, as a sim input file describes it."""
 
+import itertools
 import re
 import time as clock
 from collections.abc import Mapping, Sequence
@@ -11,20 +12,18 @@ import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
 
-from flight_sim import output, telemetry
+from flight_sim import output
 from flight_sim.config import InputSource, load_with_source
 from flight_sim.flight_event import FlightEvent
-from flight_sim.flight_point import FlightPointSI
 from flight_sim.integration import (
     IntegrationConfiguration,
     IntegrationStats,
     adaptive_step,
-    flight_point_si,
+    derivative_computation,
 )
 from flight_sim.output import OutputConfiguration
-from flight_sim.telemetry import FlightPoint
-from flight_sim.units import Scalar, UnitChecked, UnitSystem, scalar
-from flight_sim.utilities.quaternion import Quaternion
+from flight_sim.telemetry import Channel, Recorder, resample
+from flight_sim.units import Scalar, UnitChecked, UnitSystem, scalar, system_units
 from flight_sim.vehicle.rocket_properties import RocketProperties
 from flight_sim.vehicle.rocket_state import RocketState
 
@@ -96,7 +95,7 @@ class Simulation(UnitChecked):
         The engine is restored afterwards, so the flight can be run again.
 
         Returns:
-            Flight: A flight point at launch and after every step, with the
+            Flight: Every channel at launch and after every step, with the
                 integrator's work and the wall time the run took.
 
         Raises:
@@ -110,17 +109,16 @@ class Simulation(UnitChecked):
         dt = self.initial_time_step
         max_time_s = float(self.max_time.m_as("s"))
         time = 0.0
-        points: list[FlightPointSI] = []
+        recorder = Recorder()
         event_rows: dict[str, int] = {}
         hit: FlightEvent | None = None
 
         try:
-            while True:
-                points.append(
-                    flight_point_si(time, state, self.properties, self.config)
-                )
+            for row in itertools.count():
+                with recorder.step():
+                    derivative_computation(time, state, self.properties, self.config)
                 if hit is not None:
-                    event_rows.setdefault(hit.name, len(points) - 1)
+                    event_rows.setdefault(hit.name, row)
                     if hit.name == self.stop_event:
                         break
                     if ignition is not None and hit.name == ignition.event:
@@ -150,7 +148,7 @@ class Simulation(UnitChecked):
 
         return Flight(
             self,
-            points,
+            recorder.channels(),
             event_rows,
             stats,
             run_time_s=clock.perf_counter() - start,
@@ -160,16 +158,18 @@ class Simulation(UnitChecked):
 
 @dataclass(frozen=True)
 class Flight:
-    """What one run of a simulation recorded: a flight point per accepted step.
+    """What one run of a simulation recorded: every channel at each step.
 
-    ``flight["aero.force"]`` reads a channel of ``telemetry.CHANNELS`` at
-    every point, as a quantity array. ``at`` and ``point`` give one moment as
-    a ``FlightPoint``, and ``to_dataframe`` lays channels out as columns.
-    Channels, tables, figures and the summary are in the flight's ``units``.
+    ``flight["aero.force"]`` reads a channel at every step as a quantity
+    array, ``at`` reads every channel at one moment, and ``to_dataframe``
+    lays them out as columns. Channels, tables, figures and the summary are
+    in the flight's ``units``.
     """
 
     simulation: Simulation
-    points: Sequence[FlightPointSI]
+
+    # Recorded in the units they were recorded with, one row per step
+    channels: Mapping[str, Channel]
 
     # Row of the first time each event fired, in firing order
     events: Mapping[str, int]
@@ -181,108 +181,83 @@ class Flight:
 
     units: UnitSystem = "metric"
 
-    _columns: dict[str, Any] = field(
-        default_factory=dict, init=False, repr=False, compare=False
-    )
+    def __getitem__(self, name: str) -> Any:
+        """Return one channel at every step, as a quantity array."""
+        return self.channels[name].quantity(self.units)
 
-    def __len__(self) -> int:
-        """Return the number of recorded points."""
-        return len(self.points)
-
-    def __getitem__(self, channel: str) -> Any:
-        """Return one channel at every point, as a quantity array.
-
-        Raises:
-            KeyError: If no channel has that name.
-        """
-        if channel not in self._columns:
-            self._columns[channel] = telemetry.column(self.points, channel, self.units)
-        return self._columns[channel]
-
-    @property
-    def time(self) -> Any:
-        """Return the time of every point, as a quantity array."""
-        return self["time"]
-
-    @property
-    def orientations(self) -> list[Quaternion]:
-        """Return the body-to-world orientation at every point."""
-        return [point.state.orientation for point in self.points]
-
-    def point(self, index: int) -> FlightPoint:
-        """Return the typed view of one recorded point."""
-        return FlightPoint.from_si(self.points[index])
-
-    def at(self, moment: str | Scalar) -> FlightPoint:
-        """Return the flight at an event, or at a time between recorded points.
+    def at(self, moment: str | Scalar) -> dict[str, Any]:
+        """Read every channel at an event, or at a time between steps.
 
         Args:
             moment (str | Scalar): Event name, or a time within the flight.
-                Between points, the orientation is interpolated by slerp and
-                everything else linearly.
 
         Returns:
-            FlightPoint: The flight at that moment.
+            dict[str, Any]: Each channel's quantity at that moment, read
+                between steps as its ``interp`` says.
 
         Raises:
             KeyError: If the flight hit no event of that name.
             ValueError: If the time lies outside the flight.
         """
+        times = self.channels["time"].values
         if isinstance(moment, str):
-            if moment not in self.events:
-                raise KeyError(
-                    f"No event {moment!r}; the flight hit {list(self.events)}"
+            time_s = float(times[self.events[moment]])
+        else:
+            time_s = float(moment.m_as("s"))
+            if not times[0] <= time_s <= times[-1]:
+                raise ValueError(
+                    f"{time_s} s is outside the flight, {times[0]} to {times[-1]} s"
                 )
-            return self.point(self.events[moment])
-        return FlightPoint.from_si(self._point_at(float(moment.m_as("s"))))
+        sample = resample(self.channels, np.array([time_s]))
+        return {
+            name: channel.quantity(self.units)[0] for name, channel in sample.items()
+        }
 
-    def _point_at(self, time_s: float) -> FlightPointSI:
-        """Return the recorded point at a time, interpolating between points.
-
-        Raises:
-            ValueError: If the time lies outside the flight.
-        """
-        times = self.time.m_as("s")
-        if not times[0] <= time_s <= times[-1]:
-            raise ValueError(
-                f"{time_s} s is outside the flight, {times[0]} to {times[-1]} s"
-            )
-        index = int(np.searchsorted(times, time_s, side="right")) - 1
-        if index == len(times) - 1 or times[index] == time_s:
-            return self.points[index]
-        fraction = (time_s - times[index]) / (times[index + 1] - times[index])
-        return telemetry.interpolate(
-            self.points[index], self.points[index + 1], fraction
-        )
-
-    def to_dataframe(
-        self,
-        channels: Sequence[str] = ("*",),
-        sample_interval: Scalar | None = None,
-    ) -> pd.DataFrame:
-        """Lay channels out as one column per component, plus an "event" column.
+    def to_dataframe(self, sample_interval: Scalar | None = None) -> pd.DataFrame:
+        """Lay every channel out as one column per component, plus "event".
 
         Args:
-            channels (Sequence[str], optional): Glob patterns of the channels
-                to include, such as "aero.*". Defaults to every channel.
             sample_interval (Scalar | None, optional): Time between rows, with
-                a row kept at each event and at the end. Defaults to one row
-                per recorded point.
+                a row kept at each event and at the end. Between steps,
+                channels are read as their ``interp`` says. Defaults to one
+                row per step.
 
         Returns:
-            pd.DataFrame: One row per recorded point, or per sample.
+            pd.DataFrame: Columns such as "aero.force_x [N]", and "event"
+                naming the events on each row.
         """
-        interval_s = (
-            float(sample_interval.m_as("s")) if sample_interval is not None else None
-        )
-        return telemetry.table(
-            self.points, self.events, channels, interval_s, self.units
-        )
+        channels, rows = self.channels, dict(self.events)
+        if sample_interval is not None:
+            times = channels["time"].values
+            grid = np.union1d(
+                np.arange(times[0], times[-1], float(sample_interval.m_as("s"))),
+                np.append(times[list(rows.values())], times[-1]),
+            )
+            rows = {
+                name: int(np.searchsorted(grid, times[row]))
+                for name, row in rows.items()
+            }
+            channels = resample(channels, grid)
+        data: dict[str, Any] = {}
+        for name, channel in channels.items():
+            units = system_units(channel.units, self.units) or "-"
+            values = channel.quantity(self.units).magnitude
+            if values.ndim == 1:
+                data[f"{name} [{units}]"] = values
+                continue
+            flat = values.reshape(len(values), -1)
+            for index, suffix in enumerate(_component_names(channel)):
+                data[f"{name}_{suffix} [{units}]"] = flat[:, index]
+        labels = [""] * len(channels["time"].values)
+        for name, row in rows.items():
+            labels[row] = f"{labels[row]}, {name}" if labels[row] else name
+        data["event"] = labels
+        return pd.DataFrame(data)
 
     def summary(self) -> dict[str, float]:
         """Return headline numbers of the flight, keyed with their units."""
         headline = {
-            "flight_time": self.time[-1],
+            "flight_time": self["time"][-1],
             "apogee": self["state.position"][:, 0].max(),
             "max_speed": self["derived.speed"].max(),
             "max_mach": self["aero.mach"].max(),
@@ -295,7 +270,7 @@ class Flight:
 
     def diagnostics(self) -> dict[str, Any]:
         """Return the integrator's work and the wall time the run took."""
-        times = self.time.m_as("s")
+        times = self.channels["time"].values
         steps = np.diff(times)
         result: dict[str, Any] = {
             "steps": len(steps),
@@ -332,6 +307,18 @@ class Flight:
             name: output.plot_function(name)(self, self.simulation.name)
             for name in names
         }
+
+
+def _component_names(channel: Channel) -> list[str]:
+    """Return column suffixes for the components of an array channel."""
+    shape = channel.values.shape[1:]
+    if channel.interp == "slerp":
+        return ["w", "x", "y", "z"]
+    if shape == (3,):
+        return ["x", "y", "z"]
+    if shape == (3, 3):
+        return [row + col for row in "xyz" for col in "xyz"]
+    return ["_".join(map(str, index)) for index in np.ndindex(shape)]
 
 
 def _with_units(name: str, value: Any) -> str:

@@ -88,7 +88,6 @@ def _flight(tmp_path: Path) -> Flight:
     table = """
         [output]
         directory = "out/{name}"
-        channels = ["time", "aero.*"]
         sample_interval = "10 ms"
         plots = ["trajectory"]
     """
@@ -101,12 +100,11 @@ def _flight(tmp_path: Path) -> Flight:
         ({"formats": ["xlsx"]}, "Unknown formats"),
         ({"units": "cubits"}, "Unknown units"),
         ({"plots": ["polar"]}, "Unknown plots"),
-        ({"channels": ["drag"]}, "No channel matches"),
         ({"sample_interval": scalar(0.0, "s")}, "must be positive"),
     ],
 )
 def test_output_table_is_checked(table: dict[str, Any], message: str) -> None:
-    """Unknown formats, plots and channels, and a zero interval, are rejected."""
+    """Unknown formats and plots, and a zero interval, are rejected."""
     with pytest.raises(ValueError, match=message):
         OutputConfiguration(**table)
 
@@ -156,16 +154,14 @@ def test_directory_rejects_a_bad_placeholder(template: str) -> None:
 
 def test_sampled_table_keeps_events_on_their_rows(flight: Flight) -> None:
     """Rows fall every interval, plus exactly at each event and the end."""
-    frame = flight.to_dataframe(
-        ["time", "state.orientation.*", "derived.on_rail"], scalar(10.0, "ms")
-    )
+    frame = flight.to_dataframe(scalar(10.0, "ms"))
     times = frame["time [s]"].to_numpy()
 
     assert times == pytest.approx([0.0, 0.01, 0.02, 0.025, 0.03, 0.04, 0.05])
     assert frame["event"].tolist()[3:] == ["half", "", "", "end"]
-    assert times[3] == flight.at("half").time.m_as("s")
-    assert times[-1] == flight.at("end").time.m_as("s")
-    orientation = frame[[f"state.orientation.q_{axis} [-]" for axis in "wxyz"]]
+    assert times[3] == flight.at("half")["time"].m_as("s")
+    assert times[-1] == flight.at("end")["time"].m_as("s")
+    orientation = frame[[f"state.orientation_{axis} [-]" for axis in "wxyz"]]
     assert np.linalg.norm(orientation.to_numpy(), axis=1) == pytest.approx(1.0)
     assert set(frame["derived.on_rail [-]"]) <= {0.0, 1.0}
 
@@ -173,19 +169,14 @@ def test_sampled_table_keeps_events_on_their_rows(flight: Flight) -> None:
 def test_imperial_flight_reads_tables_and_summary_in_imperial(flight: Flight) -> None:
     """Imperial converts what it has a unit for; angles and Mach stay as they are."""
     imperial = replace(flight, units="imperial")
-    channels = ["state.position", "aero.dynamic_pressure", "aero.alpha"]
+    metric_frame = flight.to_dataframe()
+    frame = imperial.to_dataframe()
 
-    metric_frame = flight.to_dataframe(channels)
-    frame = imperial.to_dataframe(channels)
-
-    assert list(frame.columns) == [
+    assert {
         "state.position_x [ft]",
-        "state.position_y [ft]",
-        "state.position_z [ft]",
         "aero.alpha [rad]",
         "aero.dynamic_pressure [psi]",
-        "event",
-    ]
+    } <= set(frame.columns)
     assert frame["state.position_x [ft]"].to_numpy() == pytest.approx(
         metric_frame["state.position_x [m]"].to_numpy() / 0.3048
     )
@@ -214,7 +205,6 @@ def test_output_units_set_the_written_units(tmp_path: Path) -> None:
         [output]
         directory = "out"
         units = "imperial"
-        channels = ["time", "state.position"]
         plots = []
     """
     flight = Simulation.from_file(_sim_file(tmp_path, table)).run()
@@ -237,7 +227,7 @@ def test_write_lays_out_the_run(flight: Flight, tmp_path: Path) -> None:
     assert directory == (tmp_path / "out" / "short_hop").resolve()
     frame = pd.read_csv(directory / "telemetry.csv")
     assert frame.columns[0] == "time [s]"
-    assert all(c.startswith(("time", "aero.", "event")) for c in frame.columns)
+    assert list(frame.columns) == list(flight.to_dataframe().columns)
     assert len(frame) == 7
     assert frame["event"].dropna().tolist() == ["half", "end"]
     assert (directory / "plots" / "trajectory.png").is_file()
@@ -249,7 +239,7 @@ def test_write_lays_out_the_run(flight: Flight, tmp_path: Path) -> None:
     assert run["summary"]["max_mach"] > 0.1
     assert run["source"].endswith("short.toml")
     diagnostics = run["diagnostics"]
-    assert diagnostics["steps"] == len(flight) - 1
+    assert diagnostics["steps"] == len(flight["time"]) - 1
     assert diagnostics["rkf45_evaluations"] > 0
     assert diagnostics["rkf45_evaluations"] % 6 == 0
     assert diagnostics["run_time_s"] > 0.0

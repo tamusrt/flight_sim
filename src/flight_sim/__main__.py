@@ -162,7 +162,7 @@ def print_headlines(flight: Flight) -> None:
     Args:
         flight (Flight): The flight that was run.
     """
-    times = flight.time.m_as("s")
+    times = flight.channels["time"].values
     for name, row in flight.events.items():
         print(f"{name} at {times[row]:.2f} seconds")
     for key, value in flight.summary().items():
