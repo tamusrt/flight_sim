@@ -53,6 +53,7 @@ class AeroPointSI(NamedTuple):
     alpha: float
     phi: float
     dynamic_pressure: float
+    pitch_damping_torque_coefficient: float
     coefficients: AeroCoefficients
     force: np.ndarray
     torque: np.ndarray

@@ -257,15 +257,8 @@ def _pitch_damping(
     cg_location: np.ndarray,
     properties: RocketProperties,
 ) -> np.ndarray:
-    cg_x = float(cg_location[0])
-    radius = math.sqrt(properties.aero_table.reference_area_m2 / math.pi)
-    nose_to_cg = -cg_x
-    cg_to_tail = properties.length_m + cg_x
-    cg_to_fins = abs(cg_x - properties.fin_pos_m)
-    fin_area = properties.num_fins * properties.fin_area_m2
-    coefficient = air_density * (
-        _BODY_DAMPING * radius * (nose_to_cg**4 + cg_to_tail**4)
-        + _FIN_DAMPING * fin_area * cg_to_fins**3
+    coefficient = _pitch_damping_torque_coefficient(
+        air_density, cg_location, properties
     )
     pitch_rate = float(angular_velocity[1])
     yaw_rate = float(angular_velocity[2])
@@ -275,6 +268,22 @@ def _pitch_damping(
             -coefficient * pitch_rate * abs(pitch_rate),
             -coefficient * yaw_rate * abs(yaw_rate),
         ]
+    )
+
+
+def _pitch_damping_torque_coefficient(
+    air_density: float, cg_location: np.ndarray, properties: RocketProperties
+) -> float:
+    """Return the pitch and yaw damping coefficient in kg*m**2."""
+    cg_x = float(cg_location[0])
+    radius = math.sqrt(properties.aero_table.reference_area_m2 / math.pi)
+    nose_to_cg = -cg_x
+    cg_to_tail = properties.length_m + cg_x
+    cg_to_fins = abs(cg_x - properties.fin_pos_m)
+    fin_area = properties.num_fins * properties.fin_area_m2
+    return air_density * (
+        _BODY_DAMPING * radius * (nose_to_cg**4 + cg_to_tail**4)
+        + _FIN_DAMPING * fin_area * cg_to_fins**3
     )
 
 
@@ -327,6 +336,9 @@ def _aero_loads(  # pylint: disable=too-many-locals
     torque_body = (force_scale * table.reference_length_m) * coefficients[3:] + cross(
         lever_arm, force_body
     )
+    pitch_damping_torque_coefficient = _pitch_damping_torque_coefficient(
+        conditions.air_density, cg_location, inputs.properties
+    )
     if inputs.properties.enable_pitch_damping:
         torque_body += _pitch_damping(
             angular_velocity, conditions.air_density, cg_location, inputs.properties
@@ -338,6 +350,7 @@ def _aero_loads(  # pylint: disable=too-many-locals
         alpha=alpha,
         phi=phi,
         dynamic_pressure=dynamic_pressure,
+        pitch_damping_torque_coefficient=pitch_damping_torque_coefficient,
         coefficients=c,
         force=force_body,
         torque=torque_body,
