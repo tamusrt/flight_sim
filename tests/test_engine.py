@@ -291,8 +291,8 @@ def test_rocket_mass_properties_combine_dry_and_engine(
         vector((-1.0, 0.0, 0.0), "m"),
         matrix(np.diag((2.4, 135.0, 135.0)), "kg*m**2"),
     )
-    properties = RocketProperties(
-        baseline_rocket_properties.aero_table, _standard_engine(), dry
+    properties = replace(
+        baseline_rocket_properties, engine=_standard_engine(), dry_mass_properties=dry
     )
 
     at_ignition = properties.mass_properties(0.0)

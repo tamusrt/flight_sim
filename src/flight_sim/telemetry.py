@@ -64,6 +64,7 @@ class AeroPoint(UnitChecked):
     alpha: Annotated[Scalar, "rad"]  # Total angle of attack
     phi: Annotated[Scalar, "rad"]  # Aerodynamic roll angle
     dynamic_pressure: Annotated[Scalar, "Pa"]
+    pitch_damping_torque_coefficient: Annotated[Scalar, "kg*m**2"]
     coefficients: AeroCoefficients
     force: Annotated[Vector, "N"]  # Body axes
     torque: Annotated[Vector, "N*m"]  # About the CG, body axes
