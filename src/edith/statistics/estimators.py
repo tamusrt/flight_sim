@@ -6,8 +6,8 @@ spread of the trials, and one batch is enough. Otherwise (Latin hypercube
 sampling) the trials of a batch are stratified, not independent, so it comes from
 the spread of the batch means, each batch being an independent replicate, and it
 takes two batches. With fewer than ``RELIABLE_TRIALS`` trials the estimate may
-not be reliable. The mean is always that of all the trials. When failed trials leave batches of
-unequal sizes, the batch-based standard error is approximate.
+not be reliable. The mean is always that of all the trials. When failed trials
+leave batches of unequal sizes, the batch-based standard error is approximate.
 """
 
 import math

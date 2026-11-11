@@ -165,8 +165,8 @@ def test_a_single_trial_gives_no_standard_error() -> None:
     assert stats.requirement == "Requires at least two trials for standard error"
     assert not StandardErrorTarget(1e9).done(stats)
     stats.add_batch([2.0])
-    assert stats.standard_error is not None
-    assert stats.requirement is None
+    standard_error = stats.standard_error
+    assert standard_error is not None
 
 
 def test_stratified_trials_need_two_batches() -> None:

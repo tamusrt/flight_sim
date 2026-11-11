@@ -100,9 +100,7 @@ class Workers:
     def __init__(self, count: int, logs: Path) -> None:
         """Start ``count`` processes, each logging its own output under ``logs``."""
         logs.mkdir(parents=True, exist_ok=True)
-        self._workers = [
-            _Worker(logs / f"{number}.log") for number in range(count)
-        ]
+        self._workers = [_Worker(logs / f"{number}.log") for number in range(count)]
         for worker in self._workers:
             worker.start()
 
