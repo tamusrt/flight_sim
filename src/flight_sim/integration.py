@@ -54,9 +54,6 @@ _RKF_STAGE_WEIGHTS = (
 _RKF_5TH_ORDER = np.array([16 / 135, 0.0, 6656 / 12825, 28561 / 56430, -9 / 50, 2 / 55])
 _RKF_4TH_ORDER = np.array([25 / 216, 0.0, 1408 / 2565, 2197 / 4104, -1 / 5, 0.0])
 
-# Aero coefficients, in the order of the force and moment components
-_COEFFICIENTS = ("cx", "cy", "cz", "cmx", "cmy", "cmz")
-
 
 @dataclass
 class TruthConfiguration(UnitChecked):
@@ -297,8 +294,12 @@ def _aero_loads(
     record("aero.alpha", alpha, "rad")
     record("aero.phi", phi, "rad")
     record("aero.dynamic_pressure", dynamic_pressure, "Pa")
-    for name, value in zip(_COEFFICIENTS, coefficients, strict=True):
-        record(f"aero.coefficients.{name}", value)
+    record("aero.coefficients.cx", c.cx)
+    record("aero.coefficients.cy", c.cy)
+    record("aero.coefficients.cz", c.cz)
+    record("aero.coefficients.cmx", c.cmx)
+    record("aero.coefficients.cmy", c.cmy)
+    record("aero.coefficients.cmz", c.cmz)
     record("aero.force", force_body, "N")
     record("aero.torque", torque_body, "N*m")
     return force_body, torque_body
