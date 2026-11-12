@@ -5,10 +5,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from support import truth
+from support import recorded, truth
 
 from flight_sim.environment.atmosphere import StandardAtmosphere1976
-from flight_sim.integration import IntegrationConfiguration, flight_point_si
+from flight_sim.integration import IntegrationConfiguration
 from flight_sim.units import vector
 from flight_sim.vehicle.reynolds_correction import ReynoldsCorrection
 from flight_sim.vehicle.rocket_properties import RocketProperties
@@ -77,11 +77,12 @@ def test_rocket_correction_adds_to_the_flight_cx(
     )
     corrected = replace(unpowered_rocket_properties, reynolds_correction=_CORRECTION)
 
-    plain = flight_point_si(0.0, state, unpowered_rocket_properties, config)
-    point = flight_point_si(0.0, state, corrected, config)
-    change = _CORRECTION(point.aero.mach, point.environment.atmosphere)
+    plain = recorded(state, unpowered_rocket_properties, config)
+    point = recorded(state, corrected, config)
+    conditions = config.truth.atmosphere.conditions(5000.0)
+    change = _CORRECTION(float(point["aero.mach"]), conditions)
 
     assert change != 0.0
-    assert point.aero.coefficients.cx == pytest.approx(
-        plain.aero.coefficients.cx + change
+    assert point["aero.coefficients.cx"] == pytest.approx(
+        plain["aero.coefficients.cx"] + change
     )

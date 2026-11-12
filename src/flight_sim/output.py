@@ -16,7 +16,6 @@ from matplotlib.figure import Figure
 from flight_sim import plots
 from flight_sim.config import InputSource, write_toml
 from flight_sim.plots import ChannelSource
-from flight_sim.telemetry import channel_names
 from flight_sim.units import Scalar, UnitChecked, UnitSystem
 
 if TYPE_CHECKING:
@@ -48,9 +47,6 @@ class OutputConfiguration(UnitChecked):
     # quantities are declared in, or "imperial"
     units: UnitSystem = "metric"
 
-    # Glob patterns of the channels in the telemetry files
-    channels: Sequence[str] = ("*",)
-
     # Telemetry spacing; None keeps one row per integrator step. Events keep
     # their exact rows either way.
     sample_interval: Annotated[Scalar | None, "s"] = None
@@ -60,7 +56,7 @@ class OutputConfiguration(UnitChecked):
     plots: Sequence[str] = ("trajectory", "step_length")
 
     def __post_init__(self) -> None:
-        """Check the directory, formats, unit system, channels and plot names.
+        """Check the directory, formats, unit system and plot names.
 
         Raises:
             ValueError: If any of them names something that does not exist, or
@@ -90,10 +86,6 @@ class OutputConfiguration(UnitChecked):
             raise ValueError(
                 f"Unknown plots {sorted(unknown_plots)}; use {known_plots}"
             )
-        try:
-            channel_names(self.channels)
-        except KeyError as error:
-            raise ValueError(error.args[0]) from error
         if self.sample_interval is not None and not self.sample_interval.m_as("s") > 0:
             raise ValueError("Sample interval must be positive")
 
@@ -210,7 +202,7 @@ def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path
         return None
     directory.mkdir(parents=True, exist_ok=True)
 
-    frame = flight.to_dataframe(settings.channels, settings.sample_interval)
+    frame = flight.to_dataframe(settings.sample_interval)
     if "csv" in settings.formats:
         frame.to_csv(directory / "telemetry.csv", index=False)
     if "parquet" in settings.formats:
@@ -234,7 +226,7 @@ def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path
 
 def _run_table(flight: "Flight") -> dict[str, Any]:
     """Return the summary, diagnostics, event times and source of a run."""
-    times = flight.time.m_as("s")
+    times = flight.channels["time"].values
     run: dict[str, Any] = {
         "name": flight.simulation.name,
         "units": flight.units,

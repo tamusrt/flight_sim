@@ -41,10 +41,10 @@ def test_event_ignition_lights_the_motor_after_its_delay(
 
     flight = simulation.run()
 
-    times = [flight.at(name).time.m_as("s") for name in flight.events]
+    times = [flight.at(name)["time"].m_as("s") for name in flight.events]
     assert list(flight.events) == ["go", "stop"]
     assert times == pytest.approx([0.1, 0.6], abs=1e-6)
-    time = flight.time.m_as("s")
+    time = flight["time"].m_as("s")
     mass = flight["mass.mass"].m_as("kg")
     thrust = flight["thrust"].m_as("N")
     assert np.unique(mass[time <= 0.3]).size == 1
