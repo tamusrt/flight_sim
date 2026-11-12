@@ -1,3 +1,5 @@
+"""Aerodynamic, engine, mass and shape properties of the rocket."""
+
 from dataclasses import dataclass
 
 from flight_sim.utilities.data_loader import AeroTable
