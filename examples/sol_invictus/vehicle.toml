@@ -1,5 +1,7 @@
 # RocketProperties for Sol Invictus. The dry mass properties are placeholders.
 
+enable_pitch_damping = true
+
 [aero_table]
 type = "flight_sim.utilities.data_loader.aero_table_from_csv"
 filepath = "aero.csv"
@@ -23,3 +25,13 @@ forward_end_location = { value = [-2.08, 0.0, 0.0], units = "m" }
 # Exit area unknown, so no pressure thrust
 nozzle_exit_area = "0 m**2"
 reference_pressure = "101325 Pa"
+
+# Outer shape, from the RASAero design (dynamics repo,
+# aero_modeling/SOL_INVICTUS/RasAero/Latest/Invictus_RasAero_4_30.CDX1)
+[shape]
+length = "206.19 in"  # Nose tip to the end of the boattail
+num_fins = 4
+# One fin: 15 in root chord, 3 in tip chord, 7.5 in span
+fin_area = "67.5 in**2"
+# Fin planform centroid, 10.22 in aft of the root leading edge at 186.19 in
+fin_pos = "-196.41 in"
