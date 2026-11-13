@@ -713,3 +713,36 @@ def test_a_distribution_of_positive_values_needs_a_positive_nominal(
     assert "needs a nominal value above 0" in _error(
         tmp_path, _table("config.truth.wind.speed", body)
     )
+
+
+def test_a_nominal_replaces_the_base_sims_value(tmp_path: Path) -> None:
+    """The table's nominal, in any units of the kind, is what is dispersed."""
+    body = 'nominal = "18000 g"\ndistribution = "Normal"\nsigma = "1 kg"'
+
+    dispersion = _dispersion(tmp_path, _table(_MASS_KEY, body))
+
+    assert (dispersion.nominal, dispersion.units) == (18.0, "kg")
+
+
+def test_bounds_are_checked_against_the_replaced_nominal(tmp_path: Path) -> None:
+    """A high below the new nominal is refused, though above the base sim's 17 kg."""
+    body = (
+        'nominal = "18 kg"\ndistribution = "Normal"\nsigma = "1 kg"\nhigh = "17.5 kg"'
+    )
+
+    message = _error(tmp_path, _table(_MASS_KEY, body))
+
+    assert 'high: 17.5 kg is below the nominal value, "18 kg"' in message
+
+
+def test_a_nominal_must_be_a_number_like_the_base_sims(tmp_path: Path) -> None:
+    """A nominal takes units when the base sim's value has them."""
+    body = 'nominal = 18\ndistribution = "Normal"\nsigma = "1 kg"'
+
+    assert "nominal: needs units" in _error(tmp_path, _table(_MASS_KEY, body))
+
+
+def test_no_distribution_takes_a_key_named_nominal() -> None:
+    """The dispersion reads nominal itself, so a distribution may not."""
+    for cls in DISTRIBUTIONS.values():
+        assert "nominal" not in (*cls.REQUIRED, *cls.OPTIONAL)

@@ -97,7 +97,7 @@ class StandardDispersion(BaseDispersion):
     # InputSource.table_with takes it, such as
     # "properties.dry_mass_properties.mass"
     key: str
-    nominal: float  # Value in the base sim
+    nominal: float  # Value in the base sim, or the table's nominal in its place
     distribution: Distribution
 
     # Units of the nominal value as the input writes them, such as "kg"; ""
@@ -110,6 +110,9 @@ class StandardDispersion(BaseDispersion):
     ) -> Self:
         """Read the dispersion of one number of the base sim with a distribution.
 
+        An optional ``nominal`` replaces the base sim's value as the one the
+        distribution disperses, in the same units.
+
         Raises:
             EdithConfigError: If the key names no number of the base sim, or
                 the table does not describe a distribution of it.
@@ -120,9 +123,13 @@ class StandardDispersion(BaseDispersion):
             table,
             where,
             ("distribution", *distribution_class.REQUIRED),
-            ("dispersion", *distribution_class.OPTIONAL),
+            ("dispersion", "nominal", *distribution_class.OPTIONAL),
             distribution_class.USAGE,
         )
+        if "nominal" in table:
+            nominal = _nominal(
+                table["nominal"], quoted_key_path(where, "nominal"), nominal
+            )
         parameters = {
             name: (
                 _plain(table[name], quoted_key_path(where, name))
@@ -219,6 +226,18 @@ def _number(value: object, where: str, nominal: Nominal) -> Parameter:
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error
     return Parameter(_finite(converted, where, value), text)
+
+
+def _nominal(value: object, where: str, base: Nominal) -> Nominal:
+    """Return a table's nominal value in place of the base sim's, in its units.
+
+    Raises:
+        EdithConfigError: If the value is not a number in that form, as
+            ``_number`` checks.
+    """
+    number = _number(value, where, base)
+    text = f'"{number.text}"' if base.units else f"{number.text}, a plain number"
+    return Nominal(number.value, base.units, text)
 
 
 def _plain(value: object, where: str) -> Parameter:

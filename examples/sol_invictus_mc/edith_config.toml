@@ -114,6 +114,9 @@ sample_interval = "0.05 s"
 # units. A sigma or half_width of 0 keeps the value at its nominal. df,
 # shape, kappa, alpha, beta and a LogNormal's sigma are always plain numbers:
 # shape = 2.
+#
+# nominal, left out in every table below, replaces the base sim's value as
+# the one dispersed, in units of the same kind: nominal = "17.5 kg".
 # ---------------------------------------------------------------------------
 
 # Dry mass, a placeholder 17 kg in vehicle.toml
