@@ -7,7 +7,8 @@ best of several fitted families, which is smooth and reaches tails beyond the
 sample. ``Envelope`` gives an output over time, such as the altitude, as a
 curve of percentiles across trials at each time, whose points come from
 different trials. ``pass_probability`` is the chance a requirement is met.
-NaN values, as failed trials give, are left out.
+NaN values, as failed trials give, are left out, except that a requirement
+counts a failed trial as not meeting it unless told to leave it out.
 """
 
 import math
@@ -63,6 +64,10 @@ BOOTSTRAP_SAMPLES = 200
 BOOTSTRAP_SEED = 0
 
 Method = Literal["empirical", "fit"]
+
+# What a requirement does with a failed trial, one whose value is NaN: count it
+# as not meeting the requirement, or leave it out of the count
+Failed = Literal["fail", "exclude"]
 
 
 class Fit(NamedTuple):
@@ -360,25 +365,32 @@ def pass_probability(
     low: float | None = None,
     high: float | None = None,
     confidence: float = 0.95,
+    failed: Failed = "fail",
 ) -> PassProbability:
     """Return how likely an output lies from ``low`` to ``high``, inclusive.
 
-    Trials with NaN are left out. The interval assumes independent trials, so
-    with Latin hypercube sampling it is approximate, generally cautious.
+    A trial whose value is NaN failed: by default it counts as not meeting
+    the requirement, since a flight that fails does not meet it; "exclude"
+    leaves it out, giving the chance among the trials that flew. The interval
+    assumes independent trials, so with Latin hypercube sampling it is
+    approximate, generally cautious.
 
     Raises:
         ValueError: If neither limit is given.
     """
-    return joint_pass_probability([Requirement(values, low, high)], confidence)
+    return joint_pass_probability([Requirement(values, low, high)], confidence, failed)
 
 
 def joint_pass_probability(
-    requirements: Sequence[Requirement], confidence: float = 0.95
+    requirements: Sequence[Requirement],
+    confidence: float = 0.95,
+    failed: Failed = "fail",
 ) -> PassProbability:
     """Return how likely every requirement is met in the same trial.
 
     Each requirement's values are those of the same trials, in order. A trial
-    with NaN in any of them is left out, as ``pass_probability`` says.
+    with NaN in any of them failed, and ``failed`` says what to do with it,
+    as ``pass_probability`` says.
 
     Raises:
         ValueError: If a requirement has neither limit, or there are none.
@@ -386,8 +398,9 @@ def joint_pass_probability(
     if not requirements:
         raise ValueError("no requirements")
     arrays = [np.asarray(r.values, dtype=float) for r in requirements]
-    counted = np.logical_and.reduce([np.isfinite(array) for array in arrays])
-    passed = counted.copy()
+    flew = np.logical_and.reduce([np.isfinite(array) for array in arrays])
+    counted = flew if failed == "exclude" else np.ones_like(flew)
+    passed = flew.copy()
     for requirement, array in zip(requirements, arrays, strict=True):
         if requirement.low is None and requirement.high is None:
             raise ValueError("a requirement needs a low or high limit")

@@ -95,7 +95,7 @@ def test_an_envelope_takes_percentiles_across_trials_at_each_time() -> None:
 
 def test_a_pass_probability_has_a_binomial_interval() -> None:
     """98 of 100 trials pass; the Wilson interval brackets 98 %."""
-    values = [*([3100.0] * 98), 2900.0, 3400.0, math.nan]
+    values = [*([3100.0] * 98), 2900.0, 3400.0]
 
     result = pass_probability(values, low=3000.0, high=3300.0)
 
@@ -106,16 +106,26 @@ def test_a_pass_probability_has_a_binomial_interval() -> None:
     assert str(result) == "98.0% (93.0% to 99.4%, 98 of 100 trials)"
 
 
+def test_a_failed_trial_does_not_meet_a_requirement_unless_left_out() -> None:
+    """By default a NaN counts as a miss; "exclude" leaves it out."""
+    values = [3100.0, 3100.0, 3100.0, math.nan]
+
+    failing = pass_probability(values, low=3000.0)
+    excluding = pass_probability(values, low=3000.0, failed="exclude")
+
+    assert (failing.passed, failing.trials) == (3, 4)
+    assert (excluding.passed, excluding.trials) == (3, 3)
+
+
 def test_a_joint_pass_needs_every_requirement_in_the_same_trial() -> None:
     """A trial passes only if both outputs are within their limits."""
     apogee = [3100.0, 3100.0, 2900.0, 3100.0]
     rail_speed = [31.0, 25.0, 31.0, math.nan]
+    requirements = [Requirement(apogee, low=3000.0), Requirement(rail_speed, low=30.0)]
 
-    result = joint_pass_probability(
-        [Requirement(apogee, low=3000.0), Requirement(rail_speed, low=30.0)]
-    )
-
-    assert (result.passed, result.trials) == (1, 3)  # The NaN trial is left out
+    assert joint_pass_probability(requirements).passed == 1
+    assert joint_pass_probability(requirements).trials == 4
+    assert joint_pass_probability(requirements, failed="exclude").trials == 3
 
 
 def test_a_requirement_needs_a_limit() -> None:
@@ -124,7 +134,10 @@ def test_a_requirement_needs_a_limit() -> None:
         pass_probability([1.0, 2.0])
     with pytest.raises(ValueError, match="no requirements"):
         joint_pass_probability([])
-    assert math.isnan(pass_probability([math.nan], low=0.0).probability)
+    assert math.isnan(
+        pass_probability([math.nan], low=0.0, failed="exclude").probability
+    )
+    assert pass_probability([math.nan], low=0.0).probability == 0.0
 
 
 def test_a_percentile_interval_covers_the_true_percentile() -> None:
