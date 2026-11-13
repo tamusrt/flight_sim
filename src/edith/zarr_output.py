@@ -80,8 +80,11 @@ def write_job_output(path: Path, trial: str, text: str) -> None:
 def _write_group(
     path: Path, trial: str, attributes: dict[str, object], values: np.ndarray
 ) -> None:
-    """Write a trial's group afresh, replacing any it had."""
-    runs = zarr.open_group(path, path="runs", mode="r+")
+    """Write a trial's group afresh, replacing any it had.
+
+    The store and its runs group are made if ``initialize`` has not made them.
+    """
+    runs = zarr.open_group(path, mode="a").require_group("runs")
     if trial in runs:
         del runs[trial]
     group = runs.create_group(trial, attributes=attributes)

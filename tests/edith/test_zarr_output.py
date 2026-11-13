@@ -84,3 +84,12 @@ def test_a_refused_write_is_tried_again(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(PermissionError):
         zarr_output._retried(refused)  # pylint: disable=protected-access
+
+
+def test_a_trial_can_be_written_before_the_store_is_made(tmp_path: Path) -> None:
+    """Without initialize, as when fly_campaign is used directly, it is made."""
+    store = tmp_path / "results.zarr"
+
+    write(_flight(), store, "0003")
+
+    assert zarr.open_group(store, path="runs/0003").attrs["events"] == {"impact": 1}
