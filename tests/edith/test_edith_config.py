@@ -418,7 +418,7 @@ def test_output_settings_override_the_base_sims(tmp_path: Path) -> None:
             '[output]\nformat = ["csv"]\n',
             "output.format: unknown key (did you mean formats?); output takes the "
             "keys of a sim's [output] table but directory: formats, units, "
-            "channels, sample_interval, plots",
+            "sample_interval, plots",
         ),
         ('[output]\nsample_interval = "-1 s"\n', "output: Sample interval must be"),
     ],
