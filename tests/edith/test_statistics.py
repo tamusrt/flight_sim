@@ -15,7 +15,7 @@ from edith.config import EdithConfig
 from edith.dispersion import _distribution_name
 from edith.errors import EdithConfigError
 from edith.parallel import Workers
-from edith.runner import CampaignResult, fly_campaign, prepare_batches
+from edith.runner import CampaignResult, _make_rule, fly_campaign, prepare_batches
 from edith.statistics.distributions import (
     DISTRIBUTIONS,
     Beta,
@@ -818,3 +818,26 @@ def test_a_saved_campaign_says_how_many_more_trials_a_target_needs() -> None:
         remaining_trials(one_batch, "max_mach", 0.5, None, independent_trials=False)
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("stopping", "expected"),
+    [
+        ('rule = "FixedTrials"\ntarget = "5 m"\nconfidence = 0.95', FixedTrials),
+        ('rule = "FixedTrials"\ntarget = "5 m"', FixedTrials),
+        ('rule = "StandardErrorTarget"\ntarget = "5 m"', StandardErrorTarget),
+        (
+            'rule = "ConfidenceIntervalTarget"\ntarget = "5 m"\nconfidence = 0.9',
+            ConfidenceIntervalTarget,
+        ),
+    ],
+)
+def test_the_rule_named_is_the_rule_used(
+    tmp_path: Path, stopping: str, expected: type
+) -> None:
+    """FixedTrials flies every batch even when a target is also given."""
+    config = EdithConfig.from_file(
+        _campaign(tmp_path, stopping=f"[stopping]\n{stopping}\n")
+    )
+
+    assert isinstance(_make_rule(config), expected)

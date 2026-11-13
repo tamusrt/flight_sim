@@ -291,8 +291,8 @@ def _dispersions(config: EdithConfig) -> list[StandardDispersion]:
 def _make_rule(config: EdithConfig) -> StoppingRule:
     """Return the stopping rule a campaign's ``[stopping]`` table describes."""
     spec = config.stopping
-    if spec.target is None:
-        return FixedTrials()
+    if spec.rule == FixedTrials.__name__ or spec.target is None:
+        return FixedTrials()  # Whatever target is given, as the rule's name says
     target = float(spec.target.m_as("m"))
     if spec.rule == StandardErrorTarget.__name__:
         return StandardErrorTarget(target)
