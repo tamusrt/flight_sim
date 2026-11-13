@@ -195,7 +195,6 @@ def _fly(
             stats,
             target=target,
             confidence=confidence if is_interval else None,
-            flight_per_batch=config.flight_per_batch,
             num_batches=config.num_batches,
             batch_seconds=_since(started) / (batch + 1),
         )

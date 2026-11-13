@@ -708,7 +708,6 @@ def test_the_pilot_says_what_the_target_needs_and_how_long_is_left() -> None:
         stats,
         target=0.5,
         confidence=0.95,
-        flight_per_batch=4,
         num_batches=10,
         batch_seconds=30.0,
     )
@@ -723,9 +722,7 @@ def test_the_pilot_without_a_target_gives_only_the_time_left() -> None:
     """With no target, the rest of the batches fly; with none left, no message."""
     stats = BatchStats(independent_trials=False)
     stats.add_batch([1.0, 2.0])
-    flown = partial(
-        pilot_message, stats, target=None, confidence=None, flight_per_batch=2
-    )
+    flown = partial(pilot_message, stats, target=None, confidence=None)
 
     assert flown(num_batches=3, batch_seconds=5.0) == "about 10 s left"
     assert flown(num_batches=1, batch_seconds=5.0) is None
@@ -740,12 +737,27 @@ def test_the_pilot_stops_counting_time_once_the_target_is_met() -> None:
         stats,
         target=100.0,
         confidence=None,
-        flight_per_batch=2,
         num_batches=5,
         batch_seconds=5.0,
     )
 
     assert message == "about 2 trials (1 batch) needed for a standard error of 100 m"
+
+
+def test_the_pilot_counts_batch_means_when_trials_failed() -> None:
+    """Batches of 4 that lost a trial each still need one batch per batch mean."""
+    stats = BatchStats(independent_trials=False)
+    for low in (10.0, 12.0, 11.0):
+        stats.add_batch([low, low, low])  # One of four failed in each
+    needed = stats.trials_needed(0.5, 0.95)
+    assert needed is not None
+
+    message = pilot_message(
+        stats, target=0.5, confidence=0.95, num_batches=100, batch_seconds=1.0
+    )
+
+    assert message is not None
+    assert message.startswith(f"about {needed} trials ({needed // 3} batches)")
 
 
 def _saved_table() -> pd.DataFrame:

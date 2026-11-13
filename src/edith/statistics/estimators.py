@@ -181,7 +181,6 @@ def pilot_message(
     *,
     target: float | None,
     confidence: float | None,
-    flight_per_batch: int,
     num_batches: int,
     batch_seconds: float,
     units: str = "m",
@@ -193,7 +192,6 @@ def pilot_message(
         target (float | None): The stopping rule's target, or None for none.
         confidence (float | None): Its confidence, or None for a standard
             error target.
-        flight_per_batch (int): Trials in each batch.
         num_batches (int): The batches the campaign may fly at most.
         batch_seconds (float): The mean wall time of a batch so far.
         units (str, optional): The target's units. Defaults to "m".
@@ -206,7 +204,12 @@ def pilot_message(
     parts = []
     needed = None if target is None else estimate.trials_needed(target, confidence)
     if target is not None and needed is not None:
-        batches = math.ceil(needed / flight_per_batch)
+        if estimate.independent_trials:
+            # At the rate trials gave values so far, which failures lower
+            batches = math.ceil(needed * estimate.batches / estimate.trials)
+        else:
+            # Batch means are the samples: whole batches of the mean size so far
+            batches = needed // math.ceil(estimate.trials / estimate.batches)
         goal = (
             f"a standard error of {target:g} {units}"
             if confidence is None
