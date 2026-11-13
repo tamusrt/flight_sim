@@ -46,6 +46,11 @@ PERCENTILE_CUTOFF = 1e-6
 # before it counts as not bracketing it, so a bound equal to it passes
 BOUND_TOLERANCE = 1e-12
 
+# Points of the grid a von Mises distribution tabulates its CDF on, and the
+# sigmas, 1 / sqrt(kappa) radians, it spans either side of the nominal value
+VON_MISES_POINTS = 4097
+VON_MISES_SPAN = 10.0
+
 
 def clip_percentiles(percentiles: NDArray[np.float64]) -> NDArray[np.float64]:
     """Return percentiles clipped to ``[PERCENTILE_CUTOFF, 1 - PERCENTILE_CUTOFF]``.
@@ -506,14 +511,20 @@ class VonMises(Distribution):
     def ppf(
         self, percentiles: NDArray[np.float64], nominal: float
     ) -> NDArray[np.float64]:
-        """Return the value at each percentile, in the nominal value's units."""
-        # Bounded, but scipy gives an infinite value at percentiles 0 and 1
-        radians = stats.vonmises.ppf(
-            clip_percentiles(percentiles),
-            self.kappa,
-            loc=nominal * self.radians_per_unit,
-        )
-        return np.asarray(radians, dtype=float) / self.radians_per_unit
+        """Return the value at each percentile, in the nominal value's units.
+
+        scipy inverts the CDF numerically, a few milliseconds a value, so the
+        CDF is tabulated on a grid instead and inverted by interpolation,
+        within 1e-5 of a sigma of scipy's values. The grid spans
+        ``VON_MISES_SPAN`` sigmas either side, or half a turn if that is less,
+        beyond which lies under 1e-20 of the chance.
+        """
+        span = min(math.pi, VON_MISES_SPAN / math.sqrt(self.kappa))
+        grid = np.linspace(-span, span, VON_MISES_POINTS)
+        cdf = stats.vonmises.cdf(grid, self.kappa)
+        cdf = (cdf - cdf[0]) / (cdf[-1] - cdf[0])  # 0 and 1 at the ends exactly
+        radians = np.interp(np.asarray(percentiles, dtype=float), cdf, grid)
+        return np.asarray(nominal + radians / self.radians_per_unit, dtype=float)
 
     def describe(self, units: str) -> str:
         """Return the distribution in words, such as "von Mises, kappa 400"."""

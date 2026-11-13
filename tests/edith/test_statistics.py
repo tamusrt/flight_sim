@@ -629,6 +629,18 @@ def test_bad_parameters_of_the_new_distributions_are_refused(
         )
 
 
+@pytest.mark.parametrize("kappa", [0.01, 4.0, 400.0, 1e5])
+def test_von_mises_values_match_scipys_inverse_cdf(kappa: float) -> None:
+    """The tabulated inverse is scipy's own to within 1e-5 of a sigma."""
+    percentiles = np.linspace(1e-4, 1.0 - 1e-4, 101)
+    exact = scipy_stats.vonmises.ppf(percentiles, kappa, loc=0.5)
+    sigma = min(1.0 / math.sqrt(kappa), math.pi)
+
+    values = VonMises(kappa).ppf(percentiles, 0.5)
+
+    assert np.max(np.abs(values - exact)) < 1e-5 * sigma
+
+
 def test_a_von_mises_needs_an_angle() -> None:
     """A von Mises distribution of a mass is refused."""
     with pytest.raises(ParameterError, match="is not an angle"):
