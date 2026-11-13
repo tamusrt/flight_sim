@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 import pytest
+from scipy import stats as scipy_stats  # type: ignore[import-untyped]
 
 from edith.config import EdithConfig
 from edith.dispersion import _distribution_name
@@ -642,15 +643,49 @@ def test_a_plain_key_must_be_one_the_distribution_takes() -> None:
     assert "Stray" not in DISTRIBUTIONS
 
 
+def _fewest_reaching(spread: float, target: float, confidence: float) -> int:
+    """Return the fewest samples whose interval, t at their count, meets a target."""
+    n = 2
+    while _t(confidence, n) * spread / math.sqrt(n) > target:
+        n += 1
+    return n
+
+
+def _t(confidence: float, n: int) -> float:
+    """Return Student's t of a two-sided interval of n samples."""
+    return float(scipy_stats.t.ppf((1.0 + confidence) / 2.0, n - 1))
+
+
 def test_trials_needed_from_independent_trials() -> None:
-    """n = (k s / target) ** 2, with k = 1 for a standard error target."""
+    """(s / target) ** 2 for a standard error; for an interval, t at the final count."""
     stats = BatchStats(independent_trials=True)
     stats.add_batch([1.0, 3.0, 5.0, 7.0])  # s = sqrt(20 / 3)
     spread = math.sqrt(20.0 / 3.0)
 
     assert stats.trials_needed(0.5, None) == math.ceil((spread / 0.5) ** 2)
-    assert stats.trials_needed(0.5, 0.95) == math.ceil((3.182446 * spread / 0.5) ** 2)
+    assert stats.trials_needed(0.5, 0.95) == _fewest_reaching(spread, 0.5, 0.95)
     assert stats.trials_needed(1e9, None) == 2  # Never fewer than a spread needs
+    assert stats.trials_needed(1e9, 0.95) == 2
+
+
+def test_trials_needed_is_when_the_interval_rule_fires() -> None:
+    """Two batch means give t at 1 degree of freedom, 12.7, but the estimate
+    uses t at the count it names, so flying that many with the same spread
+    meets the rule and one batch fewer does not."""
+    stats = BatchStats(independent_trials=False)
+    stats.add_batch([10.0, 10.0])
+    stats.add_batch([12.0, 12.0])  # Batch means 10 and 12: s = sqrt(2)
+
+    needed = stats.trials_needed(1.0, 0.95)
+    assert needed is not None
+    batches = needed // 2
+    spread = math.sqrt(2.0)
+
+    assert batches == _fewest_reaching(spread, 1.0, 0.95)
+    assert _t(0.95, batches) * spread / math.sqrt(batches) <= 1.0
+    assert _t(0.95, batches - 1) * spread / math.sqrt(batches - 1) > 1.0
+    old = math.ceil((_t(0.95, 2) * spread / 1.0) ** 2)
+    assert batches < old / 10  # The count from t at 1 degree of freedom
 
 
 def test_trials_needed_from_batch_means_counts_whole_batches() -> None:
@@ -679,7 +714,7 @@ def test_the_pilot_says_what_the_target_needs_and_how_long_is_left() -> None:
     )
 
     assert message == (
-        "about 271 trials (68 batches) needed for +/- 0.5 m at 95%, more than "
+        "about 105 trials (27 batches) needed for +/- 0.5 m at 95%, more than "
         "the 10 set; about 4 min left"
     )
 

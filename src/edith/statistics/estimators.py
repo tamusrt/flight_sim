@@ -113,12 +113,15 @@ class BatchStats:
     def trials_needed(self, target: float, confidence: float | None) -> int | None:
         """Return the trials in all a target needs, from the spread so far.
 
-        It is ``(k s / target)**2`` samples, ``s`` being the spread the
-        standard error comes from and ``k`` Student's t at ``confidence``, with
-        the degrees of freedom so far, or 1 for a standard error target. With
-        stratified trials the samples are batch means, so it is that many
-        batches of the mean batch size so far, which is when the stopping rule
-        would fire.
+        ``s`` is the spread the standard error comes from. For a standard
+        error target it is ``(s / target)**2`` samples. For an interval it is
+        the fewest samples ``n`` whose half-width, ``t s / sqrt(n)`` with
+        Student's t at ``n - 1`` degrees of freedom, reaches the target: the
+        check the stopping rule makes once it has them, so ``t`` is not that
+        of the few samples so far, which would overstate it many times over.
+        With stratified trials the samples are batch means, so it is that many
+        batches of the mean batch size so far. ``s`` is only as good as the
+        samples so far, so early estimates still move from batch to batch.
 
         Args:
             target (float): The standard error, or the confidence interval's
@@ -133,10 +136,17 @@ class BatchStats:
         samples = self._samples
         if len(samples) < 2:
             return None
-        k = 1.0
-        if confidence is not None:
-            k = float(stats.t.ppf((1.0 + confidence) / 2.0, len(samples) - 1))
-        count = max(math.ceil((k * float(np.std(samples, ddof=1)) / target) ** 2), 2)
+        spread = float(np.std(samples, ddof=1))
+        if confidence is None:
+            count = math.ceil((spread / target) ** 2)
+        else:
+            # t is above the normal z, so z's count is a lower bound to search
+            # up from; the gap is a few samples
+            quantile = (1.0 + confidence) / 2.0
+            count = max(math.ceil((stats.norm.ppf(quantile) * spread / target) ** 2), 2)
+            while stats.t.ppf(quantile, count - 1) * spread / math.sqrt(count) > target:
+                count += 1
+        count = max(count, 2)
         if self.independent_trials:
             return count
         return count * math.ceil(self.trials / self.batches)
