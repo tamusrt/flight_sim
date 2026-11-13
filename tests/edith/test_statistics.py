@@ -30,7 +30,13 @@ from edith.statistics.distributions import (
     Weibull,
     clip_percentiles,
 )
-from edith.statistics.estimators import RELIABLE_TRIALS, BatchStats, pilot_message
+from edith.statistics.estimators import (
+    RELIABLE_TRIALS,
+    BatchStats,
+    Remaining,
+    pilot_message,
+    remaining_trials,
+)
 from edith.statistics.generators import GENERATORS, PointGenerator, stream
 from edith.statistics.stopping import (
     STOPPING_RULES,
@@ -705,3 +711,51 @@ def test_the_pilot_stops_counting_time_once_the_target_is_met() -> None:
     )
 
     assert message == "about 2 trials (1 batch) needed for a standard error of 100 m"
+
+
+def _saved_table() -> pd.DataFrame:
+    """Return a saved campaign's table: three batches, one trial failed."""
+    return pd.DataFrame(
+        {
+            "batch": [0, 0, 1, 1, 2, 2],
+            "max_mach": [1.0, 3.0, 3.0, math.nan, 5.0, 7.0],
+            "run_time_s": [2.0, 2.0, 2.0, math.nan, 2.0, 2.0],
+        }
+    )
+
+
+@pytest.mark.parametrize("independent_trials", [True, False])
+def test_statistics_rebuilt_from_a_table_match_those_built_batch_by_batch(
+    independent_trials: bool,
+) -> None:
+    """Any output gets the same statistics the runner gives the apogee."""
+    built = BatchStats(independent_trials=independent_trials)
+    for batch in ([1.0, 3.0], [3.0], [5.0, 7.0]):
+        built.add_batch(batch)
+
+    rebuilt = BatchStats.from_table(
+        _saved_table(), "max_mach", independent_trials=independent_trials
+    )
+
+    assert rebuilt == built
+
+
+def test_a_saved_campaign_says_how_many_more_trials_a_target_needs() -> None:
+    """Five independent trials of spread s need (s / target) ** 2 in all."""
+    table = _saved_table()
+    spread = float(np.std([1.0, 3.0, 3.0, 5.0, 7.0], ddof=1))
+    needed = math.ceil((spread / 0.5) ** 2)
+
+    result = remaining_trials(
+        table, "max_mach", 0.5, None, independent_trials=True, workers=4
+    )
+
+    assert result == Remaining(needed - 5, (needed - 5) * 2.0 / 4)
+    assert remaining_trials(table, "max_mach", 1e9, None, independent_trials=True) == (
+        Remaining(0, 0.0)
+    )
+    one_batch = table[table["batch"] == 0]
+    assert (
+        remaining_trials(one_batch, "max_mach", 0.5, None, independent_trials=False)
+        is None
+    )

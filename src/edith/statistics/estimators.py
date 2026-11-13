@@ -11,16 +11,26 @@ leave batches of unequal sizes, the batch-based standard error is approximate.
 
 The same spread says how many trials a target needs, so the first batches act
 as a pilot: ``pilot_message`` reports that, and the time the rest should take.
+``BatchStats.from_table`` rebuilds the statistics of any output of a saved
+campaign, and ``remaining_trials`` says how much longer it would need.
 """
 
 import math
 from dataclasses import dataclass, field
+from typing import NamedTuple, Self
 
 import numpy as np
+import pandas as pd  # type: ignore[import-untyped]
 from numpy.typing import ArrayLike
 from scipy import stats  # type: ignore[import-untyped]
 
-__all__ = ["RELIABLE_TRIALS", "BatchStats", "pilot_message"]
+__all__ = [
+    "RELIABLE_TRIALS",
+    "BatchStats",
+    "Remaining",
+    "pilot_message",
+    "remaining_trials",
+]
 
 # Fewest trials for a reliable interval of a mean, a common rule of thumb
 RELIABLE_TRIALS = 30
@@ -34,6 +44,29 @@ class BatchStats:
     independent_trials: bool
     batch_means: list[float] = field(default_factory=list)
     values: list[float] = field(default_factory=list)  # Every trial's value
+
+    @classmethod
+    def from_table(
+        cls, table: pd.DataFrame, column: str, *, independent_trials: bool
+    ) -> Self:
+        """Return the statistics of one output of a saved campaign.
+
+        Args:
+            table (pd.DataFrame): Its trials, with their ``batch`` column, as
+                ``results.load_table`` returns them.
+            column (str): The output, such as "max_mach".
+            independent_trials (bool): Whether the generator's trials are
+                independent, as its ``trials_are_independent`` says.
+
+        Returns:
+            Self: The statistics, as the runner would have built them batch by
+                batch, leaving out NaN values.
+        """
+        estimate = cls(independent_trials=independent_trials)
+        for _, batch in table.groupby("batch", sort=True):
+            values = batch[column].to_numpy(dtype=float)
+            estimate.add_batch(values[np.isfinite(values)])
+        return estimate
 
     def add_batch(self, values: ArrayLike) -> None:
         """Add one batch's values; an empty batch is skipped."""
@@ -179,6 +212,52 @@ def pilot_message(
     if remaining > 0:
         parts.append(f"about {_duration(remaining * batch_seconds)} left")
     return "; ".join(parts) or None
+
+
+class Remaining(NamedTuple):
+    """How much longer a saved campaign needs to reach a target."""
+
+    trials: int  # More trials with a value, beyond those it has
+    seconds: float  # Their flying time, without preparation
+
+
+def remaining_trials(
+    table: pd.DataFrame,
+    column: str,
+    target: float,
+    confidence: float | None,
+    *,
+    independent_trials: bool,
+    workers: int = 1,
+) -> Remaining | None:
+    """Return the trials, and time, a saved campaign needs for a target.
+
+    The time is the trials times the mean ``run_time_s`` of those flown, over
+    the workers, so it leaves out preparation and reads a little low.
+
+    Args:
+        table (pd.DataFrame): Its trials, as ``results.load_table`` returns.
+        column (str): The output, such as "apogee_m".
+        target (float): The standard error, or the confidence interval's
+            half-width, to reach.
+        confidence (float | None): The interval's confidence, or None for a
+            standard error target.
+        independent_trials (bool): Whether the generator's trials are
+            independent.
+        workers (int, optional): Trials flown at once. Defaults to 1.
+
+    Returns:
+        Remaining | None: None until there is a standard error.
+    """
+    estimate = BatchStats.from_table(
+        table, column, independent_trials=independent_trials
+    )
+    needed = estimate.trials_needed(target, confidence)
+    if needed is None:
+        return None
+    trials = max(needed - estimate.trials, 0)
+    run_time = float(np.nanmean(table["run_time_s"].to_numpy(dtype=float)))
+    return Remaining(trials, trials * run_time / workers)
 
 
 def _duration(seconds: float) -> str:
