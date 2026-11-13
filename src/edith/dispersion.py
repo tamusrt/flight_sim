@@ -3,22 +3,29 @@
 A campaign names a dispersion class by the name of a ``BaseDispersion``
 subclass in this module, which ``DISPERSION_CLASSES`` lists, and each reads
 its own table of the campaign file. StandardDispersion, the default, disperses
-one number of the base sim with a distribution: a class in ``Distribution``,
-found by its ``DIST_TYPE`` in ``DISTRIBUTIONS``, which lists and checks its
-own parameters, so a new distribution is one new class here, added to
-``Distribution``. A standard dispersion's numbers are all in the units its
-nominal value is written in.
+one number of the base sim with a distribution: a subclass of ``Distribution``,
+found by its class name in ``DISTRIBUTIONS``. Those live in
+``edith.statistics.distributions``, which this module re-exports. A standard
+dispersion's numbers are all in the units its nominal value is written in.
 """
 
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar, NamedTuple, Self, TypeAlias, get_args
+from typing import Self
 
 from pint import DimensionalityError, OffsetUnitCalculusError
 
 from edith.errors import EdithConfigError, check_keys, quoted_key_path
+from edith.statistics.distributions import (
+    DISTRIBUTIONS,
+    Distribution,
+    Normal,
+    Parameter,
+    ParameterError,
+    Uniform,
+)
 from edith.targets import Nominal, find_target
 from flight_sim.config import InputSource
 from flight_sim.units import UNREADABLE_UNITS, convert, parse_quantity
@@ -69,148 +76,12 @@ class BaseDispersion(ABC):
         """
 
 
-class Parameter(NamedTuple):
-    """One of a distribution's parameters, in its nominal value's units."""
+def _distribution_names() -> str:
+    """Return the distribution values a dispersion may take, as messages list them.
 
-    value: float
-    text: str  # As the campaign file writes it, such as "2 cm"
-
-
-class ParameterError(ValueError):
-    """Error in a distribution's parameters, naming the one at fault if one is."""
-
-    def __init__(self, message: str, key: str | None = None) -> None:
-        """Keep the message, and the key of the parameter at fault, if any."""
-        super().__init__(message)
-        self.key = key
-
-
-@dataclass(frozen=True)
-class Normal:
-    """Normal distribution about the dispersion's nominal value.
-
-    ``low`` and ``high``, where given, truncate it on either side of the
-    nominal value.
+    Built when needed, since a distribution may be defined after this module loads.
     """
-
-    # How a campaign names it, the parameters it needs and takes, and how
-    # errors say so
-    DIST_TYPE: ClassVar[str] = "normal"
-    REQUIRED: ClassVar[tuple[str, ...]] = ("sigma",)
-    OPTIONAL: ClassVar[tuple[str, ...]] = ("low", "high")
-    USAGE: ClassVar[str] = (
-        "a normal dispersion takes sigma, and optionally low and high"
-    )
-
-    sigma: float
-    low: float | None = None
-    high: float | None = None
-
-    @classmethod
-    def from_parameters(
-        cls, parameters: Mapping[str, Parameter], nominal: Nominal
-    ) -> Self:
-        """Return the distribution its parameters describe, checking them.
-
-        Args:
-            parameters (Mapping[str, Parameter]): sigma, and any of low and
-                high, in the nominal value's units.
-            nominal (Nominal): The value it disperses.
-
-        Returns:
-            Normal: The distribution.
-
-        Raises:
-            ParameterError: If sigma is negative, or low and high do not lie on
-                either side of the nominal value.
-        """
-        sigma = parameters["sigma"]
-        low, high = parameters.get("low"), parameters.get("high")
-        if sigma.value < 0.0:
-            raise ParameterError(f"expected 0 or more, got {sigma.text}", "sigma")
-        side = "low and high truncate a normal distribution on either side of it"
-        if low is not None and _above(low.value, nominal.value):
-            raise ParameterError(
-                f"{low.text} is above the nominal value, {nominal.text}; {side}", "low"
-            )
-        if high is not None and _above(nominal.value, high.value):
-            raise ParameterError(
-                f"{high.text} is below the nominal value, {nominal.text}; {side}",
-                "high",
-            )
-        _check_order(low, high)
-        return cls(
-            sigma.value,
-            None if low is None else low.value,
-            None if high is None else high.value,
-        )
-
-
-@dataclass(frozen=True)
-class Uniform:
-    """Uniform distribution from ``low`` to ``high``."""
-
-    # How a campaign names it, the parameters it takes, and how errors say so
-    DIST_TYPE: ClassVar[str] = "uniform"
-    REQUIRED: ClassVar[tuple[str, ...]] = ()
-    OPTIONAL: ClassVar[tuple[str, ...]] = ("half_width", "low", "high")
-    USAGE: ClassVar[str] = "a uniform dispersion takes half_width, or low and high"
-
-    low: float
-    high: float
-
-    @classmethod
-    def from_parameters(
-        cls, parameters: Mapping[str, Parameter], nominal: Nominal
-    ) -> Self:
-        """Return the distribution of half_width about the nominal, or low to high.
-
-        Args:
-            parameters (Mapping[str, Parameter]): half_width, or low and high,
-                in the nominal value's units.
-            nominal (Nominal): The value it disperses.
-
-        Returns:
-            Uniform: The distribution.
-
-        Raises:
-            ParameterError: If it has both forms or neither, half_width is
-                negative, or low is not below high.
-        """
-        half_width = parameters.get("half_width")
-        low, high = parameters.get("low"), parameters.get("high")
-        if half_width is not None:
-            if low is not None or high is not None:
-                raise ParameterError(
-                    f"give half_width, or low and high, not both; {cls.USAGE}"
-                )
-            if half_width.value < 0.0:
-                raise ParameterError(
-                    f"expected 0 or more, got {half_width.text}", "half_width"
-                )
-            return cls(
-                nominal.value - half_width.value, nominal.value + half_width.value
-            )
-        if low is None and high is None:
-            raise ParameterError(f"missing half_width, or low and high; {cls.USAGE}")
-        if low is None or high is None:
-            raise ParameterError(
-                f"missing {'low' if low is None else 'high'}; {cls.USAGE}"
-            )
-        _check_order(low, high)
-        return cls(low.value, high.value)
-
-
-Distribution: TypeAlias = Normal | Uniform
-
-# Each distribution class, by the dist_type a campaign names it with; adding a
-# class to Distribution adds it here
-DISTRIBUTIONS: dict[str, type[Distribution]] = {
-    cls.DIST_TYPE: cls for cls in get_args(Distribution)
-}
-
-# The dist_type values a dispersion may take, as messages list them
-_DIST_TYPES = " or ".join(f'"{name}"' for name in DISTRIBUTIONS)
+    return " or ".join(f'"{name}"' for name in DISTRIBUTIONS)
 
 
 @dataclass(frozen=True)
@@ -243,11 +114,11 @@ class StandardDispersion(BaseDispersion):
                 the table does not describe a distribution of it.
         """
         key_path, nominal = find_target(source, key, where)
-        distribution_class = DISTRIBUTIONS[_dist_type(table, where)]
+        distribution_class = DISTRIBUTIONS[_distribution_name(table, where)]
         check_keys(
             table,
             where,
-            ("dist_type", *distribution_class.REQUIRED),
+            ("distribution", *distribution_class.REQUIRED),
             ("dispersion", *distribution_class.OPTIONAL),
             distribution_class.USAGE,
         )
@@ -275,21 +146,23 @@ DISPERSION_CLASSES: dict[str, type[BaseDispersion]] = {
 }
 
 
-def _dist_type(table: Mapping[str, object], where: str) -> str:
-    """Return a dispersion's distribution type, a key of ``DISTRIBUTIONS``.
+def _distribution_name(table: Mapping[str, object], where: str) -> str:
+    """Return a dispersion's distribution, a key of ``DISTRIBUTIONS``.
 
     Raises:
         EdithConfigError: If it is missing, or names no distribution EDITH has.
     """
-    if "dist_type" not in table:
-        raise EdithConfigError(f"{where}: missing dist_type, {_DIST_TYPES}")
-    dist_type = table["dist_type"]
-    if not isinstance(dist_type, str) or dist_type not in DISTRIBUTIONS:
+    if "distribution" not in table:
         raise EdithConfigError(
-            f"{quoted_key_path(where, 'dist_type')}: expected {_DIST_TYPES}, "
-            f"got {dist_type!r}"
+            f"{where}: missing distribution, {_distribution_names()}"
         )
-    return dist_type
+    name = table["distribution"]
+    if not isinstance(name, str) or name not in DISTRIBUTIONS:
+        raise EdithConfigError(
+            f"{quoted_key_path(where, 'distribution')}: expected "
+            f"{_distribution_names()}, got {name!r}"
+        )
+    return name
 
 
 def _number(value: object, where: str, nominal: Nominal) -> Parameter:
@@ -352,18 +225,3 @@ def _finite(number: float, where: str, value: object) -> float:
     if not math.isfinite(number):
         raise EdithConfigError(f"{where}: expected a finite number, got {value!r}")
     return number
-
-
-def _above(first: float, second: float) -> bool:
-    """Return whether one number is above another by more than rounding."""
-    return first > second and not math.isclose(first, second, abs_tol=1e-12)
-
-
-def _check_order(low: Parameter | None, high: Parameter | None) -> None:
-    """Check low is below high where both are given.
-
-    Raises:
-        ParameterError: If it is not.
-    """
-    if low is not None and high is not None and not low.value < high.value:
-        raise ParameterError(f"low ({low.text}) must be below high ({high.text})")

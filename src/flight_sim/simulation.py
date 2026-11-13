@@ -13,7 +13,7 @@ import pandas as pd  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
 
 from flight_sim import output
-from flight_sim.config import InputSource, load_with_source
+from flight_sim.config import InputSource, build_with_source, load_with_source
 from flight_sim.flight_event import FlightEvent
 from flight_sim.integration import (
     IntegrationConfiguration,
@@ -67,6 +67,25 @@ class Simulation(UnitChecked):
             ConfigError: If the file cannot be read or built.
         """
         simulation, source = load_with_source(path, cls)
+        simulation.source = source
+        return simulation
+
+    @classmethod
+    def from_table(cls, table: Mapping[str, Any], path: str | Path) -> Self:
+        """Build a simulation from a resolved input table, keeping its source.
+
+        Args:
+            table (Mapping[str, Any]): The table, such as one
+                ``source.table_with`` returns.
+            path (str | Path): The sim input file the table came from.
+
+        Returns:
+            Self: The simulation, with ``source`` describing the table.
+
+        Raises:
+            ConfigError: If the table cannot be built.
+        """
+        simulation, source = build_with_source(table, path, cls)
         simulation.source = source
         return simulation
 

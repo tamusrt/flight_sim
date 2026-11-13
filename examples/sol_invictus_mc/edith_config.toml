@@ -1,14 +1,19 @@
 # EDITH campaign: dispersed flights of the Sol Invictus example. Read with:
 #
-#   uv sync --extra edith
-#   uv run edith examples/sol_invictus_mc/edith_config.toml
+#   uv sync
+#   uv run edith examples/sol_invictus_mc/edith_config.toml -n 7
 #
-# Paths are relative to this file. The campaign file and output_dir may lie
+# -n is the worker processes, each flying one trial at a time; left out,
+# it is the CPUs less one. Paths are relative to this file. The campaign file and output_dir may lie
 # anywhere, the base sim's folder included. flight_sim reads this file as it
 # reads sim input files, so include and extends work here too.
 
-# Number of trials
-num_sims = 500
+# Number of batches, each an independent replicate. A stopping rule is checked
+# after each batch, and the last batch always ends the campaign.
+num_batches = 5
+
+# Flights (trials) in each batch, so 250 in all here.
+flight_per_batch = 50
 
 # Seeds every draw. Each dispersion draws from its own stream, made from
 # master_seed and the dispersion's key, so adding, removing or reordering
@@ -19,17 +24,47 @@ master_seed = 9999
 # includes and defaults filled in and its paths made absolute.
 base_sim = "../sol_invictus/sim.toml"
 
-# Gets runs/, a folder per trial, and the Zarr store of the results
-output_dir = "../../out/edith_sol_invictus"
+# Gets runs/, a folder per trial, and the Zarr store of the results. {name}
+# is the base sim's name and {datetime} the start, as in a sim's [output]
+# directory.
+output_dir = "../../out/edith_{name}_{datetime}"
 
-# "lhs", Latin hypercube sampling, or "random". With "lhs", changing
-# num_sims changes every trial's sample.
-sampling = "lhs"
+# The generator class that draws the samples, from edith/statistics/generators.py:
+# "LatinHypercubeGenerator" or "RandomGenerator". With "LatinHypercubeGenerator",
+# changing the batch size changes every trial's sample.
+generator = "LatinHypercubeGenerator"
+# Input files in each prepared run: "normal", "compressed", or "lightweight".
+input_mode = "lightweight"
 
 # Left out, EDITH picks these:
-# workers = 7               # Worker processes; default: CPUs less one
-# batch_size = 13           # Trials per batch and per Zarr chunk
 # trial_timeout = "10 min"  # Longer trials stop as TIMEOUT; in s, min or h
+# max_failed_fraction = 0.5 # A batch with more of its trials failed ends the run
+
+# Stopping. With "RandomGenerator" the apogee's standard error is the spread of
+# all the trials. With "LatinHypercubeGenerator", whose trials in a batch are
+# stratified, it comes from the spread of the batch means, so it needs two
+# batches. A rule waits for it. With fewer than 30 trials EDITH warns that the
+# output might not be reliable. The last batch always ends the campaign.
+# rule is the name of a class in edith/statistics/stopping.py:
+#   rule = "FixedTrials"                fly every batch
+#   rule = "StandardErrorTarget"        stop once the apogee's standard error
+#                                       <= target
+#   rule = "ConfidenceIntervalTarget"   stop once its confidence interval's
+#                                       half-width <= target; confidence is a
+#                                       fraction, 0.95 for 95 %
+[stopping]
+rule = "FixedTrials"
+# target = "5 m"
+# confidence = 0.95
+
+# Output settings of every trial, over the base sim's [output]; each trial's
+# directory is its own run directory. Left out, trials write what the base
+# sim writes. Writing is most of a trial's time: plots above all, and
+# "flight_sim run <run directory>" redraws any trial's on demand.
+[output]
+plots = []
+formats = ["parquet"]
+sample_interval = "0.05 s"
 
 # ---------------------------------------------------------------------------
 # Dispersions
@@ -52,15 +87,15 @@ sampling = "lhs"
 #
 # dispersion names the class that draws the value. Left out, as in every
 # table below, it is the standard one, the only one for now, which draws a
-# number from the distribution dist_type names. Written out, it is:
+# number from the distribution that distribution names. Written out, it is:
 #
 #   dispersion = "StandardDispersion"
 #
-# dist_type = "normal"   sigma about the nominal value. Optional low and
-#                        high truncate it, as absolute values on either
-#                        side of the nominal value.
-# dist_type = "uniform"  half_width either side of the nominal value, or
-#                        from low to high, as absolute values.
+# distribution = "Normal"   sigma about the nominal value. Optional low and
+#                           high truncate it, as absolute values on either
+#                           side of the nominal value.
+# distribution = "Uniform"  half_width either side of the nominal value, or
+#                           from low to high, as absolute values.
 #
 # sigma, half_width, low and high carry units of the same kind as the
 # nominal value's, such as "0.25 kg" or "5 mph", and EDITH converts them to
@@ -71,33 +106,33 @@ sampling = "lhs"
 
 # Dry mass, a placeholder 17 kg in vehicle.toml
 [dispersions."properties.dry_mass_properties.mass"]
-dist_type = "normal"
+distribution = "Normal"
 sigma = "0.25 kg"
 
 # Dry CG along the body axis, from the nose tip
 [dispersions."properties.dry_mass_properties.cg_location.value[0]"]
-dist_type = "normal"
+distribution = "Normal"
 sigma = "2 cm"
 
 # Rail elevation, never past vertical
 [dispersions."config.truth.launch_rail.elevation"]
-dist_type = "normal"
+distribution = "Normal"
 sigma = "0.5 deg"
 high = "90 deg"
 
 # Rail friction, a plain number in sim.toml, so its bounds are plain too
 [dispersions."config.truth.launch_rail.friction_coefficient"]
-dist_type = "uniform"
+distribution = "Uniform"
 low = 0.0
 high = 0.2
 
 # Wind speed, anywhere from calm to 15 mph
 [dispersions."config.truth.wind.speed"]
-dist_type = "uniform"
+distribution = "Uniform"
 low = "0 mph"
 high = "15 mph"
 
 # Wind direction, within 30 deg of the azimuth in site.toml
 [dispersions."config.truth.wind.from_azimuth"]
-dist_type = "uniform"
+distribution = "Uniform"
 half_width = "30 deg"

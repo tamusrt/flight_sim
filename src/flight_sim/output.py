@@ -17,6 +17,7 @@ from flight_sim import plots
 from flight_sim.config import InputSource, write_toml
 from flight_sim.plots import ChannelSource
 from flight_sim.units import Scalar, UnitChecked, UnitSystem
+from flight_sim.utilities.data_loader import read_data_frame
 
 if TYPE_CHECKING:
     from flight_sim.simulation import Flight, Simulation
@@ -65,7 +66,7 @@ class OutputConfiguration(UnitChecked):
         super().__post_init__()
         if self.directory is not None:
             try:
-                _fill(str(self.directory), "", datetime.now())
+                fill(str(self.directory), "", datetime.now())
             except (AttributeError, IndexError, KeyError, ValueError) as error:
                 raise ValueError(
                     f"Output directory {self.directory} has a bad placeholder"
@@ -97,7 +98,7 @@ class OutputConfiguration(UnitChecked):
         """
         if self.directory is None:
             return None
-        return Path(_fill(str(self.directory), name, time)).resolve()
+        return Path(fill(str(self.directory), name, time)).resolve()
 
 
 class _StartTime:
@@ -110,7 +111,7 @@ class _StartTime:
         return self.time.strftime(spec or DATETIME_FORMAT)
 
 
-def _fill(template: str, name: str, time: datetime) -> str:
+def fill(template: str, name: str, time: datetime) -> str:
     """Replace the "{name}" and "{datetime}" placeholders in a directory."""
     return template.format_map({"name": file_name(name), "datetime": _StartTime(time)})
 
@@ -174,6 +175,134 @@ def prepare(simulation: "Simulation", *, overwrite: bool = False) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     _write_input(simulation.source, directory)
     return directory
+
+
+def parquet_source(source: InputSource, cache_directory: Path) -> InputSource:
+    """Convert a source's CSV inputs and return a source using the Parquets.
+
+    Args:
+        source (InputSource): Resolved source to convert.
+        cache_directory (Path): Temporary directory for converted files.
+
+    Returns:
+        InputSource: A source whose CSV paths have been replaced by Parquets.
+    """
+    converted: dict[Path, Path] = {}
+    replacements: dict[str, str] = {}
+    paths = dict(source.paths)
+    for where, path in source.paths.items():
+        if path.suffix.lower() != ".csv":
+            continue
+        parquet = converted.get(path)
+        if parquet is None:
+            parquet = cache_directory / f"{path.stem}.parquet"
+            number = 1
+            while parquet in converted.values():
+                number += 1
+                parquet = cache_directory / f"{path.stem}_{number}.parquet"
+            cache_directory.mkdir(parents=True, exist_ok=True)
+            read_data_frame(path).to_parquet(parquet, index=False)
+            converted[path] = parquet
+        paths[where] = parquet
+        replacements[where] = parquet.as_posix()
+    if not replacements:
+        return source
+    return InputSource(
+        path=source.path,
+        table=source.table_with(replacements),
+        defaults=source.defaults,
+        paths=paths,
+        load_time_s=source.load_time_s,
+    )
+
+
+def prepare_lightweight(
+    source: InputSource, values: Mapping[str, Any], directory: Path
+) -> Path:
+    """Write a sparse trial input extending its source sim.
+
+    The file keeps the base sim and all its data paths outside the run
+    directory. Values below a list path include the complete updated list,
+    because TOML table merging replaces lists rather than merging their items.
+
+    Args:
+        source (InputSource): Resolved source of the base sim.
+        values (Mapping[str, Any]): Trial overrides by dotted key path.
+        directory (Path): Run directory receiving the input file.
+
+    Returns:
+        Path: The run directory.
+    """
+    full = source.table_with(values)
+    overrides: dict[str, Any] = {"extends": source.path.as_posix()}
+    for where in values:
+        _insert_override(overrides, where, full, values[where])
+    directory.mkdir(parents=True, exist_ok=True)
+    write_toml(directory / RESOLVED_INPUT, overrides)
+    return directory
+
+
+def prepare_source(
+    source: InputSource,
+    values: Mapping[str, Any],
+    directory: Path,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Create a run directory from resolved input values without building a sim.
+
+    Args:
+        source (InputSource): Resolved source input and its file paths.
+        values (Mapping[str, Any]): Trial overrides by dotted key path.
+        directory (Path): Run directory receiving the input and copied files.
+        overwrite (bool, optional): Allow an existing directory. Defaults to
+            refusing.
+
+    Returns:
+        Path: The run directory.
+
+    Raises:
+        FileExistsError: If the directory exists and ``overwrite`` is not set.
+    """
+    if directory.exists() and not overwrite:
+        raise FileExistsError(f"{directory} already exists")
+    trial_source = InputSource(
+        path=source.path,
+        table=source.table_with(values),
+        defaults=source.defaults,
+        paths=source.paths,
+        load_time_s=source.load_time_s,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    _write_input(trial_source, directory)
+    return directory
+
+
+def _insert_override(
+    overrides: dict[str, Any], where: str, full: Mapping[str, Any], value: Any
+) -> None:
+    """Insert one sparse override, expanding a containing list when needed."""
+    tokens = [
+        int(index) if index else name
+        for name, index in re.findall(r"([^[.\]]+)|\[(\d+)\]", where)
+    ]
+    node: dict[str, Any] = overrides
+    full_node: Any = full
+    for position, token in enumerate(tokens):
+        if isinstance(token, int):
+            raise ValueError(f"Key path cannot start with a list index: {where}")
+        if position == len(tokens) - 1:
+            node[token] = value
+            return
+        next_token = tokens[position + 1]
+        if isinstance(next_token, int):
+            node[token] = full_node[token]
+            return
+        child = node.setdefault(token, {})
+        if not isinstance(child, dict):
+            raise ValueError(f"Key path conflicts with a value: {where}")
+        node = child
+        full_node = full_node[token]
 
 
 def write(flight: "Flight", figures: Mapping[str, Figure] | None = None) -> Path | None:

@@ -2,11 +2,12 @@
 
 import pickle
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from edith.config import EdithConfig
+from edith.config import DEFAULT_MAX_FAILED_FRACTION, EdithConfig
 from edith.dispersion import (
     DISPERSION_CLASSES,
     DISTRIBUTIONS,
@@ -23,16 +24,18 @@ _EXAMPLE = Path("examples/sol_invictus")
 _CAMPAIGN = Path("examples/sol_invictus_mc/edith_config.toml")
 
 _HEADER = """
-num_sims = 10
+num_batches = 2
+flight_per_batch = 5
 master_seed = 1
 base_sim = "../base/sim.toml"
 output_dir = "../out"
+generator = "LatinHypercubeGenerator"
 """
 
 _STANDARD = 'dispersion = "StandardDispersion"'
 
 _MASS_KEY = "properties.dry_mass_properties.mass"
-_MASS_BODY = 'dist_type = "normal"\nsigma = "0.25 kg"'
+_MASS_BODY = 'distribution = "Normal"\nsigma = "0.25 kg"'
 
 
 def _table(key: str, body: str, dispersion: str = _STANDARD) -> str:
@@ -69,56 +72,60 @@ def _dispersion(tmp_path: Path, table: str) -> StandardDispersion:
     return dispersion
 
 
-def test_example_campaign_reads_every_dispersion() -> None:
-    """The example builds its settings and six dispersions in base-sim units."""
+def test_the_trials_in_all_are_the_batches_times_their_size(tmp_path: Path) -> None:
+    """A campaign gives its batches and the trials of each, and flies their product."""
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS, _HEADER))
+
+    assert (config.num_batches, config.flight_per_batch, config.num_sims) == (2, 5, 10)
+
+
+def test_the_example_campaign_loads() -> None:
+    """The shipped example reads, with every dispersion the standard class."""
     config = EdithConfig.from_file(_CAMPAIGN)
-    wind_speed = config.dispersions[4]
 
-    assert (config.num_sims, config.master_seed, config.sampling) == (500, 9999, "lhs")
-    assert config.base_sim == (_EXAMPLE / "sim.toml").resolve()
-    assert config.source.path == config.base_sim
-    assert config.output_dir == Path("out/edith_sol_invictus").resolve()
-    assert (config.workers, config.batch_size, config.trial_timeout) == (
-        None,
-        None,
-        None,
+    assert config.source.path == config.base_sim == (_EXAMPLE / "sim.toml").resolve()
+    assert config.output_dir.parent == Path("out").resolve()
+    assert config.dispersions
+    assert all(isinstance(d, StandardDispersion) for d in config.dispersions)
+
+
+def test_dispersions_read_in_file_order_in_the_base_sims_units(tmp_path: Path) -> None:
+    """Dispersions keep their order, and their numbers arrive in the nominal's units."""
+    tables = (
+        _MASS
+        + _table(
+            "config.truth.wind.speed",
+            'distribution = "Uniform"\nlow = "0 mph"\nhigh = "15 mph"',
+        )
+        + _table(
+            "config.truth.wind.from_azimuth",
+            'distribution = "Uniform"\nhalf_width = "30 deg"',
+        )
+        + _table(
+            "config.truth.launch_rail.friction_coefficient",
+            'distribution = "Uniform"\nlow = 0.0\nhigh = 0.2',
+        )
     )
-    assert config.dispersions[:4] == (
-        StandardDispersion(
-            "properties.dry_mass_properties.mass", 17.0, Normal(0.25), "kg"
-        ),
-        StandardDispersion(
-            "properties.dry_mass_properties.cg_location.value[0]",
-            -1.0,
-            Normal(0.02),
-            "m",
-        ),
-        StandardDispersion(
-            "config.truth.launch_rail.elevation", 85.0, Normal(0.5, high=90.0), "deg"
-        ),
-        StandardDispersion(
-            "config.truth.launch_rail.friction_coefficient", 0.0, Uniform(0.0, 0.2), ""
-        ),
+
+    config = EdithConfig.from_file(_campaign(tmp_path, tables))
+
+    mass, speed, azimuth, friction = config.dispersions
+    assert mass == StandardDispersion(_MASS_KEY, 17.0, Normal(0.25), "kg")
+    assert isinstance(speed, StandardDispersion)
+    assert isinstance(speed.distribution, Uniform)
+    assert (speed.nominal, speed.units, speed.distribution.low) == (0.0, "m/s", 0.0)
+    assert speed.distribution.high == pytest.approx(15 * 0.44704)
+    assert azimuth == StandardDispersion(
+        "config.truth.wind.from_azimuth", 0.0, Uniform(-30.0, 30.0), "deg"
     )
-    assert isinstance(wind_speed, StandardDispersion)
-    assert (wind_speed.key, wind_speed.nominal, wind_speed.units) == (
-        "config.truth.wind.speed",
-        0.0,
-        "m/s",
-    )
-    assert isinstance(wind_speed.distribution, Uniform)
-    assert wind_speed.distribution.low == 0.0
-    assert wind_speed.distribution.high == pytest.approx(15 * 0.44704)
-    assert config.dispersions[5:] == (
-        StandardDispersion(
-            "config.truth.wind.from_azimuth", 0.0, Uniform(-30.0, 30.0), "deg"
-        ),
+    assert friction == StandardDispersion(
+        "config.truth.launch_rail.friction_coefficient", 0.0, Uniform(0.0, 0.2), ""
     )
 
 
-def test_config_survives_pickling() -> None:
+def test_config_survives_pickling(tmp_path: Path) -> None:
     """A campaign reaches worker processes intact."""
-    config = EdithConfig.from_file(_CAMPAIGN)
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS))
 
     assert pickle.loads(pickle.dumps(config)) == config
 
@@ -129,16 +136,46 @@ def test_errors_are_config_errors() -> None:
     assert issubclass(EdithConfigError, ValueError)
 
 
-def test_optional_settings(tmp_path: Path) -> None:
-    """Workers, batch size, timeout and sampling are read when given."""
-    header = _HEADER + (
-        'sampling = "random"\nworkers = 3\nbatch_size = 4\ntrial_timeout = "10 min"\n'
+def test_left_out_settings_take_their_defaults(tmp_path: Path) -> None:
+    """Left out, the failed fraction is the default and there is no confidence."""
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS, _HEADER))
+
+    assert config.max_failed_fraction == DEFAULT_MAX_FAILED_FRACTION
+    assert config.stopping.confidence is None
+
+
+def test_generator_is_required(tmp_path: Path) -> None:
+    """The generator has no default, so a campaign file must give it."""
+    header = "\n".join(
+        line for line in _HEADER.splitlines() if not line.startswith("generator")
     )
+
+    assert "missing generator" in _error(tmp_path, _MASS, header + "\n")
+
+
+def test_the_confidence_interval_rule_needs_a_confidence(tmp_path: Path) -> None:
+    """Only the confidence-interval rule needs a confidence."""
+    stopping = '\n[stopping]\nrule = "ConfidenceIntervalTarget"\ntarget = "5 m"\n'
+
+    message = _error(tmp_path, _MASS, _HEADER + stopping)
+
+    assert 'rule "ConfidenceIntervalTarget" needs a confidence' in message
+
+
+def test_optional_settings(tmp_path: Path) -> None:
+    """Flights per batch, timeout, generator, input mode and the rest are read."""
+    header = _HEADER.replace("flight_per_batch = 5", "flight_per_batch = 2").replace(
+        "LatinHypercubeGenerator", "RandomGenerator"
+    )
+    header += 'trial_timeout = "10 min"\ninput_mode = "lightweight"\n'
+    header += "max_failed_fraction = 0.25\n"
     config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
 
-    assert config.sampling == "random"
-    assert (config.workers, config.batch_size) == (3, 4)
+    assert config.generator == "RandomGenerator"
+    assert config.flight_per_batch == 2
+    assert config.max_failed_fraction == 0.25
     assert config.trial_timeout == scalar(600.0, "s")
+    assert config.input_mode == "lightweight"
 
 
 def test_a_file_that_is_not_utf8_is_named(tmp_path: Path) -> None:
@@ -155,7 +192,7 @@ def test_a_campaign_file_may_extend_another(tmp_path: Path) -> None:
     path = _campaign(tmp_path, _MASS)
     (path.parent / "common.toml").write_text(_HEADER, encoding="utf-8")
     path.write_text(
-        'extends = "common.toml"\nnum_sims = 20\n' + _MASS, encoding="utf-8"
+        'extends = "common.toml"\nnum_batches = 4\n' + _MASS, encoding="utf-8"
     )
 
     config = EdithConfig.from_file(path)
@@ -169,7 +206,7 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
     message = _error(tmp_path, '\n[dispersions."properties.x"\n')
 
     assert "edith_config.toml" in message
-    assert "line 7" in message
+    assert "line 9" in message
 
 
 @pytest.mark.parametrize(
@@ -177,32 +214,45 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
     [
         (
             _HEADER.replace("master_seed", "master_sead"),
-            "top level: unknown keys ['master_sead']; CampaignSettings needs num_sims",
+            "top level: unknown keys ['master_sead']; "
+            "CampaignSettings needs num_batches",
         ),
-        (_HEADER.replace("num_sims =", "N ="), "top level: unknown keys ['N']"),
-        (_HEADER.replace("num_sims = 10", ""), "top level: missing num_sims;"),
+        (_HEADER.replace("num_batches =", "N ="), "top level: unknown keys ['N']"),
+        (_HEADER.replace("num_batches = 2\n", ""), "top level: missing num_batches;"),
         (
-            _HEADER.replace("num_sims = 10", "num_sims = true"),
-            "num_sims: expected an integer, got True",
-        ),
-        (
-            _HEADER.replace("num_sims = 10", "num_sims = 2.5"),
-            "num_sims: expected an integer, got 2.5",
+            _HEADER.replace("num_batches = 2", "num_batches = true"),
+            "num_batches: expected an integer, got True",
         ),
         (
-            _HEADER.replace("num_sims = 10", "num_sims = 0"),
-            "num_sims must be at least 1, got 0",
+            _HEADER.replace("num_batches = 2", "num_batches = 2.5"),
+            "num_batches: expected an integer, got 2.5",
+        ),
+        (
+            _HEADER.replace("num_batches = 2", "num_batches = 0"),
+            "num_batches must be at least 1, got 0",
         ),
         (
             _HEADER.replace("seed = 1", "seed = -1"),
             "master_seed must be at least 0, got -1",
         ),
         (
-            _HEADER + 'sampling = "LHS"\n',
-            "sampling: expected one of 'lhs', 'random', got 'LHS'",
+            _HEADER.replace('"LatinHypercubeGenerator"', '"LHS"'),
+            'generator must be "RandomGenerator" or "LatinHypercubeGenerator", '
+            "got 'LHS'",
         ),
-        (_HEADER + "workers = 0\n", "workers must be at least 1, got 0"),
-        (_HEADER + "batch_size = 0\n", "batch_size must be at least 1, got 0"),
+        (
+            _HEADER.replace("flight_per_batch = 5", "flight_per_batch = 0"),
+            "flight_per_batch must be at least 1, got 0",
+        ),
+        (
+            _HEADER.replace("flight_per_batch = 5\n", ""),
+            "top level: missing flight_per_batch;",
+        ),
+        (_HEADER + "num_sims = 10\n", "top level: unknown keys ['num_sims']"),
+        (
+            _HEADER + "max_failed_fraction = 1.5\n",
+            "max_failed_fraction must be between 0 and 1, got 1.5",
+        ),
         (
             _HEADER + 'trial_timeout = "10 m"\n',
             "(assigned to CampaignSettings.trial_timeout)",
@@ -221,6 +271,11 @@ def test_invalid_toml_names_the_file_and_line(tmp_path: Path) -> None:
         ),
         (_HEADER.replace('"../base/sim.toml"', "5"), "base_sim must be a path, got 5"),
         (_HEADER.replace('"../out"', '"../base/sim.toml"'), "sim.toml is a file"),
+        (
+            _HEADER.replace('"../out"', '"../out/{nope}"'),
+            "has a bad placeholder ('nope'); use {name}, {datetime} or "
+            "{datetime:%Y%m%d}",
+        ),
         (_HEADER + 'type = "os.getcwd"\n', "type: a campaign file takes no type"),
     ],
 )
@@ -244,6 +299,16 @@ def test_a_base_sim_that_does_not_build_is_named(tmp_path: Path) -> None:
 
     assert "base_sim: " in message
     assert "max_time" in message
+
+
+def test_output_dir_takes_the_sims_placeholders(tmp_path: Path) -> None:
+    """{name} is the base sim's name as a file name, and {datetime} the start."""
+    header = _HEADER.replace('"../out"', '"../out/{name}_{datetime:%Y}"')
+
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS, header))
+
+    expected = tmp_path / "out" / f"sol_invictus_example_{datetime.now():%Y}"
+    assert config.output_dir == expected.resolve()
 
 
 def test_a_campaign_file_may_sit_beside_the_base_sim(tmp_path: Path) -> None:
@@ -328,9 +393,48 @@ def test_bad_dispersion_classes_are_named(
     assert expected in _error(tmp_path, _table(_MASS_KEY, _MASS_BODY, dispersion))
 
 
-def test_distributions_are_found_by_their_dist_type() -> None:
-    """Each distribution class is found by the dist_type it declares."""
-    assert {"normal": Normal, "uniform": Uniform} == DISTRIBUTIONS
+def test_distributions_are_found_by_their_class_name() -> None:
+    """Each distribution class is found by its name."""
+    assert {"Normal": Normal, "Uniform": Uniform} == DISTRIBUTIONS
+
+
+def test_output_settings_override_the_base_sims(tmp_path: Path) -> None:
+    """An output table is kept as written, for every trial to take."""
+    output = '\n[output]\nplots = []\nformats = ["csv", "parquet"]\n'
+
+    config = EdithConfig.from_file(_campaign(tmp_path, _MASS + output))
+
+    assert config.output == {"plots": [], "formats": ["csv", "parquet"]}
+    assert pickle.loads(pickle.dumps(config)) == config
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ('[output]\ndirectory = "x"\n', "output.directory: each trial writes to"),
+        ('[output]\ntype = "os.getcwd"\n', "output.type: unknown key; output takes"),
+        ('[output]\nplots = ["nope"]\n', "output: Unknown plots ['nope']"),
+        (
+            '[output]\nformat = ["csv"]\n',
+            "output.format: unknown key (did you mean formats?); output takes the "
+            "keys of a sim's [output] table but directory: formats, units, "
+            "sample_interval, plots",
+        ),
+        ('[output]\nsample_interval = "-1 s"\n', "output: Sample interval must be"),
+    ],
+)
+def test_bad_output_settings_are_named(
+    tmp_path: Path, output: str, expected: str
+) -> None:
+    """An output table is checked as flight_sim checks a sim's, under output."""
+    assert expected in _error(tmp_path, _MASS + "\n" + output)
+
+
+def test_output_is_a_table(tmp_path: Path) -> None:
+    """A bare output value is rejected before the settings are built."""
+    message = _error(tmp_path, _MASS, _HEADER + "output = 5\n")
+
+    assert "output: expected a table of flight_sim output settings" in message
 
 
 def test_dispersion_classes_are_found_by_name() -> None:
@@ -340,7 +444,7 @@ def test_dispersion_classes_are_found_by_name() -> None:
 
 def test_a_dispersion_is_a_table(tmp_path: Path) -> None:
     """Each item under dispersions is a table, not a bare value."""
-    assert "dispersions.mass: expected a table of dispersion, dist_type and its" in (
+    assert "dispersions.mass: expected a table of dispersion, distribution and its" in (
         _error(tmp_path, "dispersions = { mass = 5 }\n")
     )
 
@@ -364,7 +468,7 @@ def test_a_dispersion_is_a_table(tmp_path: Path) -> None:
 )
 def test_bad_targets_are_named(tmp_path: Path, key: str, expected: str) -> None:
     """A key that names no number of the base sim says what is wrong."""
-    message = _error(tmp_path, _table(key, 'dist_type = "normal"\nsigma = "1 m"'))
+    message = _error(tmp_path, _table(key, 'distribution = "Normal"\nsigma = "1 m"'))
 
     assert f'dispersions."{key}"' in message
     assert expected in message
@@ -391,7 +495,7 @@ def test_bad_targets_are_named(tmp_path: Path, key: str, expected: str) -> None:
 )
 def test_bad_normal_numbers_are_named(tmp_path: Path, body: str, expected: str) -> None:
     """A normal's numbers convert to the nominal's units and bracket it."""
-    dispersion = _table(_MASS_KEY, f'dist_type = "normal"\n{body}')
+    dispersion = _table(_MASS_KEY, f'distribution = "Normal"\n{body}')
 
     assert expected in _error(tmp_path, dispersion)
 
@@ -399,22 +503,22 @@ def test_bad_normal_numbers_are_named(tmp_path: Path, body: str, expected: str) 
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
-        ('dist_type = "gaussian"', 'dist_type: expected "normal" or "uniform"'),
-        ('sigma = "1 m/s"', 'missing dist_type, "normal" or "uniform"'),
-        ('dist_type = "uniform"\nsigma = "1 m/s"', "sigma: unknown key; a uniform"),
+        ('distribution = "gaussian"', 'distribution: expected "Normal" or "Uniform"'),
+        ('sigma = "1 m/s"', 'missing distribution, "Normal" or "Uniform"'),
+        ('distribution = "Uniform"\nsigma = "1 m/s"', "sigma: unknown key; a uniform"),
         (
-            'dist_type = "uniform"\nhalf_width = "1 m/s"\nlow = "0 m/s"',
+            'distribution = "Uniform"\nhalf_width = "1 m/s"\nlow = "0 m/s"',
             "give half_width, or low and high, not both",
         ),
-        ('dist_type = "uniform"\nlow = "0 m/s"', "missing high;"),
-        ('dist_type = "uniform"\nhigh = "1 m/s"', "missing low;"),
-        ('dist_type = "uniform"', "missing half_width, or low and high;"),
-        ('dist_type = "uniform"\nhalf_width = "-1 m/s"', "expected 0 or more"),
+        ('distribution = "Uniform"\nlow = "0 m/s"', "missing high;"),
+        ('distribution = "Uniform"\nhigh = "1 m/s"', "missing low;"),
+        ('distribution = "Uniform"', "missing half_width, or low and high;"),
+        ('distribution = "Uniform"\nhalf_width = "-1 m/s"', "expected 0 or more"),
         (
-            'dist_type = "uniform"\nlow = "20 mph"\nhigh = "8 m/s"',
+            'distribution = "Uniform"\nlow = "20 mph"\nhigh = "8 m/s"',
             "low (20 mph) must be below high (8 m/s)",
         ),
-        ('dist_type = "normal"', "missing sigma;"),
+        ('distribution = "Normal"', "missing sigma;"),
     ],
 )
 def test_bad_distributions_are_named(tmp_path: Path, body: str, expected: str) -> None:
@@ -427,7 +531,9 @@ def test_a_plain_nominal_takes_plain_numbers(tmp_path: Path, sigma: str) -> None
     """Rail friction is a plain number in sim.toml, so its spread is too."""
     key = "config.truth.launch_rail.friction_coefficient"
 
-    message = _error(tmp_path, _table(key, f'dist_type = "normal"\nsigma = "{sigma}"'))
+    message = _error(
+        tmp_path, _table(key, f'distribution = "Normal"\nsigma = "{sigma}"')
+    )
 
     assert "takes a plain number, since the nominal value is 0.0, a plain" in message
     assert message.endswith(f"got '{sigma}'")
@@ -439,7 +545,7 @@ def test_numbers_convert_to_the_nominal_units(tmp_path: Path) -> None:
         tmp_path,
         _table(
             _MASS_KEY,
-            'dist_type = "normal"\nsigma = "250 g"\nlow = "30 lb"\nhigh = "18 kg"',
+            'distribution = "Normal"\nsigma = "250 g"\nlow = "30 lb"\nhigh = "18 kg"',
         ),
     )
 
@@ -456,7 +562,7 @@ def test_a_default_value_can_be_dispersed(tmp_path: Path) -> None:
         tmp_path,
         _table(
             "config.truth.atmosphere.barometric_pressure",
-            'dist_type = "normal"\nsigma = "1 kPa"',
+            'distribution = "Normal"\nsigma = "1 kPa"',
         ),
     )
 
@@ -479,13 +585,13 @@ def test_offset_nominals_take_their_own_units(tmp_path: Path, sigma: str) -> Non
 
     dispersion = _dispersion(
         tmp_path,
-        _table(key, 'dist_type = "normal"\nsigma = "10 degC"\nlow = "10 degC"'),
+        _table(key, 'distribution = "Normal"\nsigma = "10 degC"\nlow = "10 degC"'),
     )
 
     assert (dispersion.nominal, dispersion.units) == (20.0, "degC")
     assert dispersion.distribution == Normal(10.0, low=10.0)
     assert f"write '{sigma}' in degC" in _error(
-        tmp_path, _table(key, f'dist_type = "normal"\nsigma = "{sigma}"')
+        tmp_path, _table(key, f'distribution = "Normal"\nsigma = "{sigma}"')
     )
 
 
@@ -494,28 +600,30 @@ def test_angles_are_not_plain_numbers(tmp_path: Path) -> None:
     key = "config.truth.launch_rail.elevation"
 
     dispersion = _dispersion(
-        tmp_path, _table(key, 'dist_type = "normal"\nsigma = "0.01 rad"')
+        tmp_path, _table(key, 'distribution = "Normal"\nsigma = "0.01 rad"')
     )
 
     assert isinstance(dispersion.distribution, Normal)
     assert dispersion.distribution.sigma == pytest.approx(0.5729577951308232)
     assert '"5 percent" does not convert to deg' in _error(
-        tmp_path, _table(key, 'dist_type = "normal"\nsigma = "5 percent"')
+        tmp_path, _table(key, 'distribution = "Normal"\nsigma = "5 percent"')
     )
 
 
-def test_a_uniform_may_leave_out_the_nominal(tmp_path: Path) -> None:
-    """A uniform's low and high are absolute, so a calm nominal wind may lie outside."""
-    dispersion = _dispersion(
-        tmp_path,
-        _table(
-            "config.truth.wind.speed",
-            'dist_type = "uniform"\nlow = "2 m/s"\nhigh = "8 m/s"',
-        ),
-    )
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ('low = "2 m/s"\nhigh = "8 m/s"', "low: 2 m/s is above the nominal value"),
+        ('low = "-8 m/s"\nhigh = "-2 m/s"', "high: -2 m/s is below the nominal value"),
+    ],
+)
+def test_a_uniform_must_contain_the_nominal(
+    tmp_path: Path, body: str, expected: str
+) -> None:
+    """A uniform's low and high bracket the nominal value, wind speed 0 here."""
+    dispersion = _table("config.truth.wind.speed", f'distribution = "Uniform"\n{body}')
 
-    assert dispersion.nominal == 0.0
-    assert dispersion.distribution == Uniform(2.0, 8.0)
+    assert expected in _error(tmp_path, dispersion)
 
 
 def test_a_normal_may_be_truncated_at_its_nominal(tmp_path: Path) -> None:
@@ -524,7 +632,7 @@ def test_a_normal_may_be_truncated_at_its_nominal(tmp_path: Path) -> None:
         tmp_path,
         _table(
             "config.truth.launch_rail.elevation",
-            'dist_type = "normal"\nsigma = "1 deg"\nhigh = "1.4835298641951802 rad"',
+            'distribution = "Normal"\nsigma = "1 deg"\nhigh = "1.4835298641951802 rad"',
         ),
     )
 
@@ -535,7 +643,7 @@ def test_a_normal_may_be_truncated_at_its_nominal(tmp_path: Path) -> None:
 def test_two_dispersions_of_one_value_are_rejected(tmp_path: Path) -> None:
     """A value is dispersed by one dispersion at most, however its key is written."""
     cg = "properties.dry_mass_properties.cg_location.value"
-    body = 'dist_type = "normal"\nsigma = "1 cm"'
+    body = 'distribution = "Normal"\nsigma = "1 cm"'
     twice = _table(f"{cg}[0]", body) + _table(f"{cg}[00]", body)
 
     assert f'dispersions."{cg}[00]": changes {cg}[0], which' in (
@@ -567,10 +675,10 @@ def test_zero_spread_is_allowed(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("header", "dispersions"),
     [
-        (_HEADER, _MASS.replace("normal", "gaussian")),
+        (_HEADER, _MASS.replace("Normal", "gaussian")),
         (_HEADER.replace("master_seed", "master_sead"), _MASS),
-        (_HEADER.replace("num_sims = 10", "num_sims = 0"), _MASS),
-        (_HEADER + "workers = true\n", _MASS),
+        (_HEADER.replace("num_batches = 2", "num_batches = 0"), _MASS),
+        (_HEADER.replace("flight_per_batch = 5", "flight_per_batch = true"), _MASS),
     ],
 )
 def test_errors_name_the_campaign_file(

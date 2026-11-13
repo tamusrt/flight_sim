@@ -6,13 +6,13 @@ from functools import cached_property
 from pathlib import Path
 
 import numpy as np
-import pandas as pd  # type: ignore
 
 from flight_sim.environment.atmosphere import (
     AtmosphereConditions,
     StandardAtmosphere1976,
     dynamic_viscosity,
 )
+from flight_sim.utilities.data_loader import read_data_frame
 
 # Reynolds number per unit Mach and length scales with density * a / mu
 _SEA_LEVEL = StandardAtmosphere1976().conditions(0.0)
@@ -51,11 +51,11 @@ class ReynoldsCorrection:
 
     @classmethod
     def from_csv(cls, filepath: str | Path) -> "ReynoldsCorrection":
-        """Read a CSV with "Mach" and "CxViscous" columns, blank where unknown.
+        """Read a CSV or Parquet table with "Mach" and "CxViscous" columns.
 
         An aero table works as is: only its alpha 0, phi 0 rows are used.
         """
-        data_frame = pd.read_csv(filepath)
+        data_frame = read_data_frame(filepath)
         if {"Alpha", "Phi"} <= set(data_frame.columns):
             data_frame = data_frame[
                 (data_frame["Alpha"] == 0) & (data_frame["Phi"] == 0)

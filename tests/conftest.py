@@ -1,5 +1,11 @@
 """Fixtures shared across the test modules."""
 
+# The campaign file below repeats test_edith_config's header on purpose
+# pylint: disable=duplicate-code
+
+import shutil
+from pathlib import Path
+
 import matplotlib
 import numpy as np
 import pytest
@@ -12,6 +18,44 @@ from flight_sim.vehicle.rocket_properties import RocketProperties
 
 # Tests draw figures without a display
 matplotlib.use("Agg")
+
+# EDITH campaign tests copy this sim beside a small campaign file
+_EXAMPLE = Path("examples/sol_invictus")
+
+_CAMPAIGN = """
+num_batches = 1
+flight_per_batch = 3
+master_seed = 7
+base_sim = "../base/sim.toml"
+output_dir = "../out"
+generator = "LatinHypercubeGenerator"
+
+[stopping]
+confidence = 0.95
+
+[dispersions."properties.dry_mass_properties.mass"]
+distribution = "Normal"
+sigma = "0.25 kg"
+
+[dispersions."properties.dry_mass_properties.cg_location.value[0]"]
+distribution = "Uniform"
+half_width = "2 cm"
+
+[dispersions."config.truth.launch_rail.friction_coefficient"]
+distribution = "Uniform"
+low = 0.0
+high = 0.2
+"""
+
+
+@pytest.fixture
+def campaign(tmp_path: Path) -> Path:
+    """Return a campaign file of three trials beside a copy of the example sim."""
+    shutil.copytree(_EXAMPLE, tmp_path / "base", ignore=shutil.ignore_patterns("out"))
+    (tmp_path / "mc").mkdir()
+    path = tmp_path / "mc" / "edith_config.toml"
+    path.write_text(_CAMPAIGN, encoding="utf-8")
+    return path
 
 
 @pytest.fixture(name="baseline_rocket_properties")

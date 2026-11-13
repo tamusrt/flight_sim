@@ -10,10 +10,10 @@ from typing import Annotated, Any, Self
 from xml.etree import ElementTree
 
 import numpy as np
-import pandas as pd  # type: ignore[import-untyped]
 
 from flight_sim.flight_event import EventTime
 from flight_sim.units import Scalar, UnitChecked, Vector, matrix, scalar, vector
+from flight_sim.utilities.data_loader import read_data_frame
 from flight_sim.vehicle.mass_properties import (
     MassProperties,
     MassPropertiesSI,
@@ -433,11 +433,11 @@ def solid_engine_from_csv(
     casing: MassProperties,
     **kwargs: Any,
 ) -> SolidEngine:
-    """Build a solid motor from a thrust curve CSV.
+    """Build a solid motor from a thrust curve table.
 
     Args:
-        motor_file_path (str | Path): CSV with "Time" and "Thrust" columns, in
-            seconds from ignition and newtons.
+        motor_file_path (str | Path): CSV or Parquet with "Time" and "Thrust"
+            columns, in seconds from ignition and newtons.
         grain (PropellantGrain): Propellant burned over the curve.
         casing (MassProperties): Everything in the motor but the propellant.
         **kwargs (Any): Other ``SolidEngine`` fields: ``nozzle_exit_area``,
@@ -447,7 +447,7 @@ def solid_engine_from_csv(
         SolidEngine: Motor igniting at time zero unless ``kwargs`` say
             otherwise.
     """
-    motor_data = pd.read_csv(motor_file_path)
+    motor_data = read_data_frame(motor_file_path)
     return SolidEngine(
         times=motor_data["Time"].to_numpy(dtype=float),
         thrusts=motor_data["Thrust"].to_numpy(dtype=float),
