@@ -161,6 +161,23 @@ def test_provenance_records_the_code_campaign_and_packages(campaign: Path) -> No
     assert path == config.output_dir / PROVENANCE
     assert record["campaign"] == campaign.read_text(encoding="utf-8")
     assert record["packages"]["numpy"] == np.__version__
+    assert record["campaign_resolved"]["master_seed"] == config.master_seed
+    assert record["base_sim_resolved"]["name"] == config.source.table["name"]
     commit = record["git_commit"]
     assert commit is None or len(commit) == 40  # None outside a checkout
     assert isinstance(record["git_dirty"], bool | None)
+
+
+def test_provenance_merges_the_files_a_campaign_extends(campaign: Path) -> None:
+    """A setting from an extended file is in the record, not only the file."""
+    base = campaign.parent / "base_campaign.toml"
+    text = campaign.read_text(encoding="utf-8")
+    base.write_text(text.replace("master_seed = 7", "master_seed = 11"), "utf-8")
+    campaign.write_text('extends = "base_campaign.toml"\n', encoding="utf-8")
+
+    record = json.loads(
+        write_provenance(EdithConfig.from_file(campaign)).read_text("utf-8")
+    )
+
+    assert "master_seed" not in record["campaign"]
+    assert record["campaign_resolved"]["master_seed"] == 11

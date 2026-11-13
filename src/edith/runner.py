@@ -40,7 +40,8 @@ from edith.statistics.stopping import (
 )
 from edith.targets import node_at
 from flight_sim import output
-from flight_sim.config.toml_files import display_path
+from flight_sim.config import load_toml
+from flight_sim.config.toml_files import display_path, untagged
 
 __all__ = [
     "PROVENANCE",
@@ -371,10 +372,11 @@ def _apogee(folder: Path) -> float:
 def write_provenance(config: EdithConfig) -> Path:
     """Record what regenerates a campaign in its output directory.
 
-    That is the commit of the code, and whether it had uncommitted changes, a
-    copy of the campaign file, and the version of each package the results
-    depend on. The master seed is in the campaign file. A value that cannot be
-    found, as outside a git checkout, is null.
+    That is the commit of the code, and whether it had uncommitted changes,
+    the campaign file as written and with the files it includes or extends
+    merged in, the base sim's resolved input, and the version of each package
+    the results depend on. The master seed is in the campaign file. A value
+    that cannot be found, as outside a git checkout, is null.
 
     Returns:
         Path: The record, ``PROVENANCE`` in the output directory.
@@ -386,11 +388,14 @@ def write_provenance(config: EdithConfig) -> Path:
         "git_dirty": None if changes is None else bool(changes),
         "campaign_file": config.path.as_posix(),
         "campaign": config.path.read_text(encoding="utf-8"),
+        "campaign_resolved": untagged(load_toml(config.path)),
+        "base_sim_resolved": config.source.table,
         "packages": {name: _version(name) for name in _PACKAGES},
     }
     path = config.output_dir / PROVENANCE
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    # default=str writes paths and TOML dates as text
+    path.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
     return path
 
 
