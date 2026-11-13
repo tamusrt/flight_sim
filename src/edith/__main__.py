@@ -15,8 +15,8 @@ from edith.errors import EdithConfigError
 from edith.parallel import Status, progress_bars
 from edith.runner import CampaignResult, Trial
 from edith.statistics.distributions import quantity_text
-from edith.statistics.estimators import BatchStats
-from edith.statistics.stopping import FixedTrials
+from edith.statistics.estimators import BatchStats, pilot_message
+from edith.statistics.stopping import ConfidenceIntervalTarget, FixedTrials
 from edith.zarr_output import STORE, initialize
 from flight_sim.config.toml_files import display_path
 
@@ -166,6 +166,13 @@ def _fly(
         f"{spans[0].stop - spans[0].start}"
     )
 
+    started = clock.perf_counter()
+    stopping = config.stopping
+    target = None
+    if stopping.rule != FixedTrials.__name__ and stopping.target is not None:
+        target = float(stopping.target.m_as("m"))
+    is_interval = stopping.rule == ConfidenceIntervalTarget.__name__
+
     def prepared(batch: int, trials: Sequence[Trial]) -> None:
         print(f"batch {batch}: prepared {len(trials)} trials")
         if batch == 0:
@@ -183,6 +190,16 @@ def _fly(
             f"batch {batch}: {stats.trials} trials flown, apogee {stats.mean:.6g} "
             f"{spread}"
         )
+        message = pilot_message(
+            stats,
+            target=target,
+            confidence=confidence if is_interval else None,
+            flight_per_batch=config.flight_per_batch,
+            num_batches=config.num_batches,
+            batch_seconds=_since(started) / (batch + 1),
+        )
+        if message is not None:
+            print(f"batch {batch}: {message}")
 
     try:
         with closing(runner.prepare_batches(config, overwrite=overwrite)) as batches:

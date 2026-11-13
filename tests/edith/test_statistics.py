@@ -3,6 +3,7 @@
 import math
 import shutil
 from contextlib import closing
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -29,7 +30,7 @@ from edith.statistics.distributions import (
     Weibull,
     clip_percentiles,
 )
-from edith.statistics.estimators import RELIABLE_TRIALS, BatchStats
+from edith.statistics.estimators import RELIABLE_TRIALS, BatchStats, pilot_message
 from edith.statistics.generators import GENERATORS, PointGenerator, stream
 from edith.statistics.stopping import (
     STOPPING_RULES,
@@ -633,3 +634,74 @@ def test_a_plain_key_must_be_one_the_distribution_takes() -> None:
         type("Stray", (Distribution,), {**_VARIABLES, "PLAIN": ("b",)})
 
     assert "Stray" not in DISTRIBUTIONS
+
+
+def test_trials_needed_from_independent_trials() -> None:
+    """n = (k s / target) ** 2, with k = 1 for a standard error target."""
+    stats = BatchStats(independent_trials=True)
+    stats.add_batch([1.0, 3.0, 5.0, 7.0])  # s = sqrt(20 / 3)
+    spread = math.sqrt(20.0 / 3.0)
+
+    assert stats.trials_needed(0.5, None) == math.ceil((spread / 0.5) ** 2)
+    assert stats.trials_needed(0.5, 0.95) == math.ceil((3.182446 * spread / 0.5) ** 2)
+    assert stats.trials_needed(1e9, None) == 2  # Never fewer than a spread needs
+
+
+def test_trials_needed_from_batch_means_counts_whole_batches() -> None:
+    """Stratified trials need batches: s of the means 2, 4 and 6 is 2."""
+    stats = BatchStats(independent_trials=False)
+    stats.add_batch([1.0, 3.0])
+    assert stats.trials_needed(1.0, None) is None  # One batch has no spread
+    stats.add_batch([3.0, 5.0])
+    stats.add_batch([5.0, 7.0])
+
+    assert stats.trials_needed(1.0, None) == 4 * 2  # Four batches of two
+
+
+def test_the_pilot_says_what_the_target_needs_and_how_long_is_left() -> None:
+    """The trials and batches needed, past the set number, and the time left."""
+    stats = BatchStats(independent_trials=True)
+    stats.add_batch([1.0, 3.0, 5.0, 7.0])
+
+    message = pilot_message(
+        stats,
+        target=0.5,
+        confidence=0.95,
+        flight_per_batch=4,
+        num_batches=10,
+        batch_seconds=30.0,
+    )
+
+    assert message == (
+        "about 271 trials (68 batches) needed for +/- 0.5 m at 95%, more than "
+        "the 10 set; about 4 min left"
+    )
+
+
+def test_the_pilot_without_a_target_gives_only_the_time_left() -> None:
+    """With no target, the rest of the batches fly; with none left, no message."""
+    stats = BatchStats(independent_trials=False)
+    stats.add_batch([1.0, 2.0])
+    flown = partial(
+        pilot_message, stats, target=None, confidence=None, flight_per_batch=2
+    )
+
+    assert flown(num_batches=3, batch_seconds=5.0) == "about 10 s left"
+    assert flown(num_batches=1, batch_seconds=5.0) is None
+
+
+def test_the_pilot_stops_counting_time_once_the_target_is_met() -> None:
+    """A loose target is met already, so no batches are left to time."""
+    stats = BatchStats(independent_trials=True)
+    stats.add_batch([1.0, 3.0])
+
+    message = pilot_message(
+        stats,
+        target=100.0,
+        confidence=None,
+        flight_per_batch=2,
+        num_batches=5,
+        batch_seconds=5.0,
+    )
+
+    assert message == "about 2 trials (1 batch) needed for a standard error of 100 m"
