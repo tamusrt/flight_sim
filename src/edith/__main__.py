@@ -68,6 +68,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     # prepared
     count = min(args.workers, config.num_sims)
     initialize(config.output_dir / STORE)
+    runner.write_provenance(config)
     with parallel.Workers(count, config.output_dir / parallel.WORKER_LOGS) as workers:
         result = _fly(config, workers, args.overwrite)
     fly_s = _since(start) - read_s - result.prepare_s

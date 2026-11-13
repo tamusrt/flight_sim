@@ -1,12 +1,20 @@
 """EDITH runner tests: the run directories a campaign prepares."""
 
+import json
 import tomllib
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from edith.config import EdithConfig
-from edith.runner import draw_batch, prepare, run_directory
+from edith.runner import (
+    PROVENANCE,
+    draw_batch,
+    prepare,
+    run_directory,
+    write_provenance,
+)
 from flight_sim.simulation import Simulation
 
 
@@ -141,3 +149,18 @@ def test_prepare_draws_each_trial_from_senais_batch_streams(campaign: Path) -> N
             trial = trials[2 * batch + index]
             expected = {key: float(values[index]) for key, values in drawn.items()}
             assert trial.drawn == pytest.approx(expected)
+
+
+def test_provenance_records_the_code_campaign_and_packages(campaign: Path) -> None:
+    """The record holds the campaign file, the commit and package versions."""
+    config = EdithConfig.from_file(campaign)
+
+    path = write_provenance(config)
+
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert path == config.output_dir / PROVENANCE
+    assert record["campaign"] == campaign.read_text(encoding="utf-8")
+    assert record["packages"]["numpy"] == np.__version__
+    commit = record["git_commit"]
+    assert commit is None or len(commit) == 40  # None outside a checkout
+    assert isinstance(record["git_dirty"], bool | None)

@@ -8,14 +8,18 @@ replicate drawn by ``edith.statistics``. A batch is prepared just before it
 flies, and the campaign goes on until the stopping rule is met or every trial
 has flown, so an early stop leaves only the trials that flew. Each batch's
 apogees feed the estimate, and every trial's drawn values, status and apogee
-go to ``trials.csv``.
+go to ``trials.csv``. ``write_provenance`` records what regenerates the
+campaign: the code's commit, the campaign file and the package versions.
 """
 
+import json
 import math
+import subprocess
 import time as clock
 import tomllib
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -39,6 +43,7 @@ from flight_sim import output
 from flight_sim.config.toml_files import display_path
 
 __all__ = [
+    "PROVENANCE",
     "RUNS",
     "TRIALS",
     "CampaignResult",
@@ -49,6 +54,7 @@ __all__ = [
     "prepare",
     "prepare_batches",
     "run_directory",
+    "write_provenance",
 ]
 
 # Folder of a campaign's output directory holding a run directory per trial
@@ -56,6 +62,12 @@ RUNS = "runs"
 
 # Every trial's drawn values, status and apogee, in the output directory
 TRIALS = "trials.csv"
+
+# What regenerates the campaign, in the output directory
+PROVENANCE = "provenance.json"
+
+# Packages whose versions the provenance records
+_PACKAGES = ("flight_sim", "numpy", "scipy", "pandas", "pint", "zarr")
 
 Values = dict[str, np.ndarray[Any, np.dtype[np.float64]]]
 
@@ -354,3 +366,53 @@ def _apogee(folder: Path) -> float:
             return float(tomllib.load(file)["summary"]["apogee_m"])
     except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError, ValueError):
         return math.nan
+
+
+def write_provenance(config: EdithConfig) -> Path:
+    """Record what regenerates a campaign in its output directory.
+
+    That is the commit of the code, and whether it had uncommitted changes, a
+    copy of the campaign file, and the version of each package the results
+    depend on. The master seed is in the campaign file. A value that cannot be
+    found, as outside a git checkout, is null.
+
+    Returns:
+        Path: The record, ``PROVENANCE`` in the output directory.
+    """
+    code = Path(__file__).resolve().parent
+    changes = _git(code, "status", "--porcelain")
+    record = {
+        "git_commit": _git(code, "rev-parse", "HEAD"),
+        "git_dirty": None if changes is None else bool(changes),
+        "campaign_file": config.path.as_posix(),
+        "campaign": config.path.read_text(encoding="utf-8"),
+        "packages": {name: _version(name) for name in _PACKAGES},
+    }
+    path = config.output_dir / PROVENANCE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    return path
+
+
+def _git(folder: Path, *args: str) -> str | None:
+    """Return what a git command prints in a folder, or None if it fails."""
+    try:
+        done = subprocess.run(
+            ["git", *args],
+            cwd=folder,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def _version(package: str) -> str | None:
+    """Return an installed package's version, or None if it is not installed."""
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        return None
