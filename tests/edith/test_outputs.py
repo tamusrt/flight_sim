@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pytest
+from scipy import stats as scipy_stats  # type: ignore[import-untyped]
 
 from edith.statistics.outputs import (
     Envelope,
@@ -35,7 +36,7 @@ def test_the_best_fit_recovers_the_family_drawn_from() -> None:
 
     assert best is not None
     assert best.name == "LogNormal"
-    assert best.good
+    assert output.good_fit
     assert [fit.aic for fit in fits] == sorted(fit.aic for fit in fits)
     assert "VonMises" not in {fit.name for fit in fits}  # Asked for by name only
     true_p99 = math.exp(1.0 + 0.5 * 2.3263479)
@@ -64,7 +65,7 @@ def test_a_poor_best_fit_is_refused() -> None:
     output = OutputDistribution(values, families=["Normal"])
 
     assert output.best_fit is not None
-    assert not output.best_fit.good
+    assert not output.good_fit
     with pytest.raises(ValueError, match="no good fit"):
         output.pdf(0.0)
     assert np.isfinite(output.percentile(50))
@@ -161,3 +162,32 @@ def test_trials_for_reliability_checks_its_fractions() -> None:
     """A reliability of 1 can never be shown."""
     with pytest.raises(ValueError, match="reliability must be between 0 and 1"):
         trials_for_reliability(1.0, 0.95)
+
+
+def test_the_fits_p_value_allows_for_fitting_to_the_same_values() -> None:
+    """A normal fitted to skewed values passes the usual test but not this one.
+
+    The usual p-value takes the fitted parameters as known beforehand, so it
+    is too high; the bootstrap one refits each simulated sample.
+    """
+    values = np.random.default_rng(0).lognormal(1.0, 0.2, 250)
+    output = OutputDistribution(values, families=["Normal"])
+    best = output.best_fit
+    assert best is not None
+
+    usual = scipy_stats.kstest(values, best.frozen.cdf).pvalue
+    p_value = output.best_fit_p_value
+
+    assert usual > 0.05  # Wrongly passed
+    assert p_value is not None
+    assert p_value < 0.05
+    assert not output.good_fit
+    assert output.best_fit_p_value == p_value  # Worked out once
+
+
+def test_no_fit_has_no_p_value() -> None:
+    """With too few values there is nothing to test."""
+    output = OutputDistribution(np.arange(5.0))
+
+    assert output.best_fit_p_value is None
+    assert not output.good_fit

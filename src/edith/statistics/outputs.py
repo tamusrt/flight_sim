@@ -24,6 +24,7 @@ from scipy import stats  # type: ignore[import-untyped]
 from edith.statistics.estimators import RELIABLE_TRIALS
 
 __all__ = [
+    "BOOTSTRAP_SAMPLES",
     "FAMILIES",
     "GOOD_FIT_P_VALUE",
     "Envelope",
@@ -37,8 +38,8 @@ __all__ = [
 ]
 
 # The scipy family of each distribution an output may be fitted with, named as
-# the input distributions are. VonMises suits angles only, so a caller asks
-# for it by name.
+# the input distributions are. VonMises suits angles only, in radians within
+# half a turn of their mean, so a caller asks for it by name.
 FAMILIES: dict[str, Any] = {
     "Normal": stats.norm,
     "StudentT": stats.t,
@@ -56,6 +57,11 @@ DEFAULT_FAMILIES = tuple(name for name in FAMILIES if name != "VonMises")
 # A fit whose Kolmogorov-Smirnov p-value is below this describes the sample poorly
 GOOD_FIT_P_VALUE = 0.05
 
+# Samples drawn from the best fit, and refitted, to find its p-value, and the
+# seed they are drawn with, so the same values always give the same p-value
+BOOTSTRAP_SAMPLES = 200
+BOOTSTRAP_SEED = 0
+
 Method = Literal["empirical", "fit"]
 
 
@@ -66,12 +72,6 @@ class Fit(NamedTuple):
     parameters: tuple[float, ...]  # As the scipy family takes them
     aic: float  # Akaike information criterion; lower is better
     ks_statistic: float  # Kolmogorov-Smirnov distance from the sample
-    ks_p_value: float
-
-    @property
-    def good(self) -> bool:
-        """Whether the Kolmogorov-Smirnov test finds the sample consistent with it."""
-        return self.ks_p_value >= GOOD_FIT_P_VALUE
 
     @property
     def frozen(self) -> Any:
@@ -143,7 +143,8 @@ class OutputDistribution:
     def fits(self) -> list[Fit]:
         """Return each family that could be fitted, lowest AIC (best) first.
 
-        None is fitted with fewer than ``RELIABLE_TRIALS`` values.
+        None is fitted with fewer than ``RELIABLE_TRIALS`` values. Only the
+        best is tested for how well it fits, by ``best_fit_p_value``.
         """
         return list(self._fits)
 
@@ -151,6 +152,46 @@ class OutputDistribution:
     def best_fit(self) -> Fit | None:
         """The fit of lowest AIC, whether good or not, or None if there is none."""
         return self._fits[0] if self._fits else None
+
+    @cached_property
+    def best_fit_p_value(self) -> float | None:
+        """The Kolmogorov-Smirnov p-value of the best fit, or None with no fit.
+
+        The usual p-value assumes the family's parameters were known
+        beforehand. Fitted to the same values, the family sits closer to them
+        than the truth would, so that p-value is too high. This one is found
+        by drawing ``BOOTSTRAP_SAMPLES`` samples from the fit, refitting each
+        and comparing their distances with the sample's (a parametric
+        bootstrap). It takes up to several seconds, once. NaN if refitting
+        fails. Like any Kolmogorov-Smirnov p-value it assumes independent
+        trials; Latin hypercube trials follow their distribution more evenly
+        than those, so with them it runs high and rejects few fits.
+        """
+        best = self.best_fit
+        if best is None:
+            return None
+        family = FAMILIES[best.name]
+        names = [*(family.shapes.split(", ") if family.shapes else []), "loc", "scale"]
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore")
+            try:
+                result = stats.goodness_of_fit(
+                    family,
+                    self.values,
+                    guessed_params=dict(zip(names, best.parameters, strict=True)),
+                    statistic="ks",
+                    n_mc_samples=BOOTSTRAP_SAMPLES,
+                    rng=np.random.default_rng(BOOTSTRAP_SEED),
+                )
+            except (RuntimeError, ValueError, FloatingPointError):
+                return math.nan
+        return float(result.pvalue)
+
+    @property
+    def good_fit(self) -> bool:
+        """Whether there is a best fit and the sample is consistent with it."""
+        p_value = self.best_fit_p_value
+        return p_value is not None and p_value >= GOOD_FIT_P_VALUE
 
     def pdf(self, x: ArrayLike) -> NDArray[np.float64]:
         """Return the best fit's probability density at ``x``.
@@ -211,10 +252,10 @@ class OutputDistribution:
         best = self.best_fit
         if best is None:
             raise ValueError(f"no family is fitted: {self.warning or 'no spread'}")
-        if not best.good:
+        if not self.good_fit:
             raise ValueError(
                 f"no good fit: the best, {best.name}, has a Kolmogorov-Smirnov "
-                f"p-value of {best.ks_p_value:.3g}; use the empirical method"
+                f"p-value of {self.best_fit_p_value:.3g}; use the empirical method"
             )
         return best
 
@@ -233,7 +274,7 @@ def _fit(name: str, values: NDArray[np.float64]) -> Fit | None:
             return None  # A value lies outside the fitted support
         ks = stats.kstest(values, family.cdf, args=parameters)
     aic = 2.0 * len(parameters) - 2.0 * log_likelihood
-    return Fit(name, parameters, aic, float(ks.statistic), float(ks.pvalue))
+    return Fit(name, parameters, aic, float(ks.statistic))
 
 
 @dataclass(frozen=True)
