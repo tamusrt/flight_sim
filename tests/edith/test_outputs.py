@@ -11,6 +11,7 @@ from edith.statistics.outputs import (
     Requirement,
     joint_pass_probability,
     pass_probability,
+    trials_for_reliability,
 )
 
 
@@ -123,3 +124,40 @@ def test_a_requirement_needs_a_limit() -> None:
     with pytest.raises(ValueError, match="no requirements"):
         joint_pass_probability([])
     assert math.isnan(pass_probability([math.nan], low=0.0).probability)
+
+
+def test_a_percentile_interval_covers_the_true_percentile() -> None:
+    """Over many samples, the 95 % interval of the 90th percentile covers it."""
+    true_p90 = 1.2815516
+    covered = 0
+    for seed in range(400):
+        sample = np.random.default_rng(seed).normal(size=100)
+        low, high = OutputDistribution(sample).percentile_interval(90, 0.95)
+        covered += low <= true_p90 <= high
+
+    assert covered / 400 >= 0.93  # At least the confidence, less sampling noise
+
+
+def test_a_percentile_beyond_the_sample_has_an_open_interval() -> None:
+    """Ten values cannot bound the 99th percentile from above."""
+    low, high = OutputDistribution(np.arange(10.0)).percentile_interval(99, 0.95)
+
+    assert low == 8.0  # P(9 or more of 10 below it) > 97.5 %
+    assert high == math.inf
+
+
+@pytest.mark.parametrize(
+    ("reliability", "confidence", "expected"),
+    [(0.95, 0.95, 59), (0.99, 0.95, 299), (0.9, 0.9, 22)],
+)
+def test_trials_for_reliability(
+    reliability: float, confidence: float, expected: int
+) -> None:
+    """The success-run count: ln(1 - C) / ln(R), rounded up."""
+    assert trials_for_reliability(reliability, confidence) == expected
+
+
+def test_trials_for_reliability_checks_its_fractions() -> None:
+    """A reliability of 1 can never be shown."""
+    with pytest.raises(ValueError, match="reliability must be between 0 and 1"):
+        trials_for_reliability(1.0, 0.95)

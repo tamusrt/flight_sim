@@ -33,6 +33,7 @@ __all__ = [
     "Requirement",
     "joint_pass_probability",
     "pass_probability",
+    "trials_for_reliability",
 ]
 
 # The scipy family of each distribution an output may be fitted with, named as
@@ -166,6 +167,30 @@ class OutputDistribution:
             ValueError: If there is no good fit.
         """
         return np.asarray(self._good_fit().frozen.cdf(x), dtype=float)
+
+    def percentile_interval(self, q: float, confidence: float) -> tuple[float, float]:
+        """Return a confidence interval of the true ``q``th percentile, 0 to 100.
+
+        It comes from order statistics: the count of values below the true
+        percentile is binomial, so two sorted values bracket it with at least
+        ``confidence``, whatever the distribution. It assumes independent
+        trials, so with Latin hypercube sampling it is cautious.
+
+        Returns:
+            tuple[float, float]: The bounds, -inf or inf where too few values
+                lie beyond the percentile to bound it.
+        """
+        ordered = np.sort(self.values)
+        n, fraction = len(ordered), q / 100.0
+        tail = (1.0 - confidence) / 2.0
+        # Ranks, from 1, of the values bracketing it: no more than ``tail`` of
+        # the chance lies on either side
+        lower = int(stats.binom.ppf(tail, n, fraction))
+        upper = int(stats.binom.ppf(1.0 - tail, n, fraction)) + 1
+        return (
+            float(ordered[lower - 1]) if lower >= 1 else -math.inf,
+            float(ordered[upper - 1]) if upper <= n else math.inf,
+        )
 
     @cached_property
     def _fits(self) -> tuple[Fit, ...]:
@@ -339,3 +364,20 @@ def joint_pass_probability(
     return PassProbability(
         count / trials, float(interval.low), float(interval.high), count, trials
     )
+
+
+def trials_for_reliability(reliability: float, confidence: float) -> int:
+    """Return the trials, all passing, that show a reliability at a confidence.
+
+    If every one of n trials passes, the chance of that with a reliability
+    below ``reliability`` is under ``1 - confidence`` once n is at least
+    ln(1 - confidence) / ln(reliability): 59 for 95 % at 95 %. It needs no
+    data, so it can size a campaign before it flies.
+
+    Raises:
+        ValueError: If either is not between 0 and 1.
+    """
+    for name, value in (("reliability", reliability), ("confidence", confidence)):
+        if not 0.0 < value < 1.0:
+            raise ValueError(f"{name} must be between 0 and 1, got {value}")
+    return math.ceil(math.log(1.0 - confidence) / math.log(reliability) - 1e-9)
