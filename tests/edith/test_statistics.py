@@ -16,10 +16,17 @@ from edith.parallel import Workers
 from edith.runner import CampaignResult, fly_campaign, prepare_batches
 from edith.statistics.distributions import (
     DISTRIBUTIONS,
+    Beta,
     Distribution,
+    LogNormal,
     Normal,
     Parameter,
+    ParameterError,
+    StudentT,
+    Triangular,
     Uniform,
+    VonMises,
+    Weibull,
     clip_percentiles,
 )
 from edith.statistics.estimators import RELIABLE_TRIALS, BatchStats
@@ -361,7 +368,16 @@ def test_a_campaign_stops_early_when_its_target_is_met(tmp_path: Path) -> None:
 
 def test_distributions_are_subclasses_of_the_base() -> None:
     """Every distribution a campaign may name is a Distribution, found by name."""
-    assert set(DISTRIBUTIONS) == {"Normal", "Uniform"}
+    assert set(DISTRIBUTIONS) == {
+        "Beta",
+        "LogNormal",
+        "Normal",
+        "StudentT",
+        "Triangular",
+        "Uniform",
+        "VonMises",
+        "Weibull",
+    }
     assert all(issubclass(cls, Distribution) for cls in DISTRIBUTIONS.values())
 
 
@@ -406,6 +422,12 @@ def test_distributions_describe_themselves() -> None:
     """Each distribution says what it is, in the nominal value's units."""
     assert Normal(0.25, low=16.0).describe("kg") == "normal, sigma 0.25 kg, low 16 kg"
     assert Uniform(0.0, 0.2).describe("") == "uniform from 0 to 0.2"
+    assert StudentT(1.0, 4.0).describe("m") == "Student's t, scale 1 m, df 4"
+    assert Triangular(0.0, 2.0).describe("m") == "triangular from 0 to 2 m"
+    assert Weibull(2.0).describe("m/s") == "Weibull, shape 2"
+    assert VonMises(400.0).describe("deg") == "von Mises, kappa 400"
+    assert LogNormal(0.1).describe("kg") == "log-normal, sigma 0.1"
+    assert Beta(2.0, 5.0, 0.0, 1.0).describe("m") == "beta 2, 5 from 0 to 1 m"
 
 
 _VARIABLES = {"REQUIRED": ("a",), "OPTIONAL": (), "USAGE": "takes a"}
@@ -439,9 +461,9 @@ def test_messages_list_distributions_defined_after_the_module_loaded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The valid names in an error are those registered when it is raised."""
-    monkeypatch.setitem(DISTRIBUTIONS, "Triangular", Normal)
+    monkeypatch.setitem(DISTRIBUTIONS, "Gamma", Normal)
 
-    with pytest.raises(EdithConfigError, match='"Uniform" or "Triangular"'):
+    with pytest.raises(EdithConfigError, match='"Beta" or "Gamma"'):
         _distribution_name({}, "dispersions.mass")
 
 
@@ -460,7 +482,27 @@ _KEY_CHANGES: dict[str, list[tuple[dict[str, float], dict[str, float]]]] = {
         ({"low": 8.0, "high": 12.0}, {"low": 7.0}),
         ({"low": 8.0, "high": 12.0}, {"high": 13.0}),
     ],
+    "StudentT": [
+        ({"scale": 1.0, "df": 4.0}, {"scale": 2.0}),
+        ({"scale": 1.0, "df": 4.0}, {"df": 5.0}),
+    ],
+    "Triangular": [
+        ({"low": 8.0, "high": 12.0}, {"low": 7.0}),
+        ({"low": 8.0, "high": 12.0}, {"high": 13.0}),
+    ],
+    "Weibull": [({"shape": 2.0}, {"shape": 3.0})],
+    "VonMises": [({"kappa": 4.0}, {"kappa": 5.0})],
+    "LogNormal": [({"sigma": 0.1}, {"sigma": 0.2})],
+    "Beta": [
+        ({"alpha": 2.0, "beta": 3.0, "low": 8.0, "high": 12.0}, {"alpha": 3.0}),
+        ({"alpha": 2.0, "beta": 3.0, "low": 8.0, "high": 12.0}, {"beta": 4.0}),
+        ({"alpha": 2.0, "beta": 3.0, "low": 8.0, "high": 12.0}, {"low": 7.0}),
+        ({"alpha": 2.0, "beta": 3.0, "low": 8.0, "high": 12.0}, {"high": 13.0}),
+    ],
 }
+
+# The nominal value of a distribution that cannot take the mass above
+_NOMINALS = {"VonMises": Nominal(10.0, "deg", '"10 deg"')}
 
 
 def _parameters(values: dict[str, float]) -> dict[str, Parameter]:
@@ -476,6 +518,118 @@ def test_every_key_a_distribution_lists_changes_its_result(name: str) -> None:
 
     tested = {key for _, change in changes for key in change}
     assert tested == {*cls.REQUIRED, *cls.OPTIONAL}, "every listed key needs a change"
+    nominal = _NOMINALS.get(name, _NOMINAL)
     for base, change in changes:
-        moved = cls.from_parameters(_parameters({**base, **change}), _NOMINAL)
-        assert moved != cls.from_parameters(_parameters(base), _NOMINAL)
+        moved = cls.from_parameters(_parameters({**base, **change}), nominal)
+        assert moved != cls.from_parameters(_parameters(base), nominal)
+
+
+def _built(name: str) -> Distribution:
+    """Return a distribution of the first parameters ``_KEY_CHANGES`` lists for it."""
+    base, _ = _KEY_CHANGES[name][0]
+    return DISTRIBUTIONS[name].from_parameters(
+        _parameters(base), _NOMINALS.get(name, _NOMINAL)
+    )
+
+
+@pytest.mark.parametrize("name", sorted(DISTRIBUTIONS))
+def test_every_distribution_gives_finite_increasing_values(name: str) -> None:
+    """The inverse CDF is finite at percentiles 0 and 1 and never decreases."""
+    nominal = _NOMINALS.get(name, _NOMINAL).value
+    values = _built(name).ppf(np.linspace(0.0, 1.0, 201), nominal)
+
+    assert np.all(np.isfinite(values))
+    assert np.all(np.diff(values) >= 0.0)
+
+
+@pytest.mark.parametrize(
+    ("distribution", "percentile", "expected"),
+    [
+        (StudentT(2.0, 4.0), 0.5, 10.0),  # Centred on the nominal value
+        (LogNormal(0.3), 0.5, 10.0),  # The nominal value is the median
+        (Weibull(2.0), 1.0 - math.exp(-1.0), 10.0),  # And the scale here
+        (Triangular(8.0, 14.0), 1.0 / 3.0, 10.0),  # The mode: a third lies below
+        (Beta(2.0, 2.0, 8.0, 12.0), 0.5, 10.0),  # Symmetric about the middle
+    ],
+)
+def test_the_nominal_value_sits_where_each_distribution_says(
+    distribution: Distribution, percentile: float, expected: float
+) -> None:
+    """Each distribution places the nominal value as its docstring describes."""
+    value = distribution.ppf(np.array([percentile]), 10.0)[0]
+
+    assert value == pytest.approx(expected)
+
+
+def test_bounded_distributions_stay_inside_their_bounds() -> None:
+    """Triangular and beta values lie from low to high, von Mises within a half turn."""
+    percentiles = np.linspace(0.0, 1.0, 101)
+
+    for distribution in (Triangular(8.0, 12.0), Beta(0.5, 0.5, 8.0, 12.0)):
+        values = distribution.ppf(percentiles, 10.0)
+        assert values.min() == pytest.approx(8.0)
+        assert values.max() == pytest.approx(12.0)
+    angles = VonMises(0.5, math.pi / 180.0).ppf(percentiles, 10.0)
+    assert angles.min() >= 10.0 - 180.0 - 1e-6
+    assert angles.max() <= 10.0 + 180.0 + 1e-6
+
+
+def test_a_von_mises_spread_is_in_radians_whatever_the_angles_units() -> None:
+    """A large kappa gives a near-normal spread of 1 / sqrt(kappa) radians."""
+    distribution = VonMises.from_parameters(
+        _parameters({"kappa": 400.0}), Nominal(10.0, "deg", '"10 deg"')
+    )
+    quartiles = distribution.ppf(np.array([0.25, 0.75]), 10.0)
+
+    sigma_deg = math.degrees(1.0 / math.sqrt(400.0))
+    assert quartiles[1] - quartiles[0] == pytest.approx(1.349 * sigma_deg, rel=0.01)
+
+
+@pytest.mark.parametrize(
+    ("name", "values", "nominal", "message"),
+    [
+        ("StudentT", {"scale": -1.0, "df": 4.0}, 10.0, "expected 0 or more"),
+        ("StudentT", {"scale": 1.0, "df": 0.0}, 10.0, "expected above 0"),
+        ("Triangular", {"low": 11.0, "high": 12.0}, 10.0, "is above the nominal"),
+        ("Triangular", {"low": 12.0, "high": 11.0}, 10.0, "must be below high"),
+        ("Weibull", {"shape": 2.0}, 0.0, "needs a nominal value above 0"),
+        ("Weibull", {"shape": -2.0}, 10.0, "expected above 0"),
+        ("VonMises", {"kappa": 0.0}, 10.0, "expected above 0"),
+        ("LogNormal", {"sigma": 0.1}, -1.0, "needs a nominal value above 0"),
+        ("LogNormal", {"sigma": -0.1}, 10.0, "expected 0 or more"),
+        (
+            "Beta",
+            {"alpha": 0.0, "beta": 3.0, "low": 8.0, "high": 12.0},
+            10.0,
+            "expected above 0",
+        ),
+        (
+            "Beta",
+            {"alpha": 2.0, "beta": 3.0, "low": 8.0, "high": 9.0},
+            10.0,
+            "is below the nominal",
+        ),
+    ],
+)
+def test_bad_parameters_of_the_new_distributions_are_refused(
+    name: str, values: dict[str, float], nominal: float, message: str
+) -> None:
+    """Each distribution checks its own parameters against the nominal value."""
+    with pytest.raises(ParameterError, match=message):
+        DISTRIBUTIONS[name].from_parameters(
+            _parameters(values), Nominal(nominal, "", f"{nominal:g}")
+        )
+
+
+def test_a_von_mises_needs_an_angle() -> None:
+    """A von Mises distribution of a mass is refused."""
+    with pytest.raises(ParameterError, match="is not an angle"):
+        VonMises.from_parameters(_parameters({"kappa": 4.0}), _NOMINAL)
+
+
+def test_a_plain_key_must_be_one_the_distribution_takes() -> None:
+    """PLAIN naming a key the class does not take is refused at definition."""
+    with pytest.raises(TypeError, match="as plain but does not take it"):
+        type("Stray", (Distribution,), {**_VARIABLES, "PLAIN": ("b",)})
+
+    assert "Stray" not in DISTRIBUTIONS

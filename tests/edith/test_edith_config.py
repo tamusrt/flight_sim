@@ -17,6 +17,7 @@ from edith.dispersion import (
     Uniform,
 )
 from edith.errors import EdithConfigError
+from edith.statistics.distributions import LogNormal
 from flight_sim.config import ConfigError
 from flight_sim.units import scalar
 
@@ -395,7 +396,8 @@ def test_bad_dispersion_classes_are_named(
 
 def test_distributions_are_found_by_their_class_name() -> None:
     """Each distribution class is found by its name."""
-    assert {"Normal": Normal, "Uniform": Uniform} == DISTRIBUTIONS
+    assert DISTRIBUTIONS["Normal"] is Normal
+    assert DISTRIBUTIONS["Uniform"] is Uniform
 
 
 def test_output_settings_override_the_base_sims(tmp_path: Path) -> None:
@@ -688,3 +690,26 @@ def test_errors_name_the_campaign_file(
     message = _error(tmp_path, dispersions, header)
 
     assert message.split(": ", maxsplit=1)[0].endswith("mc/edith_config.toml")
+
+
+def test_shape_parameters_are_plain_numbers(tmp_path: Path) -> None:
+    """A log-normal's sigma is a plain number, though the mass has units."""
+    dispersion = _dispersion(
+        tmp_path, _table(_MASS_KEY, 'distribution = "LogNormal"\nsigma = 0.02')
+    )
+
+    assert dispersion.distribution == LogNormal(0.02)
+    assert "sigma: expected a plain number, such as 4, got '0.02 kg'" in _error(
+        tmp_path, _table(_MASS_KEY, 'distribution = "LogNormal"\nsigma = "0.02 kg"')
+    )
+
+
+def test_a_distribution_of_positive_values_needs_a_positive_nominal(
+    tmp_path: Path,
+) -> None:
+    """The base sim's calm wind, 0 m/s, cannot be the scale of a Weibull."""
+    body = 'distribution = "Weibull"\nshape = 2'
+
+    assert "needs a nominal value above 0" in _error(
+        tmp_path, _table("config.truth.wind.speed", body)
+    )

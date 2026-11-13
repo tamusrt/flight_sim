@@ -96,12 +96,24 @@ sample_interval = "0.05 s"
 #                           side of the nominal value.
 # distribution = "Uniform"  half_width either side of the nominal value, or
 #                           from low to high, as absolute values.
+# distribution = "StudentT"   scale about the nominal value, and df, the
+#                             degrees of freedom; heavier tails than Normal.
+# distribution = "Triangular" from low to high, peaking at the nominal value.
+# distribution = "Weibull"    shape; the nominal value, above 0, is the scale.
+# distribution = "VonMises"   kappa, the concentration, about an angle's
+#                             nominal value; about 1 / sigma**2 in radians.
+# distribution = "LogNormal"  sigma of the logarithm; the nominal value, above
+#                             0, is the median.
+# distribution = "Beta"       alpha and beta, from low to high, which lie on
+#                             either side of the nominal value.
 #
-# sigma, half_width, low and high carry units of the same kind as the
+# sigma, half_width, scale, low and high carry units of the same kind as the
 # nominal value's, such as "0.25 kg" or "5 mph", and EDITH converts them to
 # the nominal value's units. A plain number in the input takes plain
 # numbers: sigma = 0.05. A value in degC or degF takes its numbers in those
-# units. A sigma or half_width of 0 keeps the value at its nominal.
+# units. A sigma or half_width of 0 keeps the value at its nominal. df,
+# shape, kappa, alpha, beta and a LogNormal's sigma are always plain numbers:
+# shape = 2.
 # ---------------------------------------------------------------------------
 
 # Dry mass, a placeholder 17 kg in vehicle.toml

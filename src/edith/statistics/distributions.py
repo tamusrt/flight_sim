@@ -3,7 +3,8 @@
 A campaign names a distribution by the name of a ``Distribution`` subclass,
 which ``DISTRIBUTIONS`` lists. Defining a subclass registers it, in any module
 that is imported, so a new distribution is one new subclass. Numbers are in
-the units of the nominal value being dispersed.
+the units of the nominal value being dispersed, except the keys a class lists
+in ``PLAIN``, such as a shape parameter, which are plain numbers.
 """
 
 import math
@@ -14,18 +15,26 @@ from typing import Any, ClassVar, NamedTuple, Self
 
 import numpy as np
 from numpy.typing import NDArray
+from pint import DimensionalityError
 from scipy import stats  # type: ignore[import-untyped]
 
 from edith.statistics.abstract import check_abstract_members
 from edith.targets import Nominal
+from flight_sim.units import convert
 
 __all__ = [
     "DISTRIBUTIONS",
+    "Beta",
     "Distribution",
+    "LogNormal",
     "Normal",
     "Parameter",
     "ParameterError",
+    "StudentT",
+    "Triangular",
     "Uniform",
+    "VonMises",
+    "Weibull",
     "clip_percentiles",
     "quantity_text",
 ]
@@ -42,8 +51,8 @@ def clip_percentiles(percentiles: NDArray[np.float64]) -> NDArray[np.float64]:
     """Return percentiles clipped to ``[PERCENTILE_CUTOFF, 1 - PERCENTILE_CUTOFF]``.
 
     Only a distribution with an unbounded tail needs this, as the percentiles 0 and
-    1 give it an infinite value; for now that is only ``Normal``. A bounded
-    distribution, such as ``Uniform``, takes its percentiles as they are.
+    1 give it an infinite value, such as ``Normal``. A bounded distribution, such
+    as ``Uniform``, takes its percentiles as they are.
     """
     clipped: NDArray[np.float64] = np.clip(
         np.asarray(percentiles, dtype=float), PERCENTILE_CUTOFF, 1.0 - PERCENTILE_CUTOFF
@@ -87,21 +96,25 @@ class Distribution(ABC):
     OPTIONAL: ClassVar[tuple[str, ...]]
     USAGE: ClassVar[str]
 
+    # Those of its keys that take a plain number whatever the nominal value's
+    # units, such as a shape parameter
+    PLAIN: ClassVar[tuple[str, ...]] = ()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Check the subclass's class variables and register it by name.
 
         Raises:
             TypeError: If ``REQUIRED``, ``OPTIONAL`` or ``USAGE`` is missing, if
-                the first two are not tuples of key names or ``USAGE`` is not
-                text, if a key is in both ``REQUIRED`` and ``OPTIONAL``, if an
-                abstract method is left undefined, or if another distribution
-                has the same name.
+                they and ``PLAIN`` are not tuples of key names or ``USAGE`` is
+                not text, if a key is in both ``REQUIRED`` and ``OPTIONAL``, if
+                ``PLAIN`` lists a key that is in neither, if an abstract method
+                is left undefined, or if another distribution has the same name.
         """
         super().__init_subclass__(**kwargs)
         for name in ("REQUIRED", "OPTIONAL", "USAGE"):
             if not hasattr(cls, name):
                 raise TypeError(f"{cls.__name__} must define {name}")
-        for name in ("REQUIRED", "OPTIONAL"):
+        for name in ("REQUIRED", "OPTIONAL", "PLAIN"):
             keys = getattr(cls, name)
             if not isinstance(keys, tuple) or not all(isinstance(k, str) for k in keys):
                 raise TypeError(f"{cls.__name__}.{name} must be a tuple of key names")
@@ -111,6 +124,11 @@ class Distribution(ABC):
         if both:
             raise TypeError(
                 f"{cls.__name__} lists {sorted(both)} as both required and optional"
+            )
+        unknown = set(cls.PLAIN) - {*cls.REQUIRED, *cls.OPTIONAL}
+        if unknown:
+            raise TypeError(
+                f"{cls.__name__} lists {sorted(unknown)} as plain but does not take it"
             )
         check_abstract_members(cls)
         if cls.__name__ in DISTRIBUTIONS:
@@ -315,6 +333,299 @@ class Uniform(Distribution):
         return f"uniform from {self.low:g} to {quantity_text(self.high, units)}"
 
 
+@dataclass(frozen=True)
+class StudentT(Distribution):
+    """Student's t distribution about the nominal value, heavier-tailed than normal.
+
+    ``scale`` is in the nominal value's units; ``df``, the degrees of freedom,
+    is a plain number. As ``df`` grows it tends to ``Normal`` of sigma ``scale``.
+    """
+
+    REQUIRED: ClassVar[tuple[str, ...]] = ("scale", "df")
+    OPTIONAL: ClassVar[tuple[str, ...]] = ()
+    USAGE: ClassVar[str] = "a Student's t dispersion takes scale and df"
+    PLAIN: ClassVar[tuple[str, ...]] = ("df",)
+
+    scale: float
+    df: float
+
+    @classmethod
+    def from_parameters(
+        cls, parameters: Mapping[str, Parameter], nominal: Nominal
+    ) -> Self:
+        """Return the distribution its parameters describe, checking them.
+
+        Raises:
+            ParameterError: If scale is negative or df is not above 0.
+        """
+        scale, df = parameters["scale"], parameters["df"]
+        if scale.value < 0.0:
+            raise ParameterError(f"expected 0 or more, got {scale.text}", "scale")
+        _check_positive(df, "df")
+        return cls(scale.value, df.value)
+
+    def ppf(
+        self, percentiles: NDArray[np.float64], nominal: float
+    ) -> NDArray[np.float64]:
+        """Return the value at each percentile, centred on the nominal value."""
+        clipped = clip_percentiles(percentiles)  # Unbounded on both sides
+        if self.scale == 0.0:
+            return np.full(clipped.shape, nominal)
+        return np.asarray(
+            stats.t.ppf(clipped, self.df, loc=nominal, scale=self.scale), dtype=float
+        )
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "Student's t, scale 1 m, df 4"."""
+        return f"Student's t, scale {quantity_text(self.scale, units)}, df {self.df:g}"
+
+
+@dataclass(frozen=True)
+class Triangular(Distribution):
+    """Triangular distribution from ``low`` to ``high``, peaking at the nominal."""
+
+    REQUIRED: ClassVar[tuple[str, ...]] = ("low", "high")
+    OPTIONAL: ClassVar[tuple[str, ...]] = ()
+    USAGE: ClassVar[str] = "a triangular dispersion takes low and high"
+
+    low: float
+    high: float
+
+    @classmethod
+    def from_parameters(
+        cls, parameters: Mapping[str, Parameter], nominal: Nominal
+    ) -> Self:
+        """Return the distribution its parameters describe, checking them.
+
+        Raises:
+            ParameterError: If low is not below high, or they do not lie on
+                either side of the nominal value.
+        """
+        low, high = parameters["low"], parameters["high"]
+        _check_order(low, high)
+        _check_bracket(low, high, nominal)
+        return cls(low.value, high.value)
+
+    def ppf(
+        self, percentiles: NDArray[np.float64], nominal: float
+    ) -> NDArray[np.float64]:
+        """Return the value at each percentile; the bounds are absolute."""
+        width = self.high - self.low
+        # The nominal value is the mode, kept in range against rounding
+        mode = min(max((nominal - self.low) / width, 0.0), 1.0)
+        return np.asarray(
+            stats.triang.ppf(percentiles, mode, loc=self.low, scale=width), dtype=float
+        )
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "triangular from 0 to 2 m"."""
+        return f"triangular from {self.low:g} to {quantity_text(self.high, units)}"
+
+
+@dataclass(frozen=True)
+class Weibull(Distribution):
+    """Weibull distribution whose scale is the nominal value.
+
+    The nominal value, which must be above 0, is the 63.2th percentile.
+    ``shape`` is a plain number, such as 2 for a Rayleigh-like wind speed.
+    """
+
+    REQUIRED: ClassVar[tuple[str, ...]] = ("shape",)
+    OPTIONAL: ClassVar[tuple[str, ...]] = ()
+    USAGE: ClassVar[str] = "a Weibull dispersion takes shape"
+    PLAIN: ClassVar[tuple[str, ...]] = ("shape",)
+
+    shape: float
+
+    @classmethod
+    def from_parameters(
+        cls, parameters: Mapping[str, Parameter], nominal: Nominal
+    ) -> Self:
+        """Return the distribution its parameters describe, checking them.
+
+        Raises:
+            ParameterError: If shape or the nominal value is not above 0.
+        """
+        _check_positive_nominal(nominal, "Weibull")
+        shape = parameters["shape"]
+        _check_positive(shape, "shape")
+        return cls(shape.value)
+
+    def ppf(
+        self, percentiles: NDArray[np.float64], nominal: float
+    ) -> NDArray[np.float64]:
+        """Return the value at each percentile, the nominal value as the scale."""
+        clipped = clip_percentiles(percentiles)  # Unbounded above
+        return np.asarray(
+            stats.weibull_min.ppf(clipped, self.shape, scale=nominal), dtype=float
+        )
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "Weibull, shape 2"."""
+        del units
+        return f"Weibull, shape {self.shape:g}"
+
+
+@dataclass(frozen=True)
+class VonMises(Distribution):
+    """Von Mises distribution of an angle about the nominal value.
+
+    Values lie within half a turn of the nominal value. ``kappa``, a plain
+    number, is the concentration, roughly 1 / sigma**2 with sigma in radians.
+    The nominal value is an angle, or a plain number taken as radians.
+    """
+
+    REQUIRED: ClassVar[tuple[str, ...]] = ("kappa",)
+    OPTIONAL: ClassVar[tuple[str, ...]] = ()
+    USAGE: ClassVar[str] = "a von Mises dispersion takes kappa"
+    PLAIN: ClassVar[tuple[str, ...]] = ("kappa",)
+
+    kappa: float
+    radians_per_unit: float = 1.0  # Radians in one of the nominal value's units
+
+    @classmethod
+    def from_parameters(
+        cls, parameters: Mapping[str, Parameter], nominal: Nominal
+    ) -> Self:
+        """Return the distribution its parameters describe, checking them.
+
+        Raises:
+            ParameterError: If kappa is not above 0, or the nominal value is not
+                an angle.
+        """
+        kappa = parameters["kappa"]
+        _check_positive(kappa, "kappa")
+        try:
+            radians = convert(1.0, nominal.units, "rad") if nominal.units else 1.0
+        except DimensionalityError as error:
+            raise ParameterError(
+                f"the nominal value, {nominal.text}, is not an angle; {cls.USAGE}"
+            ) from error
+        return cls(kappa.value, radians)
+
+    def ppf(
+        self, percentiles: NDArray[np.float64], nominal: float
+    ) -> NDArray[np.float64]:
+        """Return the value at each percentile, in the nominal value's units."""
+        # Bounded, but scipy gives an infinite value at percentiles 0 and 1
+        radians = stats.vonmises.ppf(
+            clip_percentiles(percentiles),
+            self.kappa,
+            loc=nominal * self.radians_per_unit,
+        )
+        return np.asarray(radians, dtype=float) / self.radians_per_unit
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "von Mises, kappa 400"."""
+        del units
+        return f"von Mises, kappa {self.kappa:g}"
+
+
+@dataclass(frozen=True)
+class LogNormal(Distribution):
+    """Log-normal distribution whose median is the nominal value.
+
+    The nominal value must be above 0. ``sigma``, a plain number, is the
+    standard deviation of the value's natural logarithm.
+    """
+
+    REQUIRED: ClassVar[tuple[str, ...]] = ("sigma",)
+    OPTIONAL: ClassVar[tuple[str, ...]] = ()
+    USAGE: ClassVar[str] = "a log-normal dispersion takes sigma, of the logarithm"
+    PLAIN: ClassVar[tuple[str, ...]] = ("sigma",)
+
+    sigma: float
+
+    @classmethod
+    def from_parameters(
+        cls, parameters: Mapping[str, Parameter], nominal: Nominal
+    ) -> Self:
+        """Return the distribution its parameters describe, checking them.
+
+        Raises:
+            ParameterError: If sigma is negative or the nominal value is not
+                above 0.
+        """
+        _check_positive_nominal(nominal, "log-normal")
+        sigma = parameters["sigma"]
+        if sigma.value < 0.0:
+            raise ParameterError(f"expected 0 or more, got {sigma.text}", "sigma")
+        return cls(sigma.value)
+
+    def ppf(
+        self, percentiles: NDArray[np.float64], nominal: float
+    ) -> NDArray[np.float64]:
+        """Return the value at each percentile, the nominal value as the median."""
+        clipped = clip_percentiles(percentiles)  # Unbounded above
+        if self.sigma == 0.0:
+            return np.full(clipped.shape, nominal)
+        return np.asarray(
+            stats.lognorm.ppf(clipped, self.sigma, scale=nominal), dtype=float
+        )
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "log-normal, sigma 0.1"."""
+        del units
+        return f"log-normal, sigma {self.sigma:g}"
+
+
+@dataclass(frozen=True)
+class Beta(Distribution):
+    """Beta distribution from ``low`` to ``high``, of shape ``alpha`` and ``beta``.
+
+    The bounds are absolute and must lie on either side of the nominal value;
+    ``alpha`` and ``beta`` are plain numbers.
+    """
+
+    REQUIRED: ClassVar[tuple[str, ...]] = ("alpha", "beta", "low", "high")
+    OPTIONAL: ClassVar[tuple[str, ...]] = ()
+    USAGE: ClassVar[str] = "a beta dispersion takes alpha, beta, low and high"
+    PLAIN: ClassVar[tuple[str, ...]] = ("alpha", "beta")
+
+    alpha: float
+    beta: float
+    low: float
+    high: float
+
+    @classmethod
+    def from_parameters(
+        cls, parameters: Mapping[str, Parameter], nominal: Nominal
+    ) -> Self:
+        """Return the distribution its parameters describe, checking them.
+
+        Raises:
+            ParameterError: If alpha or beta is not above 0, low is not below
+                high, or they do not lie on either side of the nominal value.
+        """
+        alpha, beta = parameters["alpha"], parameters["beta"]
+        low, high = parameters["low"], parameters["high"]
+        _check_positive(alpha, "alpha")
+        _check_positive(beta, "beta")
+        _check_order(low, high)
+        _check_bracket(low, high, nominal)
+        return cls(alpha.value, beta.value, low.value, high.value)
+
+    def ppf(
+        self, percentiles: NDArray[np.float64], nominal: float
+    ) -> NDArray[np.float64]:
+        """Return the value at each percentile; the bounds are absolute."""
+        del nominal
+        width = self.high - self.low
+        return np.asarray(
+            stats.beta.ppf(
+                percentiles, self.alpha, self.beta, loc=self.low, scale=width
+            ),
+            dtype=float,
+        )
+
+    def describe(self, units: str) -> str:
+        """Return the distribution in words, such as "beta 2, 5 from 0 to 1 m"."""
+        return (
+            f"beta {self.alpha:g}, {self.beta:g} from {self.low:g} to "
+            f"{quantity_text(self.high, units)}"
+        )
+
+
 def quantity_text(value: float, units: str) -> str:
     """Return a number with its units, such as "0.25 kg", or bare for none."""
     return f"{value:g} {units}".rstrip()
@@ -333,3 +644,42 @@ def _check_order(low: Parameter | None, high: Parameter | None) -> None:
     """
     if low is not None and high is not None and not low.value < high.value:
         raise ParameterError(f"low ({low.text}) must be below high ({high.text})")
+
+
+def _check_positive(parameter: Parameter, key: str) -> None:
+    """Check a parameter is above 0.
+
+    Raises:
+        ParameterError: If it is not, naming its key.
+    """
+    if not parameter.value > 0.0:
+        raise ParameterError(f"expected above 0, got {parameter.text}", key)
+
+
+def _check_positive_nominal(nominal: Nominal, name: str) -> None:
+    """Check a nominal value is above 0, as a distribution of positive values needs.
+
+    Raises:
+        ParameterError: If it is not.
+    """
+    if not nominal.value > 0.0:
+        raise ParameterError(
+            f"a {name} dispersion needs a nominal value above 0, got {nominal.text}"
+        )
+
+
+def _check_bracket(low: Parameter, high: Parameter, nominal: Nominal) -> None:
+    """Check low and high lie on either side of the nominal value.
+
+    Raises:
+        ParameterError: If either does not, naming it.
+    """
+    side = "low and high must lie on either side of it"
+    if _above(low.value, nominal.value):
+        raise ParameterError(
+            f"{low.text} is above the nominal value, {nominal.text}; {side}", "low"
+        )
+    if _above(nominal.value, high.value):
+        raise ParameterError(
+            f"{high.text} is below the nominal value, {nominal.text}; {side}", "high"
+        )

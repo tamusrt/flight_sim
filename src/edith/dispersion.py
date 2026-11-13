@@ -6,7 +6,8 @@ its own table of the campaign file. StandardDispersion, the default, disperses
 one number of the base sim with a distribution: a subclass of ``Distribution``,
 found by its class name in ``DISTRIBUTIONS``. Those live in
 ``edith.statistics.distributions``, which this module re-exports. A standard
-dispersion's numbers are all in the units its nominal value is written in.
+dispersion's numbers are all in the units its nominal value is written in,
+except those its distribution lists in ``PLAIN``, which are plain numbers.
 """
 
 import math
@@ -123,7 +124,11 @@ class StandardDispersion(BaseDispersion):
             distribution_class.USAGE,
         )
         parameters = {
-            name: _number(table[name], quoted_key_path(where, name), nominal)
+            name: (
+                _plain(table[name], quoted_key_path(where, name))
+                if name in distribution_class.PLAIN
+                else _number(table[name], quoted_key_path(where, name), nominal)
+            )
             for name in (*distribution_class.REQUIRED, *distribution_class.OPTIONAL)
             if name in table
         }
@@ -214,6 +219,19 @@ def _number(value: object, where: str, nominal: Nominal) -> Parameter:
     except UNREADABLE_UNITS as error:
         raise EdithConfigError(f"{where}: cannot read the units of {text!r}") from error
     return Parameter(_finite(converted, where, value), text)
+
+
+def _plain(value: object, where: str) -> Parameter:
+    """Return a parameter that is a plain number whatever the nominal's units.
+
+    Raises:
+        EdithConfigError: If the value is not a finite plain number.
+    """
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        raise EdithConfigError(
+            f"{where}: expected a plain number, such as 4, got {value!r}"
+        )
+    return Parameter(_finite(float(value), where, value), f"{value:g}")
 
 
 def _finite(number: float, where: str, value: object) -> float:
